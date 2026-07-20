@@ -32,10 +32,10 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
 - [x] Beep after speech finishes
 
 ## Phase 5 — Mic capture + VAD + STT
-- [ ] `AVAudioEngine` input tap; RMS→dB per buffer (unit tested)
-- [ ] Silence-timer VAD state machine: reset on speech, stop after ~1.2 s silence (unit tested)
-- [ ] Encode captured audio to 16 kHz mono WAV
-- [ ] Groq client: `whisper-large-v3-turbo`, multipart transcription (request builder tested)
+- [x] `AVAudioEngine` input tap; RMS→dB per buffer (unit tested)
+- [x] Silence-timer VAD state machine: reset on speech, stop after ~1.2 s silence (unit tested)
+- [x] Encode captured audio to 16 kHz mono WAV
+- [x] Groq client: `whisper-large-v3-turbo`, multipart transcription (request builder tested)
 
 ## Phase 6 — Inject reply + media control
 - [ ] tmux inject: `send-keys -t <pane> -l <text>` then `send-keys -t <pane> Enter`, shell-safe
