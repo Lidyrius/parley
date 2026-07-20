@@ -13,7 +13,8 @@ enum Keychain {
         case elevenLabsAPIKey
         case groqAPIKey
         case voiceID
-        case language   // spoken-turn language, e.g. "Deutsch" / "English". Default Deutsch.
+        case language      // spoken-turn language, e.g. "Deutsch" / "English". Default Deutsch.
+        case micDeviceUID  // selected input device UID; empty = system default
     }
 
     private static var fileURL: URL {

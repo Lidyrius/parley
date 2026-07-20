@@ -26,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         // Start the control server at launch — NOT from the menu view's .task, which
         // (with menuBarExtraStyle(.window)) only runs when the popover is first opened.
-        MainActor.assumeIsolated { AppController.shared.start() }
+        MainActor.assumeIsolated {
+            AppController.shared.start()
+            OnboardingPresenter.shared.showIfNeeded()   // first-run setup
+        }
     }
 }

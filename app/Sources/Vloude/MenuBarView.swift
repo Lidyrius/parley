@@ -36,6 +36,7 @@ struct MenuBarView: View {
                 Divider()
                 HStack {
                     SettingsLink { Text("Settings…") }
+                    Button("Setup…") { OnboardingPresenter.shared.show() }
                     Spacer()
                     Button("Quit") { NSApp.terminate(nil) }
                 }

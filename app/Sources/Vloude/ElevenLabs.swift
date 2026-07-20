@@ -8,9 +8,33 @@ enum ElevenLabs {
     static let outputFormat = "pcm_24000"
     static let sampleRate = 24000.0
 
+    // The user's personal cloned voice ("Jarvis"). Preselected during onboarding when
+    // the account has access to it; otherwise onboarding falls back to a premade voice.
+    static let jarvisVoiceID = "JyoJov3tFx6ucWOiDwTM"
+    static let fallbackVoiceID = "JBFqnCBsd6RMkjVDRZzb"   // "George" premade
+
     struct Config {
         var apiKey: String
         var voiceID: String
+    }
+
+    struct Voice: Identifiable, Decodable, Hashable {
+        let voice_id: String
+        let name: String
+        let category: String?
+        let preview_url: String?
+        var id: String { voice_id }
+    }
+
+    static func voicesRequest(apiKey: String) -> URLRequest {
+        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/voices")!)
+        req.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
+        return req
+    }
+
+    static func decodeVoices(_ data: Data) -> [Voice] {
+        struct Resp: Decodable { let voices: [Voice] }
+        return (try? JSONDecoder().decode(Resp.self, from: data))?.voices ?? []
     }
 
     static func streamRequest(text: String, config: Config) -> URLRequest {

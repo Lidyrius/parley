@@ -47,6 +47,11 @@ final class MicCapture: @unchecked Sendable {
     private func beginCapture() {
         let engine = AVAudioEngine()          // fresh instance every recording
         self.engine = engine
+        // Route to the onboarding-selected input device, if any (else system default).
+        if let uid = Keychain.get(.micDeviceUID), !uid.isEmpty,
+           let devID = AudioDevices.deviceID(forUID: uid) {
+            AudioDevices.setInputDevice(devID, on: engine)
+        }
         let input = engine.inputNode
         // Do NOT touch mainMixerNode for input-only capture: it lazily instantiates the
         // output HAL and can renegotiate the device, zeroing the input sample rate.
