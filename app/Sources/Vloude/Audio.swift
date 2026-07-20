@@ -76,4 +76,9 @@ final class TTSPlayer {
         engine.stop()
         carry.removeAll()
     }
+
+    deinit {
+        node.stop()
+        engine.stop()   // ensure the audio device is released when this player is dropped
+    }
 }

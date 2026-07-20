@@ -20,8 +20,8 @@ final class AppController: ObservableObject {
     static let shared = AppController()
 
     let server = ControlServer()
-    private let player = TTSPlayer()
     private let mic = MicCapture()
+    private var activePlayer: TTSPlayer?   // fresh per playback; released before capture
     private var started = false
 
     func start() {
@@ -56,8 +56,10 @@ final class AppController: ObservableObject {
             NSLog("Vloude: no ready clips bundled, greeting silent")
             return
         }
-        try? player.start()
-        player.enqueue(pcmChunk: data)
+        let p = TTSPlayer()
+        activePlayer = p
+        try? p.start()
+        p.enqueue(pcmChunk: data)
     }
 
     // MARK: - /turn pipeline
@@ -71,9 +73,7 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
 
         MediaKeys.togglePlayPause()                 // pause YouTube/Spotify
-        await speak(turn.speak, config: config)
-        await beep()
-        player.stop()                               // free the audio device before capture
+        await speakAndBeep(turn.speak, config: config)
 
         setStatus(key, "listening")
         let wav = await record()
@@ -86,28 +86,37 @@ final class AppController: ObservableObject {
         return text
     }
 
-    private func speak(_ text: String, config: AppConfig) async {
-        guard config.ttsReady else { NSLog("Vloude: TTS not configured"); return }
-        let req = ElevenLabs.streamRequest(
-            text: text, config: .init(apiKey: config.elevenLabsKey, voiceID: config.voiceID))
-        do {
-            try player.start()
-            let (bytes, _) = try await URLSession.shared.bytes(for: req)
-            var chunk = Data()
-            for try await b in bytes {
-                chunk.append(b)
-                if chunk.count >= 4096 { player.enqueue(pcmChunk: chunk); chunk.removeAll(keepingCapacity: true) }
+    // Speak the summary + beep, then FULLY release the audio output device before the
+    // mic engine starts. A still-running (or merely stopped-but-alive) output engine
+    // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
+    // turn + explicit release + a short settle avoids that device contention.
+    private func speakAndBeep(_ text: String, config: AppConfig) async {
+        let player = TTSPlayer()
+        activePlayer = player
+        if config.ttsReady {
+            let req = ElevenLabs.streamRequest(
+                text: text, config: .init(apiKey: config.elevenLabsKey, voiceID: config.voiceID))
+            do {
+                try player.start()
+                let (bytes, _) = try await URLSession.shared.bytes(for: req)
+                var chunk = Data()
+                for try await b in bytes {
+                    chunk.append(b)
+                    if chunk.count >= 4096 { player.enqueue(pcmChunk: chunk); chunk.removeAll(keepingCapacity: true) }
+                }
+                if !chunk.isEmpty { player.enqueue(pcmChunk: chunk) }
+            } catch {
+                lastError = "TTS: \(error.localizedDescription)"
             }
-            if !chunk.isEmpty { player.enqueue(pcmChunk: chunk) }
-        } catch {
-            lastError = "TTS: \(error.localizedDescription)"
+        } else {
+            NSLog("Vloude: TTS not configured")
         }
-    }
-
-    private func beep() async {
-        await withCheckedContinuation { cont in
-            player.scheduleBeep { cont.resume() }
-        }
+        await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
+        player.stop()
+        activePlayer = nil
+        // ponytail: 250 ms settle lets CoreAudio release the output device before the
+        // mic engine claims it. Empirical; raise if 0-buffer captures reappear.
+        try? await Task.sleep(nanoseconds: 250_000_000)
     }
 
     private func record() async -> Data {
