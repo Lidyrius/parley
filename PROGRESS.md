@@ -21,10 +21,10 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
 - [x] Verify: `cd app && swift test` runs (even if only a trivial test at first)
 
 ## Phase 3 — Loopback HTTP server + turn queue
-- [ ] `NWListener` (or minimal socket) on `127.0.0.1:8787`, routes `/health` `/turn` `/ready`
-- [ ] Decode `/turn` + `/ready` payloads (CONTRACT.md) into typed structs
-- [ ] FIFO turn queue: one active turn at a time, keyed/routed by `tmux_pane`
-- [ ] Tests: request parsing, `/health` 200, queue FIFO + single-active
+- [x] `NWListener` (or minimal socket) on `127.0.0.1:8787`, routes `/health` `/turn` `/ready`
+- [x] Decode `/turn` + `/ready` payloads (CONTRACT.md) into typed structs
+- [x] FIFO turn queue: one active turn at a time, keyed/routed by `tmux_pane`
+- [x] Tests: request parsing, `/health` 200, queue FIFO + single-active
 
 ## Phase 4 — TTS playback
 - [ ] ElevenLabs client: `flash_v2_5`, `/stream`, `pcm_24000`, `xi-api-key` header (request builder tested)
