@@ -38,10 +38,10 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
 - [x] Groq client: `whisper-large-v3-turbo`, multipart transcription (request builder tested)
 
 ## Phase 6 — Inject reply + media control
-- [ ] tmux inject: `send-keys -t <pane> -l <text>` then `send-keys -t <pane> Enter`, shell-safe
+- [x] tmux inject: `send-keys -t <pane> -l <text>` then `send-keys -t <pane> Enter`, shell-safe
       for quotes/newlines (command construction unit tested)
-- [ ] Empty `tmux_pane` → speak only, log that inject was skipped (don't crash)
-- [ ] Media key Play/Pause via `NSEvent` systemDefined subtype 8, `NX_KEYTYPE_PLAY`; gate on
+- [x] Empty `tmux_pane` → speak only, log that inject was skipped (don't crash)
+- [x] Media key Play/Pause via `NSEvent` systemDefined subtype 8, `NX_KEYTYPE_PLAY`; gate on
       `AXIsProcessTrusted`; pause before speaking, resume after
 
 ## Phase 7 — Ready clips
