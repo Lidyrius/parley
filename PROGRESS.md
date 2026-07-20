@@ -61,6 +61,6 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
 - [x] Final `swift build -c release` + `swift test` green
 
 ## Phase 10 — Manual smoke test doc
-- [ ] `SMOKE_TEST.md`: step-by-step human checks — grant Accessibility+mic, enable plugin
+- [x] `SMOKE_TEST.md`: step-by-step human checks — grant Accessibility+mic, enable plugin
       (`claude --plugin-dir …/plugin`), run `/vloude:voice`, confirm greeting, finish a turn, hear
       summary, reply by voice, see it typed back into the tmux pane; YouTube pause/resume
