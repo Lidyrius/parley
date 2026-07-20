@@ -27,9 +27,9 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
 - [x] Tests: request parsing, `/health` 200, queue FIFO + single-active
 
 ## Phase 4 — TTS playback
-- [ ] ElevenLabs client: `flash_v2_5`, `/stream`, `pcm_24000`, `xi-api-key` header (request builder tested)
-- [ ] `AVAudioEngine` + `AVAudioPlayerNode` streams PCM buffers as chunks arrive
-- [ ] Beep after speech finishes
+- [x] ElevenLabs client: `flash_v2_5`, `/stream`, `pcm_24000`, `xi-api-key` header (request builder tested)
+- [x] `AVAudioEngine` + `AVAudioPlayerNode` streams PCM buffers as chunks arrive
+- [x] Beep after speech finishes
 
 ## Phase 5 — Mic capture + VAD + STT
 - [ ] `AVAudioEngine` input tap; RMS→dB per buffer (unit tested)
