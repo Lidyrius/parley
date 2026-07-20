@@ -45,20 +45,20 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
       `AXIsProcessTrusted`; pause before speaking, resume after
 
 ## Phase 7 — Ready clips
-- [ ] `scripts/generate-ready-clips.sh`: render 10 varied "ich bin bereit" clips via ElevenLabs into
+- [x] `scripts/generate-ready-clips.sh`: render 10 varied "ich bin bereit" clips via ElevenLabs into
       `app/Sources/Vloude/Resources/ready/` (skips gracefully w/o API key), bundled as SPM resources
-- [ ] `/ready` handler plays a random bundled clip
+- [x] `/ready` handler plays a random bundled clip
 
 ## Phase 8 — Menu-bar UI (Liquid Glass)
-- [ ] `MenuBarExtra` panel: list active/finished sessions (project label + status + pane), Liquid
+- [x] `MenuBarExtra` panel: list active/finished sessions (project label + status + pane), Liquid
       Glass styling (`.glassEffect`, `GlassEffectContainer`)
-- [ ] Settings window: API keys → Keychain, voice-id picker
-- [ ] Info.plist keys via SPM: `NSMicrophoneUsageDescription`, `LSUIElement`
+- [x] Settings window: API keys → Keychain, voice-id picker
+- [x] Info.plist keys via SPM: `NSMicrophoneUsageDescription`, `LSUIElement`
 
 ## Phase 9 — Wire the full loop
-- [ ] `/turn` → pause media → speak → beep → record → VAD stop → transcribe → tmux inject → resume
-- [ ] Queue drains finished sessions one at a time end-to-end (logic path, no devices)
-- [ ] Final `swift build -c release` + `swift test` green
+- [x] `/turn` → pause media → speak → beep → record → VAD stop → transcribe → tmux inject → resume
+- [x] Queue drains finished sessions one at a time end-to-end (logic path, no devices)
+- [x] Final `swift build -c release` + `swift test` green
 
 ## Phase 10 — Manual smoke test doc
 - [ ] `SMOKE_TEST.md`: step-by-step human checks — grant Accessibility+mic, enable plugin
