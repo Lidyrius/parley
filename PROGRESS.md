@@ -4,14 +4,15 @@ Check a box `[x]` ONLY when its verify command passes. Add a short note per item
 Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
 
 ## Phase 0 — Repo & scaffolding
-- [ ] `git init` done, `.gitignore` for Swift/`.build/`/`.DS_Store`/secrets, initial commit
+- [x] `git init` done, `.gitignore` for Swift/`.build/`/`.DS_Store`/secrets, initial commit
 - [x] `plugin/` scaffolded (plugin.json, hooks.json, stop-hook.sh, skills/voice/SKILL.md) — pre-built
 - [x] `CONTRACT.md`, `BRIEFING.md` present — pre-built
 
 ## Phase 1 — Plugin hardening + hook tests
-- [ ] `tests/hook_test.sh`: asserts `<speak>` extraction → correct `/turn` JSON, and no-tag → no POST
+- [x] `tests/hook_test.sh`: asserts `<speak>` extraction → correct `/turn` JSON, and no-tag → no POST
       (spin a throwaway local listener, capture the body). Verify: `bash tests/hook_test.sh`
-- [ ] stop-hook handles multiline / quotes / unicode in speak text without breaking JSON
+- [x] stop-hook handles multiline / quotes / unicode in speak text without breaking JSON
+      (hook uses jq for JSON assembly; test 2 asserts unicode/quotes/newlines round-trip)
 
 ## Phase 2 — App skeleton builds
 - [ ] `app/Package.swift`: executable target `Vloude`, platform `.macOS(.v26)`, SwiftUI

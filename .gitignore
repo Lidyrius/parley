@@ -1,4 +1,6 @@
 .DS_Store
+.env
+app/.swiftpm/
 .build/
 app/.build/
 *.xcodeproj

@@ -48,6 +48,22 @@ This file is the immutable spec. Your live checklist is `PROGRESS.md`. The wire 
 - **Secrets:** ElevenLabs + Groq API keys stored in the macOS **Keychain**; a Settings window to
   enter them + pick a voice id. Never hard-code keys.
 
+## Secrets — `.env` (git-ignored, never commit)
+
+A local `.env` at repo root holds the working credentials. It is in `.gitignore` — never commit it,
+never echo the values into logs, commit messages, tests, or source. Keys:
+
+- `ELEVENLABS_API_KEY` — TTS auth (`xi-api-key` header)
+- `ELEVENLABS_VOICE_ID` — **`JyoJov3tFx6ucWOiDwTM`** (default voice for speech + ready clips)
+- `GROQ_API_KEY` — STT auth (`Authorization: Bearer`)
+
+Usage rules:
+- `scripts/generate-ready-clips.sh` and any optional live smoke call read keys from the environment.
+  Load `.env` first, e.g. `set -a; . ./.env; set +a`. If a key is absent, skip that step gracefully.
+- The app reads keys from the **Keychain** at runtime. The Settings window may **prefill** from `.env`
+  on first launch as a convenience, but the source of truth is the Keychain, not `.env`.
+- Default the voice-id field to `ELEVENLABS_VOICE_ID`.
+
 ## Repository layout (target)
 
 ```
