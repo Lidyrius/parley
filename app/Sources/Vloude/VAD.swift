@@ -23,7 +23,7 @@ enum Level {
 /// seconds below the speech threshold. Feed it one buffer's dB + wall duration.
 struct SilenceVAD {
     var speechThresholdDB: Float = -40
-    var trailingSilence: Double = 1.2
+    var trailingSilence: Double = 0.9
 
     private(set) var started = false
     private(set) var silenceElapsed: Double = 0

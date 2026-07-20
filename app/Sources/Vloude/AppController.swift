@@ -17,16 +17,32 @@ final class AppController: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var lastError: String?
 
+    static let shared = AppController()
+
     let server = ControlServer()
     private let player = TTSPlayer()
     private let mic = MicCapture()
+    private var started = false
 
     func start() {
+        guard !started else { return }   // idempotent: launch + menu .task may both call
+        started = true
         server.onTurn = { [weak self] turn in
-            Task { @MainActor in await self?.handleTurn(turn) }
+            Task { @MainActor in
+                self?.upsert(SessionInfo(id: self?.routeKey(turn.tmux_pane, turn.session_id) ?? turn.session_id,
+                                         project: turn.project, pane: turn.tmux_pane, status: "speaking"))
+            }
         }
         server.onReady = { [weak self] ready in
             Task { @MainActor in self?.playReady(ready) }
+        }
+        // The long-poll pipeline: speak → record → transcribe → return the reply text,
+        // which the hook feeds back into the Claude session (terminal-agnostic).
+        server.replyProvider = { [weak self] turn, done in
+            Task { @MainActor in
+                let transcript = await self?.runTurn(turn) ?? ""
+                done(transcript)
+            }
         }
         server.start()
     }
@@ -46,7 +62,10 @@ final class AppController: ObservableObject {
 
     // MARK: - /turn pipeline
 
-    private func handleTurn(_ turn: TurnPayload) async {
+    // Returns the transcribed voice reply ("" = user said nothing → end conversation).
+    // The server hands this back to the blocking Stop hook, which injects it into the
+    // Claude session. No terminal/tmux coupling.
+    private func runTurn(_ turn: TurnPayload) async -> String {
         let key = routeKey(turn.tmux_pane, turn.session_id)
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
         let config = AppConfig.load()
@@ -54,6 +73,7 @@ final class AppController: ObservableObject {
         MediaKeys.togglePlayPause()                 // pause YouTube/Spotify
         await speak(turn.speak, config: config)
         await beep()
+        player.stop()                               // free the audio device before capture
 
         setStatus(key, "listening")
         let wav = await record()
@@ -61,10 +81,9 @@ final class AppController: ObservableObject {
         setStatus(key, "transcribing")
         let text = await transcribe(wav, config: config)
 
-        if !text.isEmpty { Tmux.inject(pane: turn.tmux_pane, text: text) }
         MediaKeys.togglePlayPause()                 // resume
-        setStatus(key, "idle")
-        server.completeActiveTurn()
+        setStatus(key, text.isEmpty ? "idle" : "sent")
+        return text
     }
 
     private func speak(_ text: String, config: AppConfig) async {
@@ -99,9 +118,23 @@ final class AppController: ObservableObject {
 
     private func transcribe(_ wav: Data, config: AppConfig) async -> String {
         guard config.sttReady else { NSLog("Vloude: STT not configured"); return "" }
+        // Too little captured audio → skip Groq (it rejects < 0.01s) and end cleanly.
+        // 44-byte WAV header + ~0.2s of 16 kHz mono 16-bit.
+        let minBytes = 44 + (16000 * 2) / 5
+        guard wav.count >= minBytes else {
+            NSLog("Vloude: recording too short (\(wav.count) bytes) — no reply, likely no mic input")
+            return ""
+        }
         let req = Groq.transcriptionRequest(wav: wav, apiKey: config.groqKey, boundary: "vloudeBoundary")
         do {
-            let (data, _) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            guard code == 200 else {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                NSLog("Vloude: STT HTTP \(code): \(body)")
+                lastError = "STT HTTP \(code)"
+                return ""   // never feed an error body back as the reply
+            }
             return String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         } catch {

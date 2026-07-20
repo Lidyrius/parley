@@ -74,6 +74,16 @@ got2="$(jq -r '.speak' < "$bodyfile")"
 [ "$got2" = $'Zeile eins.\nEr sagte "hallo" — fertig? 你好 ✓' ] || fail "multiline speak mismatch: [$got2]"
 echo "PASS: multiline/quotes/unicode preserved as valid JSON"
 
+# --- Test 3b: earlier <speak> mentions (quoted files) -> only the LAST block is spoken ---
+start_listener
+in3b='{"last_assistant_message":"Die Skill sagt: beende mit <speak> Tags. CONTRACT zeigt <speak>Beispiel</speak> als Muster.\n\n<speak>Ich habe alles gesichtet, Sir. Soll ich committen?</speak>","cwd":"/tmp/p","session_id":"s3b"}'
+printf '%s' "$in3b" | VLOUDE_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+got3b="$(jq -r '.speak' < "$bodyfile")"
+[ "$got3b" = "Ich habe alles gesichtet, Sir. Soll ich committen?" ] \
+  || fail "should extract LAST speak block, got: [$got3b]"
+echo "PASS: multiple <speak> mentions -> only the last block spoken"
+
 # --- Test 3: input WITHOUT <speak> -> hook exits 0 and POSTs nothing ---
 start_listener
 in3='{"last_assistant_message":"Just a normal answer, no tag.","cwd":"/tmp/x","session_id":"s3"}'

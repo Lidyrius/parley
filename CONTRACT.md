@@ -1,40 +1,55 @@
 # Vloude wire contract
 
-Plugin (Claude Code hooks) → App (`127.0.0.1:8787`). Plain HTTP POST, JSON body.
+Plugin (Claude Code hooks) ⇄ App (`127.0.0.1:8787`). Plain HTTP, JSON.
 
-## `POST /turn`
-Fired by the **Stop** hook when a Claude turn ends and a `<speak>…</speak>` line was emitted.
+Terminal-agnostic voice loop (works in Warp, iTerm, tmux, any terminal): the Stop hook
+**long-polls** the app and feeds the transcribed reply back into the session via a
+`{"decision":"block"}` stop decision — no keystroke/tmux injection.
 
+## `POST /turn`  (long-poll / blocking)
+Fired by the **Stop** hook when a turn ends with a `<speak>…</speak>` line. The hook
+BLOCKS on this request. The app speaks the line, records the user's voice reply,
+transcribes it, and only then responds.
+
+Request:
 ```json
 {
   "event": "turn",
   "session_id": "abc123",
   "cwd": "/Users/sydney/workspace/privat/vloude",
   "project": "vloude",
-  "tmux_pane": "%3",
-  "speak": "Tests grün, API deployed. Soll ich das Log-Level senken?"
+  "tmux_pane": "%3",              // "" outside tmux — no longer used for routing
+  "speak": "Tests grün. Soll ich das Log-Level senken, Sir?"
 }
 ```
-
-- `speak` — text between `<speak>` and `</speak>` in the last assistant message. Never empty (hook skips POST if empty).
-- `tmux_pane` — value of `$TMUX_PANE` in the hook's shell (empty string if not in tmux → app cannot inject, speaks only).
-- `project` — `basename "$cwd"`, used as the spoken/UI label.
-
-App enqueues, speaks, records reply, transcribes, then injects back:
+Response (after the user stops talking / silence / timeout):
+```json
+{ "transcript": "Ja, mach das." }   // "" = user said nothing → end the conversation
 ```
-tmux send-keys -t "$tmux_pane" -l "<transcript>"   # literal, no interpretation
-tmux send-keys -t "$tmux_pane" Enter
+
+The hook then, if transcript non-empty, emits on stdout:
+```json
+{ "decision": "block", "reason": "Ja, mach das.", "systemMessage": "🎙️ Vloude: Sprachantwort eingespeist" }
 ```
+which continues the Claude session with the spoken reply as the next turn. Empty
+transcript → hook exits 0 → session ends normally.
+
+App-side caps bound the block: ~8 s no-speech timeout, ~20 s max recording, then Groq
+STT. The hook allows up to 120 s (`timeout: 130` in hooks.json).
 
 ## `POST /ready`
-Fired on skill activation (SessionStart / skill entry) to wake + greet.
-
+Fired on skill activation to wake + greet. App plays a random pre-cached Jarvis clip.
 ```json
 { "event": "ready", "session_id": "abc123", "cwd": "…", "project": "vloude", "tmux_pane": "%3" }
 ```
 
-App plays a random pre-cached "Ich bin bereit" clip. No reply loop.
+## `GET /health`
+`200 {"ok":true}` — used by `greet.sh` to detect/relaunch the app.
 
-## App responses
-`200 {"ok":true}` on accept. Hook ignores body (fire-and-forget, short timeout).
-If app unreachable, activation hook runs `open -a Vloude` once and retries.
+## Notes
+- Routing/identity is by `session_id` (the hook holds its own blocking connection);
+  `tmux_pane` is retained in the payload but no longer drives injection.
+- Multiple finished sessions each hold their `/turn` open; the app serializes them
+  (speaks one at a time) and answers each hook as its turn completes.
+- STT errors or too-short audio → app returns `""` (never an error body), so the
+  session ends cleanly instead of injecting garbage.

@@ -15,28 +15,31 @@ if [ -z "$key" ] || [ -z "$voice" ]; then
   exit 0
 fi
 
+# In-character Jarvis lines: dry, polite, British-butler AI addressing the user as "Sir".
 phrases=(
-  "Ich bin bereit."
-  "Bereit, leg los."
-  "Ich höre."
-  "Alles klar, ich bin da."
-  "Bereit wenn du bist."
-  "Sag an."
-  "Ich bin ganz Ohr."
-  "Bereit für die nächste Runde."
-  "Los geht's."
-  "Ich warte auf dich."
+  "Zu Diensten, Sir. Ich bin bereit."
+  "Systeme hochgefahren. Ich stehe bereit, Sir."
+  "Bereit, wann immer Sie es sind, Sir."
+  "Ganz zu Ihren Diensten. Womit fangen wir an?"
+  "Ich bin online, Sir. Sagen Sie an."
+  "Bereit und wartend, Sir."
+  "Alles bereit. Ich höre, Sir."
+  "Zu Ihren Diensten. Was steht an, Sir?"
+  "Ich bin da, Sir. Legen wir los."
+  "Bereit für die nächste Aufgabe, Sir."
 )
 
 i=0
 for phrase in "${phrases[@]}"; do
   fname="$(printf '%s/ready_%02d.pcm' "$out" "$i")"
-  curl -sS -X POST \
+  code=$(curl -sS -w '%{http_code}' -o "$fname" -X POST \
     "https://api.elevenlabs.io/v1/text-to-speech/${voice}/stream?output_format=pcm_24000" \
     -H "xi-api-key: ${key}" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n --arg t "$phrase" '{text:$t, model_id:"eleven_flash_v2_5"}')" \
-    -o "$fname"
+    -d "$(jq -n --arg t "$phrase" '{text:$t, model_id:"eleven_flash_v2_5", voice_settings:{stability:0.45, similarity_boost:0.85, style:0.3, use_speaker_boost:true}}')")
+  if [ "$code" != "200" ]; then
+    echo "ERROR: clip $i failed (HTTP $code): $(cat "$fname")"; rm -f "$fname"; exit 1
+  fi
   echo "wrote $fname ($phrase)"
   i=$((i + 1))
 done
