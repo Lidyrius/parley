@@ -15,10 +15,10 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
       (hook uses jq for JSON assembly; test 2 asserts unicode/quotes/newlines round-trip)
 
 ## Phase 2 — App skeleton builds
-- [ ] `app/Package.swift`: executable target `Vloude`, platform `.macOS(.v26)`, SwiftUI
-- [ ] `@main` SwiftUI App with `MenuBarExtra`, `LSUIElement` behaviour (menu-bar only, no dock)
-- [ ] Verify: `cd app && swift build -c release` succeeds
-- [ ] Verify: `cd app && swift test` runs (even if only a trivial test at first)
+- [x] `app/Package.swift`: executable target `Vloude`, platform `.macOS(.v26)`, SwiftUI
+- [x] `@main` SwiftUI App with `MenuBarExtra`, `LSUIElement` behaviour (menu-bar only, no dock)
+- [x] Verify: `cd app && swift build -c release` succeeds
+- [x] Verify: `cd app && swift test` runs (even if only a trivial test at first)
 
 ## Phase 3 — Loopback HTTP server + turn queue
 - [ ] `NWListener` (or minimal socket) on `127.0.0.1:8787`, routes `/health` `/turn` `/ready`
