@@ -37,8 +37,9 @@ payload="$(jq -n \
   --arg speak "$speak" \
   '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak}')"
 
-# Blocks while the app speaks + records + transcribes (bounded by the app's own caps).
-resp="$(curl -sS --max-time 120 -X POST "http://127.0.0.1:${PORT}/turn" \
+# Blocks while the app speaks + records + transcribes. Must exceed the app's max
+# recording cap (90 s) + speak + STT; the hook timeout (hooks.json) in turn exceeds this.
+resp="$(curl -sS --max-time 140 -X POST "http://127.0.0.1:${PORT}/turn" \
   -H 'Content-Type: application/json' -d "$payload" 2>/dev/null || true)"
 
 transcript="$(printf '%s' "$resp" | jq -r '.transcript // ""' 2>/dev/null || true)"

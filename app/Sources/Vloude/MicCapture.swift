@@ -23,7 +23,9 @@ final class MicCapture: @unchecked Sendable {
     private var endReason = "unknown"
 
     private let noSpeechTimeout = 8.0
-    private let maxListenSeconds = 20.0
+    // Long spoken replies must fit: VAD ends on ~0.9 s silence anyway, this is only the
+    // hard ceiling. Kept well below the hook/curl timeouts (curl 140 s, hook 150 s).
+    private let maxListenSeconds = 90.0
 
     func start(onFinished: @escaping (Data) -> Void) {
         finished = false
