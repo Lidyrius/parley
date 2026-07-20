@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+app/.build/
+*.xcodeproj
+app/Sources/Vloude/Resources/ready/*.pcm
+*.env
+secrets*
+.claude/ralph-loop.local.md
