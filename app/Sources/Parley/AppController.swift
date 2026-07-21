@@ -163,10 +163,10 @@ final class AppController: ObservableObject {
         activePlayer = player
         do { try player.start() }
         catch { Log.write("done-tone start failed: \(error)"); activePlayer = nil; return }
-        // Soft, warm ascending chime (C5 → G5) — lower + gentler than before.
-        player.scheduleChime(frequency: 523.25, seconds: 0.32, amplitude: 0.5, decay: 8)
+        // Soft, warm ascending chime (C5 → G5), ~20% quieter.
+        player.scheduleChime(frequency: 523.25, seconds: 0.32, amplitude: 0.4, decay: 8)
         await withCheckedContinuation { cont in
-            player.scheduleChime(frequency: 783.99, seconds: 0.6, amplitude: 0.5, decay: 5.5) { cont.resume() }
+            player.scheduleChime(frequency: 783.99, seconds: 0.6, amplitude: 0.4, decay: 5.5) { cont.resume() }
         }
         player.stop()
         activePlayer = nil
