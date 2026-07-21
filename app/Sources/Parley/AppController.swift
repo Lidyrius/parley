@@ -58,18 +58,12 @@ final class AppController: ObservableObject {
 
     // MARK: - /ready greeting
 
+    // Arm the session on /ready. No greeting clip is played: the skill's first <speak>
+    // label is the spoken greeting (avoids a double greeting — clip + spoken line).
     private func playReady(_ ready: ReadyPayload) {
         StatsStore.shared.startSession()
         upsert(SessionInfo(id: routeKey(ready.tmux_pane, ready.session_id),
                            project: ready.project, pane: ready.tmux_pane, status: "ready"))
-        guard let data = ReadyClips.randomClipData() else {
-            NSLog("Parley: no ready clips bundled, greeting silent")
-            return
-        }
-        let p = TTSPlayer(rate: AppConfig.load().speakingRate)
-        activePlayer = p
-        try? p.start()
-        p.enqueue(pcmChunk: data)
     }
 
     // MARK: - /turn pipeline
