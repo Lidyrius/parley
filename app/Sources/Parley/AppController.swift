@@ -23,6 +23,8 @@ final class AppController: ObservableObject {
     let server = ControlServer()
     private let mic = MicCapture()
     private let hud = RecordingHUD()
+    // Retained so it isn't deallocated mid-playback (a temporary NSSound often never plays).
+    private let doneSound = NSSound(named: NSSound.Name("Pop"))
     private var activePlayer: TTSPlayer?   // fresh per playback; released before capture
     private var started = false
 
@@ -94,7 +96,11 @@ final class AppController: ObservableObject {
         Log.write("record start")
         let wav = await record()
         Log.write("record done bytes=\(wav.count)")
-        NSSound(named: "Pop")?.play()               // "done listening" cue (distinct from the pre-record beep)
+        // "done listening" cue. Small delay so the mic engine has fully torn down and the
+        // output device is free, then play a retained NSSound (so it isn't GC'd mid-play).
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        if let s = doneSound { s.stop(); s.play(); Log.write("done-sound played") }
+        else { NSSound.beep(); Log.write("done-sound: 'Pop' not found, used NSBeep") }
 
         setStatus(key, "transcribing")
         Log.write("transcribe start")
