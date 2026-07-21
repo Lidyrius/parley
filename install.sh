@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Vloude one-command installer.
+#   curl -fsSL https://raw.githubusercontent.com/sydney/vloude/main/install.sh | bash
+# Builds the macOS app, installs the Claude Code plugin, and runs onboarding — so a
+# fresh Claude Code session can use /vloude:voice right away.
+set -euo pipefail
+
+REPO_URL="${VLOUDE_REPO:-https://github.com/sydney/vloude}"
+INSTALL_DIR="${VLOUDE_DIR:-$HOME/.vloude/src}"
+
+info() { printf '\033[1;35m▸ %s\033[0m\n' "$1"; }
+die()  { printf '\033[1;31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
+
+# 0. platform + deps
+[ "$(uname)" = "Darwin" ] || die "Vloude ist eine macOS-App."
+command -v git  >/dev/null || die "git fehlt."
+command -v jq   >/dev/null || die "jq fehlt (brew install jq)."
+command -v curl >/dev/null || die "curl fehlt."
+command -v swift >/dev/null || die "Xcode / Swift-Toolchain fehlt (Xcode 26)."
+
+# 1. locate or fetch the source
+SRC=""
+selfdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+if [ -n "$selfdir" ] && [ -f "$selfdir/scripts/make-app.sh" ] && [ -d "$selfdir/plugin" ]; then
+  SRC="$selfdir"                                  # running inside a checkout
+else
+  info "Hole Vloude nach $INSTALL_DIR"
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    git -C "$INSTALL_DIR" pull --ff-only >/dev/null 2>&1 || true
+  else
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone --depth 1 "$REPO_URL" "$INSTALL_DIR" || die "git clone fehlgeschlagen ($REPO_URL)."
+  fi
+  SRC="$INSTALL_DIR"
+fi
+
+# 2. build + install the app bundle
+info "Baue Vloude.app"
+bash "$SRC/scripts/make-app.sh"
+
+# 3. install the plugin (auto-loads every session as vloude@skills-dir)
+info "Installiere Claude-Code-Plugin"
+mkdir -p "$HOME/.claude/skills"
+ln -sfn "$SRC/plugin" "$HOME/.claude/skills/vloude"
+
+# 4. render Jarvis greeting clips if a key is around (optional, best-effort)
+if [ -f "$SRC/.env" ]; then
+  info "Rendere Begrüßungs-Clips"
+  ( set -a; . "$SRC/.env"; set +a; bash "$SRC/scripts/generate-ready-clips.sh" >/dev/null 2>&1 || true )
+  bash "$SRC/scripts/make-app.sh" >/dev/null 2>&1 || true
+fi
+
+# 5. onboarding (TUI)
+info "Starte Einrichtung"
+bash "$SRC/scripts/onboard-tui.sh"
+
+# 6. launch the menu-bar app
+open -a Vloude >/dev/null 2>&1 || true
+
+printf '\n\033[1;32m✓ Vloude installiert.\033[0m\n'
+printf 'Starte eine \033[1mneue\033[0m Claude-Code-Sitzung und tippe \033[1m/vloude:voice\033[0m.\n'
+printf 'Beim ersten echten Turn: Mikrofon & Bedienungshilfen erlauben.\n'

@@ -1,7 +1,6 @@
 import SwiftUI
 import AppKit
 
-@main
 struct VloudeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var controller = AppController.shared
