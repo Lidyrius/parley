@@ -31,6 +31,16 @@ lines=(
   "other|Verstanden, Sir. Ich kümmere mich darum."
   "other|Alles klar, ich sehe mir das an."
   "other|Zu Diensten. Ich nehme mich der Sache an."
+  "question|Gute Frage, Sir. Ich prüfe das kurz und habe gleich eine Antwort."
+  "question|Einen Augenblick, ich sehe nach und antworte sogleich."
+  "question|Lassen Sie mich das kurz prüfen, dann habe ich Ihre Antwort."
+  "research|Verstanden, Sir. Ich recherchiere das kurz und melde mich."
+  "research|Alles klar, ich sehe mich kurz um und berichte Ihnen."
+  "research|Zu Diensten. Ich schaue mich um und komme mit Ergebnissen zurück."
+  "feature_research|Sehr wohl, ich recherchiere kurz und baue das Feature dann ein."
+  "feature_research|Verstanden — erst die Recherche, dann der Einbau. Ich melde mich."
+  "bug_feature|Verstanden, Sir. Ich behebe den Fehler und baue die Erweiterung ein."
+  "bug_feature|Alles klar, Fix und Feature — ich mache mich an beides."
 )
 
 i=0

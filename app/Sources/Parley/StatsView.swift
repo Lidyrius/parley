@@ -11,17 +11,22 @@ struct StatsView: View {
     private var data: StatsData { scope == .session ? store.session : store.total }
 
     // Intent colors — the one place we spend color, tied to what the categories mean.
-    private static let intentOrder = ["FEATURE", "BUG", "STOP", "CONTINUE", "OTHER"]
+    private static let intentOrder = [
+        "FEATURE", "BUG", "RESEARCH", "QUESTION", "CONTINUE", "STOP",
+        "FEATURE_RESEARCH", "BUG_FEATURE", "OTHER",
+    ]
     private func color(_ intent: String) -> Color {
         switch intent {
-        case "FEATURE": .blue; case "BUG": .orange; case "STOP": .secondary
-        case "CONTINUE": .green; default: .purple
+        case "FEATURE": .blue; case "BUG": .orange; case "RESEARCH": .mint
+        case "QUESTION": .cyan; case "CONTINUE": .green; case "STOP": .secondary
+        case "FEATURE_RESEARCH": .indigo; case "BUG_FEATURE": .pink; default: .purple
         }
     }
     private func label(_ intent: String) -> String {
         switch intent {
-        case "FEATURE": "Feature"; case "BUG": "Bug"; case "STOP": "Stopp"
-        case "CONTINUE": "Weiter"; default: "Sonstiges"
+        case "FEATURE": "Feature"; case "BUG": "Bug"; case "RESEARCH": "Research"
+        case "QUESTION": "Frage"; case "CONTINUE": "Weiter"; case "STOP": "Stopp"
+        case "FEATURE_RESEARCH": "Feat+Rech"; case "BUG_FEATURE": "Bug+Feat"; default: "Sonstiges"
         }
     }
 

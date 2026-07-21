@@ -1,14 +1,25 @@
 import Foundation
 
 // Intent of the user's spoken reply, used to pick a cached acknowledgement line.
+// Includes two likely multi-intent combos (research-then-build, fix-and-extend).
 enum Intent: String, CaseIterable {
-    case feature = "FEATURE"    // wants something built / added
-    case bug     = "BUG"        // reports something broken / wants a fix
-    case stop    = "STOP"       // wants us to pause / stop / wait
-    case cont    = "CONTINUE"   // proceed / yes / go on
-    case other   = "OTHER"      // anything else / unclear
+    case feature         = "FEATURE"           // wants something built / added
+    case bug             = "BUG"               // reports something broken / wants a fix
+    case research        = "RESEARCH"          // look something up / investigate
+    case question        = "QUESTION"          // asks a question expecting an answer
+    case stop            = "STOP"              // pause / stop / wait
+    case cont            = "CONTINUE"          // proceed / yes / go on
+    case featureResearch = "FEATURE_RESEARCH"  // research, then build
+    case bugFeature      = "BUG_FEATURE"       // fix and extend
+    case other           = "OTHER"
 
     var folder: String { rawValue.lowercased() }
+
+    // Order for keyword matching: combos + specific labels BEFORE their substrings
+    // (so "FEATURE_RESEARCH" isn't matched as "FEATURE").
+    static let matchOrder: [Intent] = [
+        .featureResearch, .bugFeature, .question, .research, .feature, .bug, .stop, .cont,
+    ]
 }
 
 // Classify the transcript via Groq (OpenAI-compatible chat). Fast + cheap; falls back
@@ -19,10 +30,18 @@ enum Classifier {
 
     private static let system = """
     You are an intent classifier for short messages a developer speaks to a coding \
-    assistant. Reply with EXACTLY ONE word, one of: FEATURE, BUG, STOP, CONTINUE, OTHER.
-    FEATURE = wants something built or added. BUG = reports something broken or wants a \
-    fix. STOP = wants the assistant to pause, stop, or wait. CONTINUE = says to proceed / \
-    yes / go on / keep going. OTHER = anything else or unclear. Output only the word.
+    assistant. Reply with EXACTLY ONE label from this list, nothing else:
+    FEATURE = wants something built or added.
+    BUG = reports something broken or wants a fix.
+    RESEARCH = wants you to look something up, investigate, or find out.
+    QUESTION = asks a question expecting an answer.
+    STOP = wants you to pause, stop, or wait.
+    CONTINUE = proceed / yes / go on / keep going.
+    FEATURE_RESEARCH = wants you to research something AND then build a feature.
+    BUG_FEATURE = wants a fix AND a new capability.
+    OTHER = anything else or unclear.
+    Use a combo label (FEATURE_RESEARCH, BUG_FEATURE) only when BOTH parts are clearly \
+    present. Output only the label.
     """
 
     static func request(text: String, apiKey: String) -> URLRequest {
@@ -50,8 +69,7 @@ enum Classifier {
               let msg = choices.first?["message"] as? [String: Any],
               let content = msg["content"] as? String else { return .other }
         let up = content.uppercased()
-        // Check the specific ones before OTHER so "OTHER" isn't shadowed.
-        for i in [Intent.feature, .bug, .stop, .cont] where up.contains(i.rawValue) { return i }
+        for i in Intent.matchOrder where up.contains(i.rawValue) { return i }
         return .other
     }
 }

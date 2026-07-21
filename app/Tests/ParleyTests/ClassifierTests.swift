@@ -9,9 +9,17 @@ final class ClassifierTests: XCTestCase {
     func testParsesEachIntent() {
         XCTAssertEqual(Classifier.parse(response("FEATURE")), .feature)
         XCTAssertEqual(Classifier.parse(response("BUG")), .bug)
+        XCTAssertEqual(Classifier.parse(response("RESEARCH")), .research)
+        XCTAssertEqual(Classifier.parse(response("QUESTION")), .question)
         XCTAssertEqual(Classifier.parse(response("STOP")), .stop)
         XCTAssertEqual(Classifier.parse(response("CONTINUE")), .cont)
         XCTAssertEqual(Classifier.parse(response("OTHER")), .other)
+    }
+
+    func testParsesCombosBeforeSubstrings() {
+        // Must not be shadowed by FEATURE / BUG.
+        XCTAssertEqual(Classifier.parse(response("FEATURE_RESEARCH")), .featureResearch)
+        XCTAssertEqual(Classifier.parse(response("BUG_FEATURE")), .bugFeature)
     }
 
     func testParsesWithSurroundingText() {
