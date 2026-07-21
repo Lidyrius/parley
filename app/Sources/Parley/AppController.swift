@@ -25,6 +25,10 @@ final class AppController: ObservableObject {
     private let hud = RecordingHUD()
     private var activePlayer: TTSPlayer?   // fresh per playback; released before capture
     private var started = false
+    // When Parley itself last produced audio. CoreAudio's "device is running" lingers a
+    // couple seconds after our own TTS, which would masquerade as external media — so we
+    // distrust the playback snapshot within this window (avoids resuming a paused video).
+    private var lastSelfAudioAt = Date.distantPast
 
     func start() {
         guard !started else { return }   // idempotent: launch + menu .task may both call
@@ -77,14 +81,14 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
         Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
 
-        // Detect playing media via CoreAudio (MediaRemote's play-state getter is
-        // restricted for third-party apps → always false). At turn start this is
-        // accurate: a video paused for a while has released the device (inactive); a
-        // playing one is active. Control via EXPLICIT MediaRemote pause/play (not the
-        // toggle key), so an already-paused video is never accidentally started. Resume
-        // only what was playing at the start. (The post-pause output-active signal
-        // lingers, so we can't use a delta — hence the start-of-turn snapshot.)
-        let mediaWasPlaying = AudioDevices.isDefaultOutputActive()
+        // Detect playing media via CoreAudio. MediaRemote's now-playing info/state is
+        // entitlement-gated for third-party apps on macOS 15.4+/26 (returns nothing), so
+        // that's not an option. The catch: the device-active flag lingers after Parley's
+        // OWN TTS, which would masquerade as external media and make us resume a paused
+        // video. Guard: ignore the reading if we produced audio within the last ~2.5 s.
+        // Control via EXPLICIT pause/play (never the toggle); resume only what was playing.
+        let selfQuiet = Date().timeIntervalSince(lastSelfAudioAt) > 2.5
+        let mediaWasPlaying = selfQuiet && AudioDevices.isDefaultOutputActive()
         if mediaWasPlaying {
             MediaControl.shared.pause()
             Log.write("media playing → paused")
@@ -150,6 +154,7 @@ final class AppController: ObservableObject {
         await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
         player.stop()
         activePlayer = nil
+        lastSelfAudioAt = Date()
         // ponytail: settle lets CoreAudio release the output device before the mic engine
         // claims it. Raised to 450 ms after intermittent 0-buffer captures recurred.
         try? await Task.sleep(nanoseconds: 450_000_000)
@@ -235,6 +240,7 @@ final class AppController: ObservableObject {
         try? await Task.sleep(nanoseconds: UInt64((seconds + 0.3) * 1_000_000_000))
         player.stop()
         activePlayer = nil
+        lastSelfAudioAt = Date()
     }
 
     private func playChime() async {
@@ -247,6 +253,7 @@ final class AppController: ObservableObject {
         }
         player.stop()
         activePlayer = nil
+        lastSelfAudioAt = Date()
     }
 
     private func record() async -> Data {
