@@ -18,6 +18,10 @@ struct SessionInfo: Identifiable, Equatable {
 final class AppController: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var lastError: String?
+    @Published var muted = false   // manual mute toggle (menu)
+
+    // Muted when the user toggled it OR the Mac is in a Focus / Do-Not-Disturb mode.
+    var effectivelyMuted: Bool { muted || FocusStatus.doNotDisturbActive() }
 
     static let shared = AppController()
 
@@ -77,6 +81,14 @@ final class AppController: ObservableObject {
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
         let config = AppConfig.load()
         Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
+
+        // Muted (manual toggle or macOS Do-Not-Disturb) → stay silent: no TTS, no mic, no
+        // pill. Return "" so the hook ends the turn cleanly; the loop resumes when unmuted.
+        if effectivelyMuted {
+            Log.write("muted (manual=\(muted) dnd=\(FocusStatus.doNotDisturbActive())) → skipping turn")
+            setStatus(key, "muted")
+            return ""
+        }
 
         // Pause media that is ACTUALLY playing (via each app's own player state — the only
         // reliable signal), then resume exactly those apps afterwards. Never touches media

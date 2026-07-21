@@ -34,6 +34,16 @@ struct MenuBarView: View {
                 }
 
                 Divider()
+                Toggle(isOn: $controller.muted) {
+                    Text(controller.muted ? "Stumm — Parley schweigt" : "Stumm schalten")
+                }
+                .toggleStyle(.switch).controlSize(.small)
+                if !controller.muted && FocusStatus.doNotDisturbActive() {
+                    Text("Nicht stören aktiv — Parley schweigt automatisch")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+
+                Divider()
                 HStack {
                     Button("Statistiken…") { StatsPresenter.shared.show() }
                     SettingsLink { Text("Settings…") }
@@ -55,6 +65,7 @@ struct MenuBarView: View {
         case "transcribing": return .orange
         case "ready": return .teal
         case "queued": return .yellow
+        case "muted": return .gray
         default: return .secondary
         }
     }
