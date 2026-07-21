@@ -1,25 +1,26 @@
 import SwiftUI
 import AppKit
 
-// Floating "listening" pill: a live mic waveform + a volume-pulsing orb in a capsule
-// at the bottom-center of the screen, above every window / space / full-screen app.
-// Rendered with Canvas inside TimelineView(.animation) → redraws at the display refresh
-// (60/120fps), with per-frame easing so motion stays smooth even though raw mic level
-// samples arrive only ~30×/s. Shows while recording, then a brief "done" state.
+// Floating "listening" pill: a live mic waveform + a volume-pulsing orb in a capsule at
+// the bottom-center of the screen, above every window / space / full-screen app.
+//
+// Animation is driven by a 60 Hz timer that eases state and bumps a @Published tick —
+// NOT TimelineView(.animation), which does not run in a non-key / nonactivating NSPanel
+// (so the waveform never moved while recording). State-change redraws work regardless
+// of window focus.
 @MainActor
 final class RecordingHUD: ObservableObject {
     static let barCount = 56
 
-    // Plain state, eased + read inside the animation frame (not @Published — the
-    // TimelineView already redraws every frame, so we avoid publish churn).
     fileprivate var target = [Float](repeating: 0, count: RecordingHUD.barCount)
     fileprivate var display = [Float](repeating: 0, count: RecordingHUD.barCount)
     fileprivate var latest: Float = 0
     fileprivate var orb: Float = 0
-
+    @Published fileprivate var tick: Int = 0
     @Published var done = false
 
     private var panel: NSPanel?
+    private var timer: DispatchSourceTimer?
     private var hideWork: DispatchWorkItem?
 
     func show() {
@@ -31,6 +32,7 @@ final class RecordingHUD: ObservableObject {
         if panel == nil { panel = makePanel() }
         position()
         panel?.orderFrontRegardless()
+        startTimer()
     }
 
     func push(_ level: Float) {
@@ -38,18 +40,35 @@ final class RecordingHUD: ObservableObject {
         if level > latest { latest = level }   // fast attack for the orb
     }
 
-    // Eased one frame; called from the Canvas renderer each display refresh.
-    fileprivate func step() {
-        for i in display.indices { display[i] += (target[i] - display[i]) * 0.35 }
-        orb += (latest - orb) * 0.30
-        latest *= 0.86                          // release so the orb settles when quiet
-    }
-
     func finish() {
         done = true
-        let work = DispatchWorkItem { [weak self] in self?.panel?.orderOut(nil) }
+        let work = DispatchWorkItem { [weak self] in
+            self?.panel?.orderOut(nil)
+            self?.stopTimer()
+        }
         hideWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: work)
+    }
+
+    private func startTimer() {
+        stopTimer()
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now(), repeating: 1.0 / 60.0)
+        t.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                for i in self.display.indices { self.display[i] += (self.target[i] - self.display[i]) * 0.35 }
+                self.orb += (self.latest - self.orb) * 0.30
+                self.latest *= 0.86                  // release so the orb settles when quiet
+                self.tick &+= 1                      // publish → redraw
+            }
+        }
+        timer = t
+        t.resume()
+    }
+
+    private func stopTimer() {
+        timer?.cancel(); timer = nil
     }
 
     private func makePanel() -> NSPanel {
@@ -82,14 +101,12 @@ private struct WaveformPill: View {
         ZStack {
             Capsule().fill(.black.opacity(0.74))
             Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1)
-            TimelineView(.animation) { _ in
-                Canvas { ctx, size in
-                    hud.step()
-                    render(ctx, size, done: hud.done)
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 12)
+            Canvas { ctx, size in
+                _ = hud.tick               // redraw on every timer tick
+                render(ctx, size, done: hud.done)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
         .frame(width: 340, height: 64)
     }
@@ -98,11 +115,11 @@ private struct WaveformPill: View {
         let cy = size.height / 2
         let accent = done ? Color.green : Color.red
 
-        // Left: volume-pulsing orb with a soft glow.
+        // Left: volume-pulsing orb (shifted right so its glow isn't clipped).
         let orbR = 6 + CGFloat(min(1, hud.orb)) * 11
-        let cx = orbR
-        ctx.fill(Path(ellipseIn: CGRect(x: cx - orbR - 7, y: cy - orbR - 7,
-                                        width: (orbR + 7) * 2, height: (orbR + 7) * 2)),
+        let cx = orbR + 10
+        ctx.fill(Path(ellipseIn: CGRect(x: cx - orbR - 6, y: cy - orbR - 6,
+                                        width: (orbR + 6) * 2, height: (orbR + 6) * 2)),
                  with: .color(accent.opacity(0.16)))
         ctx.fill(Path(ellipseIn: CGRect(x: cx - orbR, y: cy - orbR, width: orbR * 2, height: orbR * 2)),
                  with: .radialGradient(
@@ -110,7 +127,7 @@ private struct WaveformPill: View {
                     center: CGPoint(x: cx, y: cy), startRadius: 0, endRadius: orbR))
 
         // Right: the waveform bars.
-        let left = cx + 18 + 12
+        let left = cx + orbR + 14
         let right = size.width
         let n = hud.display.count
         guard right > left, n > 0 else { return }
