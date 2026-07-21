@@ -25,7 +25,7 @@ enum Intent: String, CaseIterable {
 // Classify the transcript via Groq (OpenAI-compatible chat). Fast + cheap; falls back
 // to .other on any error. Only request construction + parsing are unit-tested.
 enum Classifier {
-    static let model = "llama-3.1-8b-instant"
+    static let model = "llama-3.3-70b-versatile"   // more accurate on combos/questions, still ~0.3s
     static let endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
     private static let system = """
@@ -34,7 +34,8 @@ enum Classifier {
     FEATURE = wants something built or added.
     BUG = reports something broken or wants a fix.
     RESEARCH = wants you to look something up, investigate, or find out.
-    QUESTION = asks a question expecting an answer.
+    QUESTION = phrased as a question / asks for information (was, wie, warum, wie viel, \
+    ob, ...) and does NOT ask you to change code. Only use BUG for an actual defect/fix.
     STOP = wants you to pause, stop, or wait.
     CONTINUE = proceed / yes / go on / keep going.
     FEATURE_RESEARCH = wants you to research something AND then build a feature.
