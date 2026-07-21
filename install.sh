@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Parley one-command installer.
+# Parley one-command installer / updater.
 #   curl -fsSL https://raw.githubusercontent.com/Lidyrius/parley/main/install.sh | bash
-# Builds the macOS app, installs the Claude Code plugin, and runs onboarding — so a
-# fresh Claude Code session can use /parley:voice right away.
+# Fresh machine: downloads the app, installs the plugin, runs onboarding. Already set up:
+# updates the app + plugin, keeps your keys/voice, skips onboarding, restarts the app.
 set -euo pipefail
 
 REPO_URL="${PARLEY_REPO:-https://github.com/Lidyrius/parley}"
@@ -27,6 +27,13 @@ need git; need jq; need curl
 # swift is NOT required: the prebuilt release is downloaded. Only the source-build
 # fallback (no release available) needs it — checked there.
 
+# Already set up? Then this run is an UPDATE: refresh the app + plugin but keep the
+# existing keys/voice and skip onboarding. Detected by an onboarded credential store.
+CREDS="$HOME/Library/Application Support/Parley/credentials.json"
+UPDATE=0
+[ -f "$CREDS" ] && [ -n "$(jq -r '.googleAPIKey // .elevenLabsAPIKey // ""' "$CREDS" 2>/dev/null)" ] && UPDATE=1
+[ "$UPDATE" = 1 ] && info "Parley ist bereits eingerichtet — führe Update aus (Einstellungen bleiben)."
+
 # 1. locate or fetch the source
 SRC=""
 selfdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
@@ -47,13 +54,13 @@ fi
 APP="$HOME/Applications/Parley.app"
 REPO_SLUG="${PARLEY_REPO#https://github.com/}"; REPO_SLUG="${REPO_SLUG:-Lidyrius/parley}"
 REL_URL="https://github.com/${REPO_SLUG}/releases/latest/download/Parley.app.zip"
-if curl -fsSL "$REL_URL" -o "$INSTALL_DIR/Parley.app.zip" 2>/dev/null \
-   && [ -s "$INSTALL_DIR/Parley.app.zip" ]; then
+REL_ZIP="$(mktemp -d)/Parley.app.zip"
+if curl -fsSL "$REL_URL" -o "$REL_ZIP" 2>/dev/null && [ -s "$REL_ZIP" ]; then
   info "Installiere fertige Parley.app (kein Build nötig)"
   rm -rf "$APP"; mkdir -p "$HOME/Applications"
-  ditto -x -k "$INSTALL_DIR/Parley.app.zip" "$HOME/Applications"
+  ditto -x -k "$REL_ZIP" "$HOME/Applications"
   xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true   # let Gatekeeper run the downloaded app
-  rm -f "$INSTALL_DIR/Parley.app.zip"
+  rm -f "$REL_ZIP"
 else
   command -v swift >/dev/null || die "Kein Release verfügbar und Swift/Xcode fehlt zum Bauen."
   info "Baue Parley.app aus Quellcode"
@@ -65,24 +72,31 @@ info "Installiere Claude-Code-Plugin"
 mkdir -p "$HOME/.claude/skills"
 ln -sfn "$SRC/plugin" "$HOME/.claude/skills/parley"
 
-# 4. onboarding (TUI) — collects the API keys, language, voice, microphone
-info "Starte Einrichtung"
-bash "$SRC/scripts/onboard-tui.sh"
+# 4. onboarding (TUI) — fresh install only; an update keeps the existing keys/voice.
+if [ "$UPDATE" = 0 ]; then
+  info "Starte Einrichtung"
+  bash "$SRC/scripts/onboard-tui.sh"
+fi
 
-# 5. render the Jarvis greeting clips using the key just entered, then rebuild so they
-#    ship in the bundle (best-effort — a silent greeting is fine if this is skipped).
-CREDS="$HOME/Library/Application Support/Parley/credentials.json"
+# 5. render the voice clips (fresh install, or if they're missing after an update).
 GOOGLE_KEY="$(jq -r '.googleAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
-if [ -n "$GOOGLE_KEY" ]; then
+CLIPS_DIR="$HOME/Library/Application Support/Parley/clips"
+if [ -n "$GOOGLE_KEY" ] && { [ "$UPDATE" = 0 ] || ! ls "$CLIPS_DIR"/ready/*.pcm >/dev/null 2>&1; }; then
   info "Rendere Sprach-Clips in deiner Sprache (Google Chirp3 HD)"
   # Writes to Application Support/Parley/clips — the app reads these at runtime, so no
   # app rebuild (and no Xcode) is needed to get clips in the chosen language + voice.
   bash "$SRC/scripts/generate-clips-google.sh" || true
 fi
 
-# 6. launch the menu-bar app
+# 6. (re)launch the menu-bar app — on update, restart so the new binary takes effect.
+[ "$UPDATE" = 1 ] && pkill -f 'MacOS/Parley' >/dev/null 2>&1 || true
+sleep 1
 open -a Parley >/dev/null 2>&1 || true
 
-printf '\n\033[1;32m✓ Parley installiert.\033[0m\n'
-printf 'Starte eine \033[1mneue\033[0m Claude-Code-Sitzung und tippe \033[1m/parley:voice\033[0m.\n'
-printf 'Beim ersten echten Turn: Mikrofon & Bedienungshilfen erlauben.\n'
+if [ "$UPDATE" = 1 ]; then
+  printf '\n\033[1;32m✓ Parley aktualisiert.\033[0m Die App wurde neu gestartet.\n'
+else
+  printf '\n\033[1;32m✓ Parley installiert.\033[0m\n'
+  printf 'Starte eine \033[1mneue\033[0m Claude-Code-Sitzung und tippe \033[1m/parley:voice\033[0m.\n'
+  printf 'Beim ersten echten Turn: Mikrofon erlauben.\n'
+fi
