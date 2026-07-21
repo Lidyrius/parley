@@ -73,13 +73,14 @@ final class TTSPlayer {
         var samples = [Float](repeating: 0, count: n)
         let w1 = 2.0 * Double.pi * frequency / sr
         let w2 = 2.0 * Double.pi * frequency * 2.0 / sr
-        let w3 = 2.0 * Double.pi * frequency * 3.01 / sr   // slightly detuned → shimmer
-        let norm = 1.0 / 1.5
+        // Gentle: mostly the fundamental with just a hint of octave; drop the bright 3rd
+        // harmonic that made it shrill. Slow, soft attack.
+        let norm = 1.0 / 1.15
         for i in 0..<n {
             let t = Double(i) / sr
-            let attack = min(1.0, t / 0.006)
+            let attack = min(1.0, t / 0.014)
             let env = attack * exp(-t * decay)
-            let s = sin(Double(i) * w1) + 0.32 * sin(Double(i) * w2) + 0.10 * sin(Double(i) * w3)
+            let s = sin(Double(i) * w1) + 0.15 * sin(Double(i) * w2)
             samples[i] = Float(amplitude * env * s * norm)
         }
         guard let buf = makeBuffer(samples) else { completion?(); return }
