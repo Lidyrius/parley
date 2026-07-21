@@ -32,3 +32,8 @@ if [ -f "$CREDS" ]; then
   LANG_NAME="$(jq -r '.language // "Deutsch"' "$CREDS" 2>/dev/null || echo Deutsch)"
 fi
 echo "PARLEY_LANGUAGE=${LANG_NAME}"
+
+# Spoken project name from <project>/.parley.json (empty → the skill asks the user once).
+PROJECT_NAME=""
+[ -f "$PWD/.parley.json" ] && PROJECT_NAME="$(jq -r '.name // ""' "$PWD/.parley.json" 2>/dev/null || echo "")"
+echo "PARLEY_PROJECT_NAME=${PROJECT_NAME}"
