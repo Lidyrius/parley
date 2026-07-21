@@ -83,7 +83,9 @@ final class AppController: ObservableObject {
         var weActuallyPaused = false
         if AudioDevices.isDefaultOutputActive() {
             MediaControl.shared.pause()
-            try? await Task.sleep(nanoseconds: 350_000_000)
+            // 0.5 s: lets the paused audio actually go quiet AND gives a beat before
+            // speaking (requested) so we don't talk over the tail of the media.
+            try? await Task.sleep(nanoseconds: 500_000_000)
             weActuallyPaused = !AudioDevices.isDefaultOutputActive()   // output went quiet → real playback paused
             Log.write("media active → pause; stopped=\(weActuallyPaused)")
         } else {
