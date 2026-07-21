@@ -28,7 +28,11 @@ final class AppController: ObservableObject {
     let server = ControlServer()
     private let mic = MicCapture()
     private let hud = RecordingHUD()
-    private var activePlayer: TTSPlayer?   // fresh per playback; released before capture
+    // ONE long-lived output engine, reused for every playback. Creating a fresh
+    // AVAudioEngine per playback leaked HAL audio clients over a long session until both
+    // TTS output and mic input died (0 buffers). Reuse + stop() between playbacks frees the
+    // device for the mic without churning engines.
+    private let player = TTSPlayer()
     private var started = false
 
     func start() {
@@ -152,8 +156,7 @@ final class AppController: ObservableObject {
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
     private func speakAndBeep(_ text: String, config: AppConfig) async {
-        let player = TTSPlayer(rate: config.speakingRate)
-        activePlayer = player
+        player.setRate(config.speakingRate)
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
         if config.useGoogle {
             await synthGoogle(text, config: config, into: player)
@@ -165,7 +168,6 @@ final class AppController: ObservableObject {
         // Beep is queued after the speech buffers; its completion fires when both finish.
         await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
         player.stop()
-        activePlayer = nil
         // ponytail: settle lets CoreAudio release the output device before the mic engine
         // claims it. Raised to 450 ms after intermittent 0-buffer captures recurred.
         try? await Task.sleep(nanoseconds: 450_000_000)
@@ -243,26 +245,22 @@ final class AppController: ObservableObject {
     }
 
     private func playClip(_ data: Data, rate: Double = 1.0) async {
-        let player = TTSPlayer(rate: rate)
-        activePlayer = player
-        do { try player.start() } catch { activePlayer = nil; return }
+        player.setRate(rate)
+        do { try player.start() } catch { return }
         player.enqueue(pcmChunk: data)
         let seconds = Double(data.count / 2) / ElevenLabs.sampleRate / max(0.5, rate)   // faster rate → shorter
         try? await Task.sleep(nanoseconds: UInt64((seconds + 0.3) * 1_000_000_000))
         player.stop()
-        activePlayer = nil
     }
 
     private func playChime() async {
-        let player = TTSPlayer()
-        activePlayer = player
-        do { try player.start() } catch { Log.write("chime start failed: \(error)"); activePlayer = nil; return }
+        player.setRate(1.0)
+        do { try player.start() } catch { Log.write("chime start failed: \(error)"); return }
         player.scheduleChime(frequency: 523.25, seconds: 0.32, amplitude: 0.4, decay: 8)
         await withCheckedContinuation { cont in
             player.scheduleChime(frequency: 783.99, seconds: 0.6, amplitude: 0.4, decay: 5.5) { cont.resume() }
         }
         player.stop()
-        activePlayer = nil
     }
 
     private func record() async -> Data {

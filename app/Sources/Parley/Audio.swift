@@ -40,7 +40,14 @@ final class TTSPlayer {
         engine.connect(timePitch, to: engine.mainMixerNode, format: format)
     }
 
+    /// Set playback rate for the next buffers (pitch preserved). Cheap; safe to call often.
+    func setRate(_ rate: Double) {
+        let v = Float(min(2.0, max(0.5, rate)))
+        if timePitch.rate != v { timePitch.rate = v }
+    }
+
     func start() throws {
+        carry.removeAll(keepingCapacity: true)   // fresh playback; drop any stale odd byte
         if !engine.isRunning { try engine.start() }
         node.play()
     }
