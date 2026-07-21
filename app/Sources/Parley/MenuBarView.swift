@@ -35,6 +35,7 @@ struct MenuBarView: View {
 
                 Divider()
                 HStack {
+                    Button("Statistiken…") { StatsPresenter.shared.show() }
                     SettingsLink { Text("Settings…") }
                     Button("Setup…") { OnboardingPresenter.shared.show() }
                     Spacer()

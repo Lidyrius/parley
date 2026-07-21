@@ -52,6 +52,7 @@ final class AppController: ObservableObject {
     // MARK: - /ready greeting
 
     private func playReady(_ ready: ReadyPayload) {
+        StatsStore.shared.startSession()
         upsert(SessionInfo(id: routeKey(ready.tmux_pane, ready.session_id),
                            project: ready.project, pane: ready.tmux_pane, status: "ready"))
         guard let data = ReadyClips.randomClipData() else {
@@ -106,7 +107,11 @@ final class AppController: ObservableObject {
         Log.write("transcribe done chars=\(text.count)")
 
         // Classify the reply and play the matching cached Jarvis line (replaces the chime).
-        await acknowledge(text, config: config)
+        let intent = await acknowledge(text, config: config)
+        let recordSeconds = Double(max(0, wav.count - 44)) / 2.0 / 16000.0   // 16 kHz mono 16-bit WAV
+        StatsStore.shared.recordTurn(speak: turn.speak, transcript: text,
+                                     recordSeconds: recordSeconds, intent: intent.rawValue,
+                                     project: turn.project)
 
         if mediaWasPlaying {
             Log.write("media resume")
@@ -158,20 +163,23 @@ final class AppController: ObservableObject {
     // was not audible right after mic teardown).
     // Classify the reply → play the matching cached line; fall back to the chime when
     // there's no text, no clips bundled, or classification fails.
-    private func acknowledge(_ text: String, config: AppConfig) async {
+    @discardableResult
+    private func acknowledge(_ text: String, config: AppConfig) async -> Intent {
         // Settle: the mic engine just tore down; a cold output engine started too soon
         // renders into a contended device and produces no audible sound. Free it first.
         try? await Task.sleep(nanoseconds: 300_000_000)
+        var intent = Intent.other
         if !text.isEmpty {
-            let intent = await classify(text, config: config)
+            intent = await classify(text, config: config)
             Log.write("classified: \(intent.rawValue)")
             if let data = LineClips.randomClipData(for: intent) {
                 await playClip(data)
-                return
+                return intent
             }
             Log.write("no line clip for \(intent.rawValue) → chime")
         }
         await playChime()
+        return intent
     }
 
     private func classify(_ text: String, config: AppConfig) async -> Intent {
