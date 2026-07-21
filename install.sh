@@ -13,9 +13,17 @@ die()  { printf '\033[1;31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
 
 # 0. platform + deps
 [ "$(uname)" = "Darwin" ] || die "Parley ist eine macOS-App."
-command -v git  >/dev/null || die "git fehlt."
-command -v jq   >/dev/null || die "jq fehlt (brew install jq)."
-command -v curl >/dev/null || die "curl fehlt."
+# Auto-install missing tools via Homebrew when available; otherwise instruct the user.
+need() { # cmd [brew-pkg]
+  command -v "$1" >/dev/null && return
+  if command -v brew >/dev/null; then
+    info "Installiere $1 via Homebrew"
+    brew install "${2:-$1}" >/dev/null 2>&1 || die "$1-Installation via brew fehlgeschlagen."
+  else
+    die "$1 fehlt und Homebrew ist nicht installiert. Installiere Homebrew (brew.sh) oder $1 manuell."
+  fi
+}
+need git; need jq; need curl
 # swift is NOT required: the prebuilt release is downloaded. Only the source-build
 # fallback (no release available) needs it — checked there.
 
