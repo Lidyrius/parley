@@ -53,14 +53,17 @@ enum AudioDevices {
             mScope: kAudioObjectPropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return false }
-        let bufList = AudioBufferList.allocate(maximumBuffers: Int(size) / MemoryLayout<AudioBuffer>.stride)
-        defer { free(bufList.unsafeMutablePointer) }
-        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, bufList.unsafeMutablePointer) == noErr else { return false }
+        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr,
+              size >= UInt32(MemoryLayout<AudioBufferList>.size) else { return false }
+        // Raw byte allocation — AudioBufferList.allocate(maximumBuffers:) traps when the
+        // count is 0 (output-only devices report just the mNumberBuffers field).
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { raw.deallocate() }
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, raw) == noErr else { return false }
+        let list = UnsafeMutableAudioBufferListPointer(raw.assumingMemoryBound(to: AudioBufferList.self))
         var channels = 0
-        for buf in UnsafeMutableAudioBufferListPointer(bufList.unsafeMutablePointer) {
-            channels += Int(buf.mNumberChannels)
-        }
+        for buf in list { channels += Int(buf.mNumberChannels) }
         return channels > 0
     }
 

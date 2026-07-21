@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             AppController.shared.start()
             OnboardingPresenter.shared.showIfNeeded()   // first-run setup
+            // Ask for Accessibility (needed for the media Play/Pause key). No dialog if
+            // already trusted; with stable signing the grant now persists across rebuilds.
+            MediaKeys.ensureTrust()
         }
     }
 }

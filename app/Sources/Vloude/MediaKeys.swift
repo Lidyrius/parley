@@ -9,6 +9,15 @@ enum MediaKeys {
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
+    /// Check trust and, if not granted, show the system Accessibility prompt (adds the
+    /// app to the list and opens System Settings). Safe to call at launch — no dialog
+    /// if already trusted.
+    @discardableResult
+    static func ensureTrust(prompt: Bool = true) -> Bool {
+        // Literal key avoids referencing the non-Sendable global kAXTrustedCheckOptionPrompt.
+        return AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": prompt] as CFDictionary)
+    }
+
     /// Toggle system play/pause. No-op (returns false) without Accessibility trust.
     @discardableResult
     static func togglePlayPause() -> Bool {

@@ -44,6 +44,7 @@ final class AppController: ObservableObject {
                 done(transcript)
             }
         }
+        server.mediaTestProvider = { MediaKeys.togglePlayPause() }
         server.start()
     }
 
