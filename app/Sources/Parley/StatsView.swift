@@ -163,13 +163,16 @@ struct StatsView: View {
     }
 
     private var credits: some View {
-        HStack {
+        let free = StatsData.freeCharsPerMonth
+        let withinFree = data.estimatedDollarsThisMonth == 0
+        return HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("ElevenLabs diesen Monat").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                Text("\(int(Int(data.creditsThisMonth))) Credits").font(.callout.weight(.medium))
+                Text("Google TTS diesen Monat").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Text("\(int(data.charsThisMonth)) / \(int(free)) Zeichen frei")
+                    .font(.callout.weight(.medium))
             }
             Spacer()
-            Text(String(format: "≈ $%.2f", data.estimatedDollarsThisMonth))
+            Text(withinFree ? "gratis" : String(format: "≈ $%.2f", data.estimatedDollarsThisMonth))
                 .font(.system(.title3, design: .rounded).weight(.semibold)).foregroundStyle(.tint)
         }
         .padding(16)

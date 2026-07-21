@@ -16,11 +16,18 @@ struct StatsData: Codable, Equatable {
     var intents: [String: Int] = [:]        // FEATURE / BUG / STOP / CONTINUE / OTHER
     var projectTurns: [String: Int] = [:]
 
-    // Monthly credit accounting (ElevenLabs Flash = 0.5 credits/char).
-    var creditMonth = ""         // "YYYY-MM"
-    var creditsThisMonth = 0.0
+    // Monthly TTS-character accounting (Google Cloud TTS bills per character).
+    // Chirp3 HD: first 1M chars/month free, then $30 per 1M chars. Only the spoken
+    // summaries are billed live — cached greeting/ack clips are generated once.
+    static let freeCharsPerMonth = 1_000_000
+    static let dollarsPerMillionChars = 30.0
+    var charMonth = ""           // "YYYY-MM"
+    var charsThisMonth = 0
 
-    var estimatedDollarsThisMonth: Double { creditsThisMonth * 0.00022 }   // ~$22 / 100k credits
+    var billableCharsThisMonth: Int { max(0, charsThisMonth - Self.freeCharsPerMonth) }
+    var estimatedDollarsThisMonth: Double {
+        Double(billableCharsThisMonth) / 1_000_000 * Self.dollarsPerMillionChars
+    }
 
     mutating func record(speak: String, transcript: String, recordSeconds: Double,
                          intent: String, project: String, month: String) {
@@ -33,8 +40,8 @@ struct StatsData: Codable, Equatable {
         timeSavedSeconds += max(0, Double(uw) / 40.0 * 60.0 - recordSeconds)   // typing 40 wpm
         intents[intent, default: 0] += 1
         if !project.isEmpty { projectTurns[project, default: 0] += 1 }
-        if creditMonth != month { creditMonth = month; creditsThisMonth = 0 }
-        creditsThisMonth += Double(speak.count) * 0.5
+        if charMonth != month { charMonth = month; charsThisMonth = 0 }
+        charsThisMonth += speak.count
     }
 
     private func wordCount(_ s: String) -> Int {
