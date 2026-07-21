@@ -53,11 +53,12 @@ final class TTSPlayer {
     }
 
     /// Schedule a beep tone (played after speech). completion fires when it ends.
-    func scheduleBeep(frequency: Double = 880, seconds: Double = 0.12, completion: (() -> Void)? = nil) {
+    func scheduleBeep(frequency: Double = 880, seconds: Double = 0.12,
+                      amplitude: Double = 0.25, completion: (() -> Void)? = nil) {
         let n = Int(format.sampleRate * seconds)
         var samples = [Float](repeating: 0, count: n)
         let twoPiF = 2.0 * Double.pi * frequency / format.sampleRate
-        for i in 0..<n { samples[i] = Float(0.25 * sin(Double(i) * twoPiF)) }
+        for i in 0..<n { samples[i] = Float(amplitude * sin(Double(i) * twoPiF)) }
         guard let buf = makeBuffer(samples) else { completion?(); return }
         node.scheduleBuffer(buf, completionHandler: { completion?() })
     }

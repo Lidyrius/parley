@@ -154,9 +154,9 @@ final class AppController: ObservableObject {
         activePlayer = player
         do { try player.start() }
         catch { Log.write("done-tone start failed: \(error)"); activePlayer = nil; return }
-        player.scheduleBeep(frequency: 700, seconds: 0.10)
+        player.scheduleBeep(frequency: 660, seconds: 0.12, amplitude: 0.5)
         await withCheckedContinuation { cont in
-            player.scheduleBeep(frequency: 470, seconds: 0.16) { cont.resume() }
+            player.scheduleBeep(frequency: 440, seconds: 0.20, amplitude: 0.5) { cont.resume() }
         }
         player.stop()
         activePlayer = nil
