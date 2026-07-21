@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Vloude terminal onboarding. Asks for API keys, language, voice and microphone,
+# Parley terminal onboarding. Asks for API keys, language, voice and microphone,
 # writes them to the app's credential store, and marks onboarding complete — so a
-# Claude Code session can use /vloude:voice immediately. Uses `gum` for a nicer TUI
+# Claude Code session can use /parley:voice immediately. Uses `gum` for a nicer TUI
 # when available, otherwise plain bash prompts. No non-stdlib deps required.
 set -euo pipefail
 
-CREDS_DIR="$HOME/Library/Application Support/Vloude"
+CREDS_DIR="$HOME/Library/Application Support/Parley"
 CREDS="$CREDS_DIR/credentials.json"
 JARVIS="JyoJov3tFx6ucWOiDwTM"
 
 # Locate the app binary (for --list-mics / --set-mic / --mark-onboarded).
-BIN="${VLOUDE_BIN:-}"
-for c in "$HOME/Applications/Vloude.app/Contents/MacOS/Vloude" \
-         "/Applications/Vloude.app/Contents/MacOS/Vloude" \
-         "$(dirname "$0")/../app/.build/release/Vloude" \
-         "$(dirname "$0")/../app/.build/debug/Vloude"; do
+BIN="${PARLEY_BIN:-}"
+for c in "$HOME/Applications/Parley.app/Contents/MacOS/Parley" \
+         "/Applications/Parley.app/Contents/MacOS/Parley" \
+         "$(dirname "$0")/../app/.build/release/Parley" \
+         "$(dirname "$0")/../app/.build/debug/Parley"; do
   [ -z "$BIN" ] && [ -x "$c" ] && BIN="$c"
 done
 
@@ -37,7 +37,7 @@ pick() { # prompt then options... -> chosen option on stdout
   fi
 }
 
-say "Vloude — Einrichtung"
+say "Parley — Einrichtung"
 note "Deine Eingaben bleiben lokal in $CREDS (0600)."
 
 # --- API keys (prefill from existing creds / .env if present) ---
@@ -109,4 +109,4 @@ chmod 600 "$CREDS"
 
 say "Fertig ✓"
 note "Sprache: $LANG_NAME · Stimme: $VOICE_ID"
-note "Starte eine Claude-Code-Sitzung und tippe /vloude:voice."
+note "Starte eine Claude-Code-Sitzung und tippe /parley:voice."

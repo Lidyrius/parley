@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vloude Stop hook (terminal-agnostic voice loop).
+# Parley Stop hook (terminal-agnostic voice loop).
 #
 # 1. Extract the <speak>…</speak> line from the last assistant message.
 #    No tag  -> voice mode is off / nothing to say -> exit 0 (session ends normally).
@@ -11,7 +11,7 @@
 #    works in Warp / iTerm / any terminal.
 set -euo pipefail
 
-PORT="${VLOUDE_PORT:-8787}"
+PORT="${PARLEY_PORT:-8787}"
 input="$(cat)"
 
 # Extract the LAST <speak> block. The greedy `.*` prefix consumes any earlier <speak>
@@ -51,5 +51,5 @@ transcript="$(printf '%s' "$transcript" | perl -0777 -pe 's/^\s+|\s+$//g')"
 
 # Feed the voice reply back into the session as the next user turn.
 jq -n --arg r "$transcript" \
-  '{decision:"block", reason:$r, systemMessage:"🎙️ Vloude: Sprachantwort eingespeist"}'
+  '{decision:"block", reason:$r, systemMessage:"🎙️ Parley: Sprachantwort eingespeist"}'
 exit 0

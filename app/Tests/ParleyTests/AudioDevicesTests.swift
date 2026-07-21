@@ -1,5 +1,5 @@
 import XCTest
-@testable import Vloude
+@testable import Parley
 
 final class AudioDevicesTests: XCTestCase {
     // Regression: hasInput() used AudioBufferList.allocate(maximumBuffers:), which traps

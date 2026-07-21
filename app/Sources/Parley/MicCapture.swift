@@ -6,7 +6,7 @@ import AVFoundation
 // input device via CoreAudio) or a blocking engine.start() can't freeze the UI.
 // Fresh AVAudioEngine per recording (reuse silently kills input on later cycles).
 final class MicCapture: @unchecked Sendable {
-    private let q = DispatchQueue(label: "de.developaway.vloude.mic")
+    private let q = DispatchQueue(label: "de.developaway.parley.mic")
     private var engine: AVAudioEngine?
     private var vad = SilenceVAD(speechThresholdDB: -50)
     private var samples: [Int16] = []
@@ -218,7 +218,7 @@ final class MicCapture: @unchecked Sendable {
         {"auth":"\(authString())","buffers":\(buffersSeen),"maxDB":\(Int(maxDBSeen)),"samples":\(samples),"seconds":\(String(format: "%.1f", totalDuration)),"endReason":"\(endReason)"}
         """
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Vloude", isDirectory: true)
+            .appendingPathComponent("Parley", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         try? Data(json.utf8).write(to: base.appendingPathComponent("last-recording.json"))
     }

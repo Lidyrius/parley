@@ -1,4 +1,4 @@
-# Vloude — Progress (Ralph updates this every iteration)
+# Parley — Progress (Ralph updates this every iteration)
 
 Check a box `[x]` ONLY when its verify command passes. Add a short note per item if useful.
 Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
@@ -15,7 +15,7 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
       (hook uses jq for JSON assembly; test 2 asserts unicode/quotes/newlines round-trip)
 
 ## Phase 2 — App skeleton builds
-- [x] `app/Package.swift`: executable target `Vloude`, platform `.macOS(.v26)`, SwiftUI
+- [x] `app/Package.swift`: executable target `Parley`, platform `.macOS(.v26)`, SwiftUI
 - [x] `@main` SwiftUI App with `MenuBarExtra`, `LSUIElement` behaviour (menu-bar only, no dock)
 - [x] Verify: `cd app && swift build -c release` succeeds
 - [x] Verify: `cd app && swift test` runs (even if only a trivial test at first)
@@ -46,7 +46,7 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
 
 ## Phase 7 — Ready clips
 - [x] `scripts/generate-ready-clips.sh`: render 10 varied "ich bin bereit" clips via ElevenLabs into
-      `app/Sources/Vloude/Resources/ready/` (skips gracefully w/o API key), bundled as SPM resources
+      `app/Sources/Parley/Resources/ready/` (skips gracefully w/o API key), bundled as SPM resources
 - [x] `/ready` handler plays a random bundled clip
 
 ## Phase 8 — Menu-bar UI (Liquid Glass)
@@ -62,5 +62,5 @@ Blocked? Leave `[ ]` and write `BLOCKED: <reason>` under it.
 
 ## Phase 10 — Manual smoke test doc
 - [x] `SMOKE_TEST.md`: step-by-step human checks — grant Accessibility+mic, enable plugin
-      (`claude --plugin-dir …/plugin`), run `/vloude:voice`, confirm greeting, finish a turn, hear
+      (`claude --plugin-dir …/plugin`), run `/parley:voice`, confirm greeting, finish a turn, hear
       summary, reply by voice, see it typed back into the tmux pane; YouTube pause/resume

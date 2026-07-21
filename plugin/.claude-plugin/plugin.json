@@ -1,6 +1,6 @@
 {
-  "name": "vloude",
-  "displayName": "Vloude",
+  "name": "parley",
+  "displayName": "Parley",
   "version": "0.1.0",
   "description": "Voice conversation wrapper for Claude Code — speaks turn summaries and injects spoken replies back into the session.",
   "author": { "name": "sydney", "email": "sydney@developaway.de" },

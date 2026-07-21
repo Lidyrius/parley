@@ -5,7 +5,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
-out="$here/app/Sources/Vloude/Resources/ready"
+out="$here/app/Sources/Parley/Resources/ready"
 mkdir -p "$out"
 
 key="${ELEVENLABS_API_KEY:-}"

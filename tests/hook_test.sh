@@ -51,8 +51,8 @@ PY
 
 # --- Test 1: input WITH <speak> tag -> POST body has extracted speak text ---
 start_listener
-in1='{"last_assistant_message":"Here is a report.\n<speak>Tests grün, API deployed. Soll ich das Log-Level senken?</speak>","cwd":"/Users/sydney/workspace/privat/vloude","session_id":"abc123"}'
-printf '%s' "$in1" | VLOUDE_PORT=$port bash "$hook"
+in1='{"last_assistant_message":"Here is a report.\n<speak>Tests grün, API deployed. Soll ich das Log-Level senken?</speak>","cwd":"/Users/sydney/workspace/privat/parley","session_id":"abc123"}'
+printf '%s' "$in1" | PARLEY_PORT=$port bash "$hook"
 wait "$srv" 2>/dev/null || true
 
 [ -s "$bodyfile" ] || fail "no POST body received for tagged input"
@@ -61,13 +61,13 @@ got_speak="$(jq -r '.speak' < "$bodyfile")"
   || fail "speak mismatch: [$got_speak]"
 [ "$(jq -r '.event' < "$bodyfile")" = "turn" ] || fail "event != turn"
 [ "$(jq -r '.session_id' < "$bodyfile")" = "abc123" ] || fail "session_id mismatch"
-[ "$(jq -r '.project' < "$bodyfile")" = "vloude" ] || fail "project mismatch"
+[ "$(jq -r '.project' < "$bodyfile")" = "parley" ] || fail "project mismatch"
 echo "PASS: tagged input -> correct /turn JSON"
 
 # --- Test 2: multiline / quotes / unicode -> valid JSON, exact text ---
 start_listener
 in2='{"last_assistant_message":"<speak>Zeile eins.\nEr sagte \"hallo\" — fertig? 你好 ✓</speak>","cwd":"/tmp/proj","session_id":"s2"}'
-printf '%s' "$in2" | VLOUDE_PORT=$port bash "$hook"
+printf '%s' "$in2" | PARLEY_PORT=$port bash "$hook"
 wait "$srv" 2>/dev/null || true
 jq -e . < "$bodyfile" >/dev/null || fail "tagged body is not valid JSON"
 got2="$(jq -r '.speak' < "$bodyfile")"
@@ -77,7 +77,7 @@ echo "PASS: multiline/quotes/unicode preserved as valid JSON"
 # --- Test 3b: earlier <speak> mentions (quoted files) -> only the LAST block is spoken ---
 start_listener
 in3b='{"last_assistant_message":"Die Skill sagt: beende mit <speak> Tags. CONTRACT zeigt <speak>Beispiel</speak> als Muster.\n\n<speak>Ich habe alles gesichtet, Sir. Soll ich committen?</speak>","cwd":"/tmp/p","session_id":"s3b"}'
-printf '%s' "$in3b" | VLOUDE_PORT=$port bash "$hook"
+printf '%s' "$in3b" | PARLEY_PORT=$port bash "$hook"
 wait "$srv" 2>/dev/null || true
 got3b="$(jq -r '.speak' < "$bodyfile")"
 [ "$got3b" = "Ich habe alles gesichtet, Sir. Soll ich committen?" ] \
@@ -87,7 +87,7 @@ echo "PASS: multiple <speak> mentions -> only the last block spoken"
 # --- Test 3c: <speak> with NO closing tag -> take everything to end of message ---
 start_listener
 in3c='{"last_assistant_message":"Bericht hier.\n<speak>Ich habe fertig, Sir. Soll ich fortfahren?","cwd":"/tmp/p","session_id":"s3c"}'
-printf '%s' "$in3c" | VLOUDE_PORT=$port bash "$hook"
+printf '%s' "$in3c" | PARLEY_PORT=$port bash "$hook"
 wait "$srv" 2>/dev/null || true
 got3c="$(jq -r '.speak' < "$bodyfile")"
 [ "$got3c" = "Ich habe fertig, Sir. Soll ich fortfahren?" ] \
@@ -97,7 +97,7 @@ echo "PASS: missing </speak> -> text to end of message"
 # --- Test 3: input WITHOUT <speak> -> hook exits 0 and POSTs nothing ---
 start_listener
 in3='{"last_assistant_message":"Just a normal answer, no tag.","cwd":"/tmp/x","session_id":"s3"}'
-printf '%s' "$in3" | VLOUDE_PORT=$port bash "$hook"
+printf '%s' "$in3" | PARLEY_PORT=$port bash "$hook"
 rc=$?
 [ "$rc" -eq 0 ] || fail "no-tag hook exited $rc"
 sleep 0.3

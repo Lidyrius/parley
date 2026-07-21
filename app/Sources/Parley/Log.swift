@@ -1,19 +1,19 @@
 import Foundation
 
-// Timestamped debug log to ~/Library/Application Support/Vloude/debug.log (and NSLog).
+// Timestamped debug log to ~/Library/Application Support/Parley/debug.log (and NSLog).
 // Lets us trace the turn pipeline step-by-step when something hangs or drops.
 enum Log {
-    private static let queue = DispatchQueue(label: "de.developaway.vloude.log")
+    private static let queue = DispatchQueue(label: "de.developaway.parley.log")
 
     private static let url: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Vloude", isDirectory: true)
+            .appendingPathComponent("Parley", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base.appendingPathComponent("debug.log")
     }()
 
     static func write(_ msg: String) {
-        NSLog("Vloude: \(msg)")
+        NSLog("Parley: \(msg)")
         let stamp = stamp()
         queue.async {
             let line = "\(stamp) \(msg)\n"

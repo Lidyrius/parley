@@ -1,8 +1,8 @@
-# Vloude — Design Brief (für Grafik / UI-Design)
+# Parley — Design Brief (für Grafik / UI-Design)
 
-## Was ist Vloude?
+## Was ist Parley?
 
-Vloude ist eine **native macOS-Menüleisten-App** (macOS 26 „Tahoe"), die aus Claude Code eine
+Parley ist eine **native macOS-Menüleisten-App** (macOS 26 „Tahoe"), die aus Claude Code eine
 gesprochene Unterhaltung macht. Sobald einer von mehreren parallel laufenden Coding-Sessions einen
 Arbeitsschritt beendet, **spricht** die App eine kurze Zusammenfassung, **hört** dann per Mikrofon die
 gesprochene Antwort des Nutzers und schickt sie zurück an die Session. Es fühlt sich an wie ein

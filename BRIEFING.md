@@ -1,6 +1,6 @@
-# Vloude — Build Briefing (for the Ralph loop)
+# Parley — Build Briefing (for the Ralph loop)
 
-You are building **Vloude**: a voice-conversation layer over Claude Code. When a Claude Code
+You are building **Parley**: a voice-conversation layer over Claude Code. When a Claude Code
 turn ends, a macOS app speaks a short spoken summary (ElevenLabs TTS), records the user's spoken
 reply (mic + VAD → Groq transcription), and types that reply back into the *same* Claude Code
 session via `tmux send-keys`. It feels like a fluid back-and-forth conversation across many
@@ -18,7 +18,7 @@ This file is the immutable spec. Your live checklist is `PROGRESS.md`. The wire 
   `tmux send-keys`, never by owning headless sessions.
 - **The skill is the toggle.** The Stop hook fires every turn once the plugin is enabled, but only
   POSTs when the assistant message contains a `<speak>…</speak>` line. Claude only emits `<speak>`
-  after the `/vloude:voice` skill is invoked. So skill-invoked = voice mode on. (Already built.)
+  after the `/parley:voice` skill is invoked. So skill-invoked = voice mode on. (Already built.)
 - **Multi-instance from day one.** Routing is a **queue**: the app speaks finished sessions one at
   a time. Which session a reply goes to is identified by `tmux_pane` (`$TMUX_PANE`), carried in the
   hook POST. No project-name matching needed.
@@ -67,7 +67,7 @@ Usage rules:
 ## Repository layout (target)
 
 ```
-vloude/
+parley/
 ├── plugin/                     # Claude Code plugin — ALREADY SCAFFOLDED, keep working
 │   ├── .claude-plugin/plugin.json
 │   ├── hooks/hooks.json         # Stop hook → scripts/stop-hook.sh
@@ -75,8 +75,8 @@ vloude/
 │   └── skills/voice/SKILL.md    # the toggle: greet + emit <speak> each turn
 ├── app/                        # the SwiftUI menu-bar app (SPM package) — BUILD THIS
 │   ├── Package.swift
-│   ├── Sources/Vloude/...       # App, Server, TTS, STT, Audio, VAD, Tmux, MediaKeys, UI, Keychain
-│   └── Tests/VloudeTests/...    # unit tests for the pure logic
+│   ├── Sources/Parley/...       # App, Server, TTS, STT, Audio, VAD, Tmux, MediaKeys, UI, Keychain
+│   └── Tests/ParleyTests/...    # unit tests for the pure logic
 ├── scripts/generate-ready-clips.sh   # pre-render 10 "ich bin bereit" ElevenLabs clips
 ├── CONTRACT.md   BRIEFING.md   PROGRESS.md
 └── tests/hook_test.sh          # shell test for stop-hook.sh speak-extraction + no-tag skip
@@ -129,4 +129,4 @@ Make the pure logic unit-testable and test it:
 5. `SMOKE_TEST.md` exists listing the manual runtime checks (audio, mic, Accessibility, tmux inject,
    end-to-end) the human must do.
 
-When and only when 1–5 hold, output exactly: `<promise>VLOUDE_DONE</promise>`
+When and only when 1–5 hold, output exactly: `<promise>PARLEY_DONE</promise>`

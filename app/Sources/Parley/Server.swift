@@ -14,7 +14,7 @@ import Network
 // once at startup before start().
 final class ControlServer: @unchecked Sendable {
     private let port: NWEndpoint.Port
-    private let queue = DispatchQueue(label: "de.developaway.vloude.server")
+    private let queue = DispatchQueue(label: "de.developaway.parley.server")
     private var listener: NWListener?
 
     // UI notify when a turn starts being spoken (fired on the server queue).
@@ -40,7 +40,7 @@ final class ControlServer: @unchecked Sendable {
         params.requiredInterfaceType = .loopback
         params.allowLocalEndpointReuse = true
         guard let l = try? NWListener(using: params, on: port) else {
-            NSLog("Vloude: failed to open listener on \(port)")
+            NSLog("Parley: failed to open listener on \(port)")
             return
         }
         l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }

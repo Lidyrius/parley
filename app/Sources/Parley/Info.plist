@@ -3,14 +3,14 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>Vloude</string>
+	<string>Parley</string>
 	<key>CFBundleIdentifier</key>
-	<string>de.developaway.vloude</string>
+	<string>de.developaway.parley</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Vloude records your spoken reply after Claude Code finishes a turn.</string>
+	<string>Parley records your spoken reply after Claude Code finishes a turn.</string>
 </dict>
 </plist>

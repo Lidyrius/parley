@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Vloude",
+    name: "Parley",
     platforms: [.macOS(.v26)],
     targets: [
         .executableTarget(
-            name: "Vloude",
-            path: "Sources/Vloude",
+            name: "Parley",
+            path: "Sources/Parley",
             exclude: ["Info.plist"],
             resources: [.copy("Resources/ready")],
             linkerSettings: [
@@ -17,14 +17,14 @@ let package = Package(
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",
                     "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/Vloude/Info.plist",
+                    "-Xlinker", "Sources/Parley/Info.plist",
                 ])
             ]
         ),
         .testTarget(
-            name: "VloudeTests",
-            dependencies: ["Vloude"],
-            path: "Tests/VloudeTests"
+            name: "ParleyTests",
+            dependencies: ["Parley"],
+            path: "Tests/ParleyTests"
         ),
     ]
 )

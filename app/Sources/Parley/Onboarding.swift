@@ -5,7 +5,7 @@ import AppKit
 // First-run onboarding: microphone permission + device, spoken language, and voice.
 // Liquid Glass styling per DESIGN_BRIEF. Values persist to the same store Settings uses.
 
-private let onboardingCompleteKey = "vloude.onboardingComplete"
+private let onboardingCompleteKey = "parley.onboardingComplete"
 private let onboardingLanguages = ["Deutsch", "English", "Français", "Español", "Italiano", "Nederlands"]
 
 struct OnboardingView: View {
@@ -187,7 +187,7 @@ struct OnboardingView: View {
         VStack(spacing: 16) {
             Image(systemName: "checkmark.seal.fill").font(.system(size: 46)).foregroundStyle(.green)
             Text("Alles bereit.").font(.title3.weight(.semibold))
-            Text("Starte eine Claude-Code-Sitzung und tippe /vloude:voice. Ich melde mich, sobald ein Turn fertig ist.")
+            Text("Starte eine Claude-Code-Sitzung und tippe /parley:voice. Ich melde mich, sobald ein Turn fertig ist.")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 420)
         }
         .frame(maxWidth: .infinity)
@@ -266,7 +266,7 @@ struct OnboardingView: View {
     }
     private var title: String {
         switch step {
-        case .welcome: "Willkommen bei Vloude"; case .keys: "API-Schlüssel"; case .language: "Sprache"
+        case .welcome: "Willkommen bei Parley"; case .keys: "API-Schlüssel"; case .language: "Sprache"
         case .voice: "Stimme wählen"; case .microphone: "Mikrofon"; case .done: "Fertig"
         }
     }
@@ -277,7 +277,7 @@ struct OnboardingView: View {
         case .language: "Ich spreche jeden Turn in dieser Sprache."
         case .voice: "So klinge ich. Tippe auf ▶︎ zum Anhören."
         case .microphone: "Zugriff erlauben und dein Eingabegerät wählen."
-        case .done: "Vloude läuft in der Menüleiste."
+        case .done: "Parley läuft in der Menüleiste."
         }
     }
     private var primaryLabel: String {

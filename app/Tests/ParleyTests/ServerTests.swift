@@ -1,5 +1,5 @@
 import XCTest
-@testable import Vloude
+@testable import Parley
 
 final class HTTPParseTests: XCTestCase {
     func testParsesPostWithBody() {

@@ -4,7 +4,7 @@ app/.swiftpm/
 .build/
 app/.build/
 *.xcodeproj
-app/Sources/Vloude/Resources/ready/*.pcm
+app/Sources/Parley/Resources/ready/*.pcm
 *.env
 secrets*
 .claude/ralph-loop.local.md

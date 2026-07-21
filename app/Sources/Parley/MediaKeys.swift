@@ -22,7 +22,7 @@ enum MediaKeys {
     @discardableResult
     static func togglePlayPause() -> Bool {
         guard isTrusted else {
-            NSLog("Vloude: no Accessibility trust, skipping media key")
+            NSLog("Parley: no Accessibility trust, skipping media key")
             return false
         }
         post(down: true)

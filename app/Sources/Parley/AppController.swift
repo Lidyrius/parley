@@ -55,7 +55,7 @@ final class AppController: ObservableObject {
         upsert(SessionInfo(id: routeKey(ready.tmux_pane, ready.session_id),
                            project: ready.project, pane: ready.tmux_pane, status: "ready"))
         guard let data = ReadyClips.randomClipData() else {
-            NSLog("Vloude: no ready clips bundled, greeting silent")
+            NSLog("Parley: no ready clips bundled, greeting silent")
             return
         }
         let p = TTSPlayer()
@@ -134,7 +134,7 @@ final class AppController: ObservableObject {
                 lastError = "TTS: \(error.localizedDescription)"
             }
         } else {
-            NSLog("Vloude: TTS not configured")
+            NSLog("Parley: TTS not configured")
         }
         await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
         player.stop()
@@ -158,21 +158,21 @@ final class AppController: ObservableObject {
     }
 
     private func transcribe(_ wav: Data, config: AppConfig) async -> String {
-        guard config.sttReady else { NSLog("Vloude: STT not configured"); return "" }
+        guard config.sttReady else { NSLog("Parley: STT not configured"); return "" }
         // Too little captured audio → skip Groq (it rejects < 0.01s) and end cleanly.
         // 44-byte WAV header + ~0.2s of 16 kHz mono 16-bit.
         let minBytes = 44 + (16000 * 2) / 5
         guard wav.count >= minBytes else {
-            NSLog("Vloude: recording too short (\(wav.count) bytes) — no reply, likely no mic input")
+            NSLog("Parley: recording too short (\(wav.count) bytes) — no reply, likely no mic input")
             return ""
         }
-        let req = Groq.transcriptionRequest(wav: wav, apiKey: config.groqKey, boundary: "vloudeBoundary")
+        let req = Groq.transcriptionRequest(wav: wav, apiKey: config.groqKey, boundary: "parleyBoundary")
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
             guard code == 200 else {
                 let body = String(data: data, encoding: .utf8) ?? ""
-                NSLog("Vloude: STT HTTP \(code): \(body)")
+                NSLog("Parley: STT HTTP \(code): \(body)")
                 lastError = "STT HTTP \(code)"
                 return ""   // never feed an error body back as the reply
             }

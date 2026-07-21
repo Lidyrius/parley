@@ -3,7 +3,7 @@ import Foundation
 // Entry point. Handles a few headless CLI modes used by the terminal onboarding
 // (scripts/onboard-tui.sh) before falling through to the normal SwiftUI menu-bar app.
 @main
-enum VloudeMain {
+enum ParleyMain {
     static func main() {
         let args = CommandLine.arguments
 
@@ -20,10 +20,10 @@ enum VloudeMain {
         }
 
         if args.contains("--mark-onboarded") {
-            UserDefaults.standard.set(true, forKey: "vloude.onboardingComplete")
+            UserDefaults.standard.set(true, forKey: "parley.onboardingComplete")
             return
         }
 
-        VloudeApp.main()
+        ParleyApp.main()
     }
 }

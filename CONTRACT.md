@@ -1,4 +1,4 @@
-# Vloude wire contract
+# Parley wire contract
 
 Plugin (Claude Code hooks) ⇄ App (`127.0.0.1:8787`). Plain HTTP, JSON.
 
@@ -16,8 +16,8 @@ Request:
 {
   "event": "turn",
   "session_id": "abc123",
-  "cwd": "/Users/sydney/workspace/privat/vloude",
-  "project": "vloude",
+  "cwd": "/Users/sydney/workspace/privat/parley",
+  "project": "parley",
   "tmux_pane": "%3",              // "" outside tmux — no longer used for routing
   "speak": "Tests grün. Soll ich das Log-Level senken, Sir?"
 }
@@ -29,7 +29,7 @@ Response (after the user stops talking / silence / timeout):
 
 The hook then, if transcript non-empty, emits on stdout:
 ```json
-{ "decision": "block", "reason": "Ja, mach das.", "systemMessage": "🎙️ Vloude: Sprachantwort eingespeist" }
+{ "decision": "block", "reason": "Ja, mach das.", "systemMessage": "🎙️ Parley: Sprachantwort eingespeist" }
 ```
 which continues the Claude session with the spoken reply as the next turn. Empty
 transcript → hook exits 0 → session ends normally.
@@ -40,7 +40,7 @@ STT. The hook allows up to 120 s (`timeout: 130` in hooks.json).
 ## `POST /ready`
 Fired on skill activation to wake + greet. App plays a random pre-cached Jarvis clip.
 ```json
-{ "event": "ready", "session_id": "abc123", "cwd": "…", "project": "vloude", "tmux_pane": "%3" }
+{ "event": "ready", "session_id": "abc123", "cwd": "…", "project": "parley", "tmux_pane": "%3" }
 ```
 
 ## `GET /health`

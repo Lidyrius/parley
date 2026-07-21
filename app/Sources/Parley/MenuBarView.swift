@@ -6,13 +6,13 @@ struct MenuBarView: View {
     var body: some View {
         GlassEffectContainer {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Vloude").font(.headline)
+                Text("Parley").font(.headline)
                 Text("Voice layer for Claude Code")
                     .font(.caption).foregroundStyle(.secondary)
                 Divider()
 
                 if controller.sessions.isEmpty {
-                    Text("No active sessions. Run /vloude:voice in a Claude Code session.")
+                    Text("No active sessions. Run /parley:voice in a Claude Code session.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {

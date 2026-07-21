@@ -19,7 +19,7 @@ enum Keychain {
 
     private static var fileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Vloude", isDirectory: true)
+            .appendingPathComponent("Parley", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: base, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
@@ -64,7 +64,7 @@ struct AppConfig {
         func val(_ k: Keychain.Key, _ env: String) -> String {
             Keychain.get(k) ?? ProcessInfo.processInfo.environment[env] ?? ""
         }
-        let lang = Keychain.get(.language) ?? ProcessInfo.processInfo.environment["VLOUDE_LANGUAGE"] ?? ""
+        let lang = Keychain.get(.language) ?? ProcessInfo.processInfo.environment["PARLEY_LANGUAGE"] ?? ""
         return AppConfig(
             elevenLabsKey: val(.elevenLabsAPIKey, "ELEVENLABS_API_KEY"),
             groqKey: val(.groqAPIKey, "GROQ_API_KEY"),

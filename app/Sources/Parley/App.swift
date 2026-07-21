@@ -1,12 +1,12 @@
 import SwiftUI
 import AppKit
 
-struct VloudeApp: App {
+struct ParleyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var controller = AppController.shared
 
     var body: some Scene {
-        MenuBarExtra("Vloude", systemImage: "waveform") {
+        MenuBarExtra("Parley", systemImage: "waveform") {
             MenuBarView(controller: controller)
                 .task { controller.start() }
         }
