@@ -49,14 +49,15 @@ say "Parley — Einrichtung"
 note "Deine Eingaben bleiben lokal in $CREDS (0600)."
 
 # --- API keys (prefill from existing creds / .env if present) ---
-EXIST_EL="$(jq -r '.elevenLabsAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
+EXIST_GOOGLE="$(jq -r '.googleAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
 EXIST_GROQ="$(jq -r '.groqAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
 
-say "1/4 · ElevenLabs API-Key (Sprachausgabe)"
-if [ -n "$EXIST_EL" ] && [ "$(pick "Vorhandenen ElevenLabs-Key behalten?" "Ja" "Neu eingeben")" = "Ja" ]; then
-  EL="$EXIST_EL"
+say "1/4 · Google Cloud TTS API-Key (Sprachausgabe)"
+note "Cloud Text-to-Speech aktivieren, dann API-Key erstellen. Erste 1 Mio Zeichen/Monat gratis."
+if [ -n "$EXIST_GOOGLE" ] && [ "$(pick "Vorhandenen Google-Key behalten?" "Ja" "Neu eingeben")" = "Ja" ]; then
+  GOOGLE="$EXIST_GOOGLE"
 else
-  EL="$(ask_secret "ElevenLabs xi-api-key")"
+  GOOGLE="$(ask_secret "Google TTS API-Key")"
 fi
 
 say "2/4 · Groq API-Key (Transkription)"
@@ -66,25 +67,33 @@ else
   GROQ="$(ask_secret "Groq bearer key")"
 fi
 
-# --- Language ---
+# --- Language --- (name → BCP-47 code for the TTS voice)
 say "3/4 · Sprache"
 LANG_NAME="$(pick "Gesprochene Sprache" "Deutsch" "English" "Français" "Español" "Italiano" "Nederlands")"
+case "$LANG_NAME" in
+  Deutsch)    LANG_CODE="de-DE" ;; English) LANG_CODE="en-US" ;;
+  Français)   LANG_CODE="fr-FR" ;; Español) LANG_CODE="es-ES" ;;
+  Italiano)   LANG_CODE="it-IT" ;; Nederlands) LANG_CODE="nl-NL" ;;
+  *)          LANG_CODE="de-DE" ;;
+esac
 
-# --- Voice (fetch from ElevenLabs) --- (bash 3.2 safe: parallel arrays, no mapfile/assoc)
+# --- Voice (Chirp3 HD voices for the chosen language) --- (bash 3.2 safe)
 say "4a · Stimme"
-VOICE_ID="$JARVIS"
-if [ -n "$EL" ]; then
-  VJSON="$(curl -fsS -H "xi-api-key: $EL" https://api.elevenlabs.io/v1/voices 2>/dev/null || echo '')"
+GOOGLE_VOICE="$LANG_CODE-Chirp3-HD-Alnilam"   # default
+if [ -n "$GOOGLE" ]; then
+  VJSON="$(curl -fsS -H "X-Goog-Api-Key: $GOOGLE" \
+    "https://texttospeech.googleapis.com/v1/voices?languageCode=$LANG_CODE" 2>/dev/null || echo '')"
   if [ -n "$VJSON" ]; then
-    VNAMES=(); VIDS=()
-    while IFS=$'\t' read -r n id; do [ -n "$n" ] && { VNAMES+=("$n"); VIDS+=("$id"); }; done \
-      < <(printf '%s' "$VJSON" | jq -r '.voices[] | "\(.name)  ⟨\(.category)⟩\t\(.voice_id)"')
+    VNAMES=(); VFULL=()
+    # Show the star-name suffix (e.g. "Alnilam"); store the full voice id.
+    while IFS=$'\t' read -r short full; do [ -n "$short" ] && { VNAMES+=("$short"); VFULL+=("$full"); }; done \
+      < <(printf '%s' "$VJSON" | jq -r '.voices[] | select(.name|test("Chirp3-HD")) | "\(.name|sub(".*Chirp3-HD-";""))\t\(.name)"' | sort)
     if [ "${#VNAMES[@]}" -gt 0 ]; then
-      CHOSEN="$(pick "Welche Stimme?" "${VNAMES[@]}")"
-      for i in "${!VNAMES[@]}"; do [ "${VNAMES[$i]}" = "$CHOSEN" ] && VOICE_ID="${VIDS[$i]}"; done
+      CHOSEN="$(pick "Welche Chirp3-HD-Stimme?" "${VNAMES[@]}")"
+      for i in "${!VNAMES[@]}"; do [ "${VNAMES[$i]}" = "$CHOSEN" ] && GOOGLE_VOICE="${VFULL[$i]}"; done
     fi
   else
-    note "Konnte Stimmen nicht laden — nutze Standard (Jarvis)."
+    note "Konnte Stimmen nicht laden — nutze Standard (Alnilam)."
   fi
 fi
 
@@ -107,15 +116,17 @@ else
   note "App-Binary nicht gefunden — Mikrofon überspringe ich (Systemstandard)."
 fi
 
-# --- Persist ---
+# --- Persist --- (merge onto existing creds so any ElevenLabs fallback keys survive)
 mkdir -p "$CREDS_DIR"; chmod 700 "$CREDS_DIR"
-jq -n --arg e "$EL" --arg g "$GROQ" --arg v "$VOICE_ID" --arg l "$LANG_NAME" --arg m "${MIC_UID:-}" \
-  '{elevenLabsAPIKey:$e, groqAPIKey:$g, voiceID:$v, language:$l, micDeviceUID:$m}' > "$CREDS"
+BASE="$(cat "$CREDS" 2>/dev/null || echo '{}')"
+printf '%s' "$BASE" | jq \
+  --arg gk "$GOOGLE" --arg gv "$GOOGLE_VOICE" --arg g "$GROQ" --arg l "$LANG_NAME" --arg m "${MIC_UID:-}" \
+  '. + {googleAPIKey:$gk, googleVoice:$gv, groqAPIKey:$g, language:$l, micDeviceUID:$m}' > "$CREDS"
 chmod 600 "$CREDS"
 
 # Media control now uses MediaRemote (no Accessibility needed) — no gate.
 [ -n "$BIN" ] && "$BIN" --mark-onboarded >/dev/null 2>&1 || true
 
 say "Fertig ✓"
-note "Sprache: $LANG_NAME · Stimme: $VOICE_ID"
+note "Sprache: $LANG_NAME · Stimme: $GOOGLE_VOICE"
 note "Starte eine Claude-Code-Sitzung und tippe /parley:voice."

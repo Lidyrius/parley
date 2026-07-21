@@ -50,14 +50,10 @@ bash "$SRC/scripts/onboard-tui.sh"
 # 5. render the Jarvis greeting clips using the key just entered, then rebuild so they
 #    ship in the bundle (best-effort — a silent greeting is fine if this is skipped).
 CREDS="$HOME/Library/Application Support/Parley/credentials.json"
-EL_KEY="$(jq -r '.elevenLabsAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
-VOICE="$(jq -r '.voiceID // ""' "$CREDS" 2>/dev/null || echo "")"
-if [ -n "$EL_KEY" ]; then
-  info "Rendere Begrüßungs- und Bestätigungs-Clips"
-  ELEVENLABS_API_KEY="$EL_KEY" ELEVENLABS_VOICE_ID="$VOICE" \
-    bash "$SRC/scripts/generate-ready-clips.sh" >/dev/null 2>&1 || true
-  ELEVENLABS_API_KEY="$EL_KEY" ELEVENLABS_VOICE_ID="$VOICE" \
-    bash "$SRC/scripts/generate-line-clips.sh" >/dev/null 2>&1 || true
+GOOGLE_KEY="$(jq -r '.googleAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
+if [ -n "$GOOGLE_KEY" ]; then
+  info "Rendere Begrüßungs- und Bestätigungs-Clips (Google Chirp3 HD)"
+  bash "$SRC/scripts/generate-clips-google.sh" >/dev/null 2>&1 || true   # reads key+voice from creds
   bash "$SRC/scripts/make-app.sh" >/dev/null 2>&1 || true
 fi
 
