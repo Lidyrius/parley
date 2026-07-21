@@ -81,10 +81,9 @@ final class AppController: ObservableObject {
         // reliable signal), then resume exactly those apps afterwards. Never touches media
         // the user had already paused. See MediaControl.
         // osascript is blocking I/O — run it off the main actor to keep the UI responsive.
-        let pausedApps = await Task.detached { MediaControl.shared.playingApps() }.value
-        if !pausedApps.isEmpty {
-            await Task.detached { MediaControl.shared.pause(pausedApps) }.value
-            Log.write("paused playing media: \(pausedApps.joined(separator: ","))")
+        let pausedMedia = await Task.detached { MediaControl.shared.pausePlaying() }.value
+        if !pausedMedia.isEmpty {
+            Log.write("paused media: \(pausedMedia.joined(separator: ","))")
             try? await Task.sleep(nanoseconds: 400_000_000)   // 0.4 s beat before speaking
         }
 
@@ -109,10 +108,10 @@ final class AppController: ObservableObject {
                                      recordSeconds: recordSeconds, intent: intent.rawValue,
                                      project: turn.project)
 
-        // Resume exactly the apps we paused (they were playing at the start).
-        if !pausedApps.isEmpty {
-            await Task.detached { MediaControl.shared.play(pausedApps) }.value
-            Log.write("resumed media: \(pausedApps.joined(separator: ","))")
+        // Resume exactly what we paused (each was playing at the start).
+        if !pausedMedia.isEmpty {
+            await Task.detached { MediaControl.shared.resume(pausedMedia) }.value
+            Log.write("resumed media: \(pausedMedia.joined(separator: ","))")
         }
         // "Stop heißt Stop": a STOP reply is NOT fed back — returning "" makes the hook
         // exit cleanly, so no further speak/record turn is prompted. The STOP ack clip
