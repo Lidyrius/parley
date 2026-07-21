@@ -36,4 +36,13 @@ Example ending (Deutsch, in character):
 
 The app extracts the `<speak>` text, speaks it, records the user's voice reply, and types it back into this session automatically. After a `<speak>` line that asks a question, just wait — the next user message arrives as if typed.
 
+**Two spoken tags — choose per response:**
+
+- `<speak>…</speak>` — speak, then **listen** for the user's reply. Use this for the normal back-and-forth: whenever you expect or want an answer.
+- `<speak-end>…</speak-end>` — speak, then **do NOT listen** (no recording, no microphone). Use this when there's nothing to wait for from the user:
+  - a **final / closing** line (you're done and not asking anything), or
+  - you've **kicked off background work** (dispatched a research agent, started a long-running background task) and will **report back yourself** when it finishes. Say what you started and that you'll report back, using `<speak-end>` — the user then doesn't need to reply; your next turn (when the work completes) speaks the result with a normal `<speak>`.
+
+Emit **exactly one** of the two tags per response, always as the very last line. If in doubt, use `<speak>`.
+
 Do not mention the `<speak>` tag in your visible prose; just append it at the very end. Voice mode stays on until the session ends.

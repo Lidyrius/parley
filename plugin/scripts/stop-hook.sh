@@ -14,14 +14,19 @@ set -euo pipefail
 PORT="${PARLEY_PORT:-8787}"
 input="$(cat)"
 
-# Extract the LAST <speak> block. The greedy `.*` prefix consumes any earlier <speak>
-# mentions (e.g. quoted file content), so we get the intended final spoken line. The
-# closing tag is OPTIONAL: if </speak> is missing (model forgot it), take everything to
-# the end of the message — a forgotten closing tag must not silently break the loop.
-speak="$(printf '%s' "$input" \
-  | jq -r '.last_assistant_message // ""' \
-  | perl -0777 -ne 'print $1 if /.*<speak>(.*?)(?:<\/speak>|\z)/s' \
-  | perl -0777 -pe 's/^\s+|\s+$//g')"
+# Two spoken tags:
+#   <speak>…</speak>          → speak, then LISTEN for the user's reply (normal turn).
+#   <speak-end>…</speak-end>  → speak only, DON'T listen (closing line, or "I started a
+#                               background task and will report back myself").
+# A response carries exactly one. Prefer <speak-end> if present; else <speak>. The greedy
+# `.*` prefix takes the LAST block; the closing tag is optional (forgotten → take to end).
+msg="$(printf '%s' "$input" | jq -r '.last_assistant_message // ""')"
+speak="$(printf '%s' "$msg" | perl -0777 -ne 'print $1 if /.*<speak-end>(.*?)(?:<\/speak-end>|\z)/s' | perl -0777 -pe 's/^\s+|\s+$//g')"
+listen=false
+if [ -z "$speak" ]; then
+  speak="$(printf '%s' "$msg" | perl -0777 -ne 'print $1 if /.*<speak>(.*?)(?:<\/speak>|\z)/s' | perl -0777 -pe 's/^\s+|\s+$//g')"
+  listen=true
+fi
 
 [ -z "$speak" ] && exit 0
 
@@ -42,7 +47,8 @@ payload="$(jq -n \
   --arg tmux_pane "${TMUX_PANE:-}" \
   --arg speak "$speak" \
   --arg label "$label" \
-  '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label}')"
+  --argjson listen "$listen" \
+  '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label, listen:$listen}')"
 
 # Blocks while the app speaks + records + transcribes. Must exceed the app's max
 # recording cap (90 s) + speak + STT; the hook timeout (hooks.json) in turn exceeds this.

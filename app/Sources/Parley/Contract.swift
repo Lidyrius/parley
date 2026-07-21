@@ -10,8 +10,10 @@ struct TurnPayload: Codable, Equatable {
     var tmux_pane: String
     var speak: String
     var label: String?    // spoken project name from .parley.json; nil → use project
+    var listen: Bool?     // false = speak-only (no mic/pill); nil/true = speak + listen
 
     var spokenLabel: String { (label?.isEmpty == false ? label : nil) ?? project }
+    var wantsListen: Bool { listen ?? true }
 }
 
 struct ReadyPayload: Codable, Equatable {

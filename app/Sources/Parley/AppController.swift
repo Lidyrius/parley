@@ -116,9 +116,20 @@ final class AppController: ObservableObject {
             await playClip(ann, rate: config.speakingRate)
         }
 
-        Log.write("speak start")
-        await speakAndBeep(turn.speak, config: config)
-        Log.write("speak+beep done")
+        Log.write("speak start (listen=\(turn.wantsListen))")
+        await speakAndBeep(turn.speak, config: config, beep: turn.wantsListen)
+        Log.write("speak done")
+
+        // speak-only turn (<speak-end>): no mic, no pill. Resume media, end cleanly so the
+        // hook exits — Claude reports back on its own (e.g. when a background task finishes).
+        if !turn.wantsListen {
+            if !pausedMedia.isEmpty {
+                await Task.detached { MediaControl.shared.resume(pausedMedia) }.value
+            }
+            setStatus(key, "idle")
+            Log.write("turn end (speak-only)")
+            return ""
+        }
 
         setStatus(key, "listening")
         Log.write("record start")
@@ -178,7 +189,7 @@ final class AppController: ObservableObject {
     // mic engine starts. A still-running (or merely stopped-but-alive) output engine
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
-    private func speakAndBeep(_ text: String, config: AppConfig) async {
+    private func speakAndBeep(_ text: String, config: AppConfig, beep: Bool = true) async {
         let player = TTSPlayer(rate: config.speakingRate)
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
         if config.useGoogle {
@@ -188,10 +199,13 @@ final class AppController: ObservableObject {
         } else {
             NSLog("Parley: TTS not configured")
         }
-        // Beep is queued after the speech buffers; completion fires once it has actually
-        // played back (.dataPlayedBack). A short tail lets the output pipeline flush before
-        // we stop the engine, so the beep is never clipped.
-        await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
+        // A trailing tone is queued after the speech buffers; its .dataPlayedBack completion
+        // also tells us speech is done. amplitude 0 when `beep` is false (speak-only turn:
+        // no "your turn" cue) but we still use it as the finish marker. A short tail lets the
+        // output pipeline flush before we stop, so the beep is never clipped.
+        await withCheckedContinuation { cont in
+            player.scheduleBeep(amplitude: beep ? 0.3 : 0.0) { cont.resume() }
+        }
         try? await Task.sleep(nanoseconds: 120_000_000)
         player.stop()
         // ponytail: settle lets CoreAudio release the output device before the mic engine
