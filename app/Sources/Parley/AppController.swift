@@ -124,6 +124,14 @@ final class AppController: ObservableObject {
             Log.write("media resume")
             MediaControl.shared.play()              // resume only what was playing at the start
         }
+        // "Stop heißt Stop": a STOP reply is NOT fed back — returning "" makes the hook
+        // exit cleanly, so no further speak/record turn is prompted. The STOP ack clip
+        // already played as the sign-off.
+        if intent == .stop {
+            setStatus(key, "idle")
+            Log.write("turn end (stop → conversation ends)")
+            return ""
+        }
         setStatus(key, text.isEmpty ? "idle" : "sent")
         Log.write("turn end")
         return text
