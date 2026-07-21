@@ -10,6 +10,8 @@
 	<string>0.1.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Parley records your spoken reply after Claude Code finishes a turn.</string>
 </dict>

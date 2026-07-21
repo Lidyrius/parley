@@ -73,7 +73,7 @@ struct StatsView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 22)
-        .glassEffect(in: .rect(cornerRadius: 20))
+        .liquidGlass(cornerRadius: 20)
     }
 
     // Signature: distribution of what you asked for.
@@ -111,7 +111,7 @@ struct StatsView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(in: .rect(cornerRadius: 16))
+        .liquidGlass(cornerRadius: 16)
     }
 
     private var grid: some View {
@@ -137,7 +137,7 @@ struct StatsView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(in: .rect(cornerRadius: 14))
+        .liquidGlass(cornerRadius: 14)
     }
 
     @ViewBuilder private var projects: some View {
@@ -158,7 +158,7 @@ struct StatsView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(in: .rect(cornerRadius: 16))
+            .liquidGlass(cornerRadius: 16)
         }
     }
 
@@ -176,7 +176,7 @@ struct StatsView: View {
                 .font(.system(.title3, design: .rounded).weight(.semibold)).foregroundStyle(.tint)
         }
         .padding(16)
-        .glassEffect(in: .rect(cornerRadius: 16))
+        .liquidGlass(cornerRadius: 16)
     }
 
     private var background: some View {

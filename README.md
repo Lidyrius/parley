@@ -53,12 +53,11 @@ it's completely terminal-agnostic.
 
 ## Requirements
 
-- **macOS 26** (Tahoe)
-- **Xcode 26** toolchain (`swift`) — the app builds from source
-- `jq`, `git`, `curl`
-- An **ElevenLabs** API key (speech) and a **Groq** API key (transcription)
+- **macOS 14+** (Sonoma or newer) — Liquid Glass UI on macOS 26, plain material below
+- `jq`, `git`, `curl` — **no Xcode**: the installer downloads a prebuilt app
+- A **Google Cloud TTS** API key (speech, 1M chars/month free) and a **Groq** API key (transcription)
 
-On the first real turn, grant **Microphone** and — for media pause — **Accessibility**.
+On the first real turn, grant **Microphone**. No Accessibility needed (media pause uses MediaRemote).
 
 ## Install
 

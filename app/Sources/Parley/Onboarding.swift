@@ -156,7 +156,7 @@ struct OnboardingView: View {
                 }
             }
             .padding(12)
-            .glassEffect(in: .rect(cornerRadius: 12))
+            .liquidGlass(cornerRadius: 12)
 
             Text("Welches Mikrofon?").font(.callout)
             if devices.isEmpty {

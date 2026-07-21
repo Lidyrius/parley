@@ -4,7 +4,7 @@ struct MenuBarView: View {
     @ObservedObject var controller: AppController
 
     var body: some View {
-        GlassEffectContainer {
+        GlassContainer {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Parley").font(.headline)
                 Text("Voice layer for Claude Code")
@@ -44,7 +44,7 @@ struct MenuBarView: View {
             }
             .padding(14)
             .frame(width: 300)
-            .glassEffect(in: .rect(cornerRadius: 16))
+            .liquidGlass(cornerRadius: 16)
         }
     }
 
