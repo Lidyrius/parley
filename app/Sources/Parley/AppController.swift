@@ -129,33 +129,59 @@ final class AppController: ObservableObject {
     private func speakAndBeep(_ text: String, config: AppConfig) async {
         let player = TTSPlayer()
         activePlayer = player
-        if config.ttsReady {
-            let req = ElevenLabs.streamRequest(
-                text: text, config: .init(apiKey: config.elevenLabsKey, voiceID: config.voiceID))
-            do {
-                try player.start()
-                Log.write("tts engine started, streaming")
-                let (bytes, _) = try await URLSession.shared.bytes(for: req)
-                var chunk = Data()
-                for try await b in bytes {
-                    chunk.append(b)
-                    if chunk.count >= 4096 { player.enqueue(pcmChunk: chunk); chunk.removeAll(keepingCapacity: true) }
-                }
-                if !chunk.isEmpty { player.enqueue(pcmChunk: chunk) }
-                Log.write("tts stream complete")
-            } catch {
-                Log.write("tts error: \(error.localizedDescription)")
-                lastError = "TTS: \(error.localizedDescription)"
-            }
+        do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
+        if config.useGoogle {
+            await synthGoogle(text, config: config, into: player)
+        } else if config.ttsReady {
+            await synthElevenLabs(text, config: config, into: player)
         } else {
             NSLog("Parley: TTS not configured")
         }
+        // Beep is queued after the speech buffers; its completion fires when both finish.
         await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
         player.stop()
         activePlayer = nil
         // ponytail: settle lets CoreAudio release the output device before the mic engine
         // claims it. Raised to 450 ms after intermittent 0-buffer captures recurred.
         try? await Task.sleep(nanoseconds: 450_000_000)
+    }
+
+    // Google Cloud TTS (Chirp3 HD): one-shot synthesize → PCM → enqueue.
+    private func synthGoogle(_ text: String, config: AppConfig, into player: TTSPlayer) async {
+        let req = GoogleTTS.request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            guard code == 200, let pcm = GoogleTTS.pcm(from: data) else {
+                Log.write("google tts http \(code): \(String(data: data, encoding: .utf8)?.prefix(200) ?? "")")
+                lastError = "Google TTS HTTP \(code)"
+                return
+            }
+            player.enqueue(pcmChunk: pcm)
+            Log.write("google tts ok (\(pcm.count) bytes, \(config.googleVoice))")
+        } catch {
+            Log.write("google tts error: \(error.localizedDescription)")
+            lastError = "Google TTS: \(error.localizedDescription)"
+        }
+    }
+
+    private func synthElevenLabs(_ text: String, config: AppConfig, into player: TTSPlayer) async {
+        let req = ElevenLabs.streamRequest(
+            text: text, config: .init(apiKey: config.elevenLabsKey, voiceID: config.voiceID))
+        do {
+            Log.write("elevenlabs streaming")
+            let (bytes, _) = try await URLSession.shared.bytes(for: req)
+            var chunk = Data()
+            for try await b in bytes {
+                chunk.append(b)
+                if chunk.count >= 4096 { player.enqueue(pcmChunk: chunk); chunk.removeAll(keepingCapacity: true) }
+            }
+            if !chunk.isEmpty { player.enqueue(pcmChunk: chunk) }
+            Log.write("elevenlabs stream complete")
+        } catch {
+            Log.write("tts error: \(error.localizedDescription)")
+            lastError = "TTS: \(error.localizedDescription)"
+        }
     }
 
     // Distinct descending two-tone "done listening" cue, via a fresh TTS player — the
