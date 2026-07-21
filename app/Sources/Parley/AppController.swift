@@ -103,6 +103,11 @@ final class AppController: ObservableObject {
             try? await Task.sleep(nanoseconds: 400_000_000)   // 0.4 s beat before speaking
         }
 
+        // Wait out the previous turn's background ack clip so this turn's audio never
+        // overlaps it (only ever blocks if Claude replied faster than the ack played).
+        await ackTask?.value
+        ackTask = nil
+
         // Multiple projects running in parallel → announce which one is speaking (a cached
         // "Update für <Projekt>" clip) before the actual sentence, so turns don't blur.
         if liveProjectCount() > 1,
@@ -125,8 +130,9 @@ final class AppController: ObservableObject {
         let text = await transcribe(wav, config: config)
         Log.write("transcribe done chars=\(text.count)")
 
-        // Classify the reply and play the matching cached Jarvis line (replaces the chime).
-        let intent = await acknowledge(text, config: config)
+        // Classify (fast, ~0.3 s) — needed for the ack clip, stats and the STOP decision.
+        let intent = text.isEmpty ? .other : await classify(text, config: config)
+        Log.write("classified: \(intent.rawValue)")
         let recordSeconds = Double(max(0, wav.count - 44)) / 2.0 / 16000.0   // 16 kHz mono 16-bit WAV
         StatsStore.shared.recordTurn(speak: turn.speak, transcript: text,
                                      recordSeconds: recordSeconds, intent: intent.rawValue,
@@ -137,9 +143,15 @@ final class AppController: ObservableObject {
             await Task.detached { MediaControl.shared.resume(pausedMedia) }.value
             Log.write("resumed media: \(pausedMedia.joined(separator: ","))")
         }
-        // "Stop heißt Stop": a STOP reply is NOT fed back — returning "" makes the hook
-        // exit cleanly, so no further speak/record turn is prompted. The STOP ack clip
-        // already played as the sign-off.
+
+        // Play the spoken acknowledgment in the BACKGROUND. Returning the transcript now
+        // lets the hook inject it immediately, so Claude starts working while the ack line
+        // ("Alles klar, ich sehe es mir an") is still playing — no waiting on playback. The
+        // next turn awaits this task before it speaks, so audio never overlaps.
+        ackTask = Task { [weak self] in await self?.playAck(intent: intent, hasText: !text.isEmpty, config: config) }
+
+        // "Stop heißt Stop": a STOP reply is NOT fed back. The STOP ack clip still plays
+        // (background) as the sign-off; returning "" makes the hook exit cleanly.
         if intent == .stop {
             setStatus(key, "idle")
             Log.write("turn end (stop → conversation ends)")
@@ -148,6 +160,18 @@ final class AppController: ObservableObject {
         setStatus(key, text.isEmpty ? "idle" : "sent")
         Log.write("turn end")
         return text
+    }
+
+    private var ackTask: Task<Void, Never>?
+
+    // Settle after mic teardown, then play the intent's cached Jarvis line (or a chime).
+    private func playAck(intent: Intent, hasText: Bool, config: AppConfig) async {
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        if hasText, let data = LineClips.randomClipData(for: intent) {
+            await playClip(data, rate: config.speakingRate)
+        } else {
+            await playChime()
+        }
     }
 
     // Speak the summary + beep, then FULLY release the audio output device before the
@@ -211,30 +235,6 @@ final class AppController: ObservableObject {
             Log.write("tts error: \(error.localizedDescription)")
             lastError = "TTS: \(error.localizedDescription)"
         }
-    }
-
-    // Distinct descending two-tone "done listening" cue, via a fresh TTS player — the
-    // same AVAudioEngine output path as the pre-record beep (reliably audible; NSSound
-    // was not audible right after mic teardown).
-    // Classify the reply → play the matching cached line; fall back to the chime when
-    // there's no text, no clips bundled, or classification fails.
-    @discardableResult
-    private func acknowledge(_ text: String, config: AppConfig) async -> Intent {
-        // Settle: the mic engine just tore down; a cold output engine started too soon
-        // renders into a contended device and produces no audible sound. Free it first.
-        try? await Task.sleep(nanoseconds: 300_000_000)
-        var intent = Intent.other
-        if !text.isEmpty {
-            intent = await classify(text, config: config)
-            Log.write("classified: \(intent.rawValue)")
-            if let data = LineClips.randomClipData(for: intent) {
-                await playClip(data, rate: config.speakingRate)
-                return intent
-            }
-            Log.write("no line clip for \(intent.rawValue) → chime")
-        }
-        await playChime()
-        return intent
     }
 
     private func classify(_ text: String, config: AppConfig) async -> Intent {
