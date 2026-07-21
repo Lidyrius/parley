@@ -36,6 +36,28 @@ enum AudioDevices {
         inputDevices().first { $0.uid == uid }?.id
     }
 
+    /// True when the default OUTPUT device is actively playing audio (music/video).
+    /// Used to only pause media that is actually playing — and only resume what we
+    /// paused — instead of blindly toggling (which would START already-paused media).
+    static func isDefaultOutputActive() -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var dev = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &dev) == noErr,
+              dev != 0 else { return false }
+        var running: UInt32 = 0
+        var rsize = UInt32(MemoryLayout<UInt32>.size)
+        var raddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(dev, &raddr, 0, nil, &rsize, &running) == noErr else { return false }
+        return running != 0
+    }
+
     /// Make `uid` the system default input device. Reliable across AVAudioEngine (which
     /// captures from the default) — unlike per-engine AUHAL routing. Returns success.
     @discardableResult

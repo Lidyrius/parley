@@ -74,8 +74,15 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
         Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
 
-        Log.write("media pause (trusted=\(MediaKeys.isTrusted))")
-        MediaKeys.togglePlayPause()                 // pause YouTube/Spotify
+        // Only pause media that is actually playing (and only that will we resume) —
+        // toggling blindly would START media the user had already paused.
+        let mediaWasPlaying = MediaKeys.isTrusted && AudioDevices.isDefaultOutputActive()
+        if mediaWasPlaying {
+            Log.write("media is playing → pause")
+            MediaKeys.togglePlayPause()
+        } else {
+            Log.write("no media playing (trusted=\(MediaKeys.isTrusted)) → leaving it")
+        }
 
         Log.write("speak start")
         await speakAndBeep(turn.speak, config: config)
@@ -91,8 +98,10 @@ final class AppController: ObservableObject {
         let text = await transcribe(wav, config: config)
         Log.write("transcribe done chars=\(text.count)")
 
-        Log.write("media resume")
-        MediaKeys.togglePlayPause()                 // resume
+        if mediaWasPlaying {
+            Log.write("media resume")
+            MediaKeys.togglePlayPause()             // resume only what we paused
+        }
         setStatus(key, text.isEmpty ? "idle" : "sent")
         Log.write("turn end")
         return text
