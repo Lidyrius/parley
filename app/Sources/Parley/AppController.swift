@@ -164,8 +164,11 @@ final class AppController: ObservableObject {
         } else {
             NSLog("Parley: TTS not configured")
         }
-        // Beep is queued after the speech buffers; its completion fires when both finish.
+        // Beep is queued after the speech buffers; completion fires once it has actually
+        // played back (.dataPlayedBack). A short tail lets the output pipeline flush before
+        // we stop the engine, so the beep is never clipped.
         await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
+        try? await Task.sleep(nanoseconds: 120_000_000)
         player.stop()
         // ponytail: settle lets CoreAudio release the output device before the mic engine
         // claims it. Raised to 450 ms after intermittent 0-buffer captures recurred.

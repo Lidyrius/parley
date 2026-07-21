@@ -64,15 +64,18 @@ final class TTSPlayer {
         node.scheduleBuffer(buf, completionHandler: nil)
     }
 
-    /// Schedule a beep tone (played after speech). completion fires when it ends.
-    func scheduleBeep(frequency: Double = 880, seconds: Double = 0.12,
-                      amplitude: Double = 0.25, completion: (() -> Void)? = nil) {
+    /// Schedule a beep tone (played after speech). completion fires when it has actually
+    /// been PLAYED BACK (not merely consumed) — so the caller can stop() without cutting it
+    /// off. The tone also runs through the timePitch unit, which has real latency for very
+    /// short buffers; .dataPlayedBack accounts for that.
+    func scheduleBeep(frequency: Double = 880, seconds: Double = 0.18,
+                      amplitude: Double = 0.3, completion: (() -> Void)? = nil) {
         let n = Int(format.sampleRate * seconds)
         var samples = [Float](repeating: 0, count: n)
         let twoPiF = 2.0 * Double.pi * frequency / format.sampleRate
         for i in 0..<n { samples[i] = Float(amplitude * sin(Double(i) * twoPiF)) }
         guard let buf = makeBuffer(samples) else { completion?(); return }
-        node.scheduleBuffer(buf, completionHandler: { completion?() })
+        node.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { _ in completion?() }
     }
 
     /// Schedule an elegant "glass" chime: fundamental + octave + soft 3rd harmonic under a
