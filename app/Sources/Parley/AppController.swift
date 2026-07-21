@@ -76,18 +76,17 @@ final class AppController: ObservableObject {
         Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
 
         // Detect playing media via CoreAudio (MediaRemote's play-state getter is
-        // restricted for third-party apps → always false). Control via EXPLICIT
-        // MediaRemote pause/play (not the toggle key), so an already-paused video is
-        // never accidentally started. Confirm we actually stopped playback before we
-        // commit to resuming (delta on the output-active state).
-        var weActuallyPaused = false
-        if AudioDevices.isDefaultOutputActive() {
+        // restricted for third-party apps → always false). At turn start this is
+        // accurate: a video paused for a while has released the device (inactive); a
+        // playing one is active. Control via EXPLICIT MediaRemote pause/play (not the
+        // toggle key), so an already-paused video is never accidentally started. Resume
+        // only what was playing at the start. (The post-pause output-active signal
+        // lingers, so we can't use a delta — hence the start-of-turn snapshot.)
+        let mediaWasPlaying = AudioDevices.isDefaultOutputActive()
+        if mediaWasPlaying {
             MediaControl.shared.pause()
-            // 0.5 s: lets the paused audio actually go quiet AND gives a beat before
-            // speaking (requested) so we don't talk over the tail of the media.
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            weActuallyPaused = !AudioDevices.isDefaultOutputActive()   // output went quiet → real playback paused
-            Log.write("media active → pause; stopped=\(weActuallyPaused)")
+            Log.write("media playing → paused")
+            try? await Task.sleep(nanoseconds: 500_000_000)   // 0.5 s beat before speaking
         } else {
             Log.write("no media playing → leaving it")
         }
@@ -107,9 +106,9 @@ final class AppController: ObservableObject {
         let text = await transcribe(wav, config: config)
         Log.write("transcribe done chars=\(text.count)")
 
-        if weActuallyPaused {
+        if mediaWasPlaying {
             Log.write("media resume")
-            MediaControl.shared.play()              // resume only what we actually paused
+            MediaControl.shared.play()              // resume only what was playing at the start
         }
         setStatus(key, text.isEmpty ? "idle" : "sent")
         Log.write("turn end")
@@ -156,6 +155,10 @@ final class AppController: ObservableObject {
     // same AVAudioEngine output path as the pre-record beep (reliably audible; NSSound
     // was not audible right after mic teardown).
     private func playDoneTone() async {
+        // Settle: the mic engine just tore down; a cold output engine started too soon
+        // renders into a contended device and produces no audible sound (the completion
+        // still fires, so "played" alone isn't proof of audio). Let the device free first.
+        try? await Task.sleep(nanoseconds: 300_000_000)
         let player = TTSPlayer()
         activePlayer = player
         do { try player.start() }
