@@ -84,6 +84,16 @@ got3b="$(jq -r '.speak' < "$bodyfile")"
   || fail "should extract LAST speak block, got: [$got3b]"
 echo "PASS: multiple <speak> mentions -> only the last block spoken"
 
+# --- Test 3c: <speak> with NO closing tag -> take everything to end of message ---
+start_listener
+in3c='{"last_assistant_message":"Bericht hier.\n<speak>Ich habe fertig, Sir. Soll ich fortfahren?","cwd":"/tmp/p","session_id":"s3c"}'
+printf '%s' "$in3c" | VLOUDE_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+got3c="$(jq -r '.speak' < "$bodyfile")"
+[ "$got3c" = "Ich habe fertig, Sir. Soll ich fortfahren?" ] \
+  || fail "missing closing tag should take to end, got: [$got3c]"
+echo "PASS: missing </speak> -> text to end of message"
+
 # --- Test 3: input WITHOUT <speak> -> hook exits 0 and POSTs nothing ---
 start_listener
 in3='{"last_assistant_message":"Just a normal answer, no tag.","cwd":"/tmp/x","session_id":"s3"}'

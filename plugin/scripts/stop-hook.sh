@@ -14,12 +14,13 @@ set -euo pipefail
 PORT="${VLOUDE_PORT:-8787}"
 input="$(cat)"
 
-# Extract the LAST <speak>…</speak> block. The greedy `.*` prefix consumes any earlier
-# <speak> mentions (e.g. from quoted file content the assistant read), so we always get
-# the intended final spoken line, never a span across the whole message.
+# Extract the LAST <speak> block. The greedy `.*` prefix consumes any earlier <speak>
+# mentions (e.g. quoted file content), so we get the intended final spoken line. The
+# closing tag is OPTIONAL: if </speak> is missing (model forgot it), take everything to
+# the end of the message — a forgotten closing tag must not silently break the loop.
 speak="$(printf '%s' "$input" \
   | jq -r '.last_assistant_message // ""' \
-  | perl -0777 -ne 'print $1 if /.*<speak>(.*?)<\/speak>/s' \
+  | perl -0777 -ne 'print $1 if /.*<speak>(.*?)(?:<\/speak>|\z)/s' \
   | perl -0777 -pe 's/^\s+|\s+$//g')"
 
 [ -z "$speak" ] && exit 0
