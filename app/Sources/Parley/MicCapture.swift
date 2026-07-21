@@ -102,13 +102,18 @@ final class MicCapture: @unchecked Sendable {
         // fast instead of hanging on the 90 s cap.
         q.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self, !self.finished, self.buffersSeen == 0 else { return }
-            if myAttempt < 2 {
-                Log.write("mic: no buffers after 3s (attempt \(myAttempt)), restarting engine")
+            if myAttempt < 3 {
+                Log.write("mic: no buffers after 3s (attempt \(myAttempt)), tearing down + restarting after 0.6s")
                 if let e = self.engine { e.inputNode.removeTap(onBus: 0); if e.isRunning { e.stop() }; self.engine = nil }
-                self.beginCapture()
+                // Real recovery delay — restarting immediately (as before) doesn't free the
+                // contended output→input device; give CoreAudio time before a fresh engine.
+                self.q.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                    guard let self, !self.finished else { return }
+                    self.beginCapture()
+                }
             } else {
                 self.endReason = "no-buffers"
-                Log.write("mic: still no buffers after restart, giving up")
+                Log.write("mic: still no buffers after 3 attempts, giving up")
                 self.finish()
             }
         }

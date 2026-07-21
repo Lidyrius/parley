@@ -141,9 +141,9 @@ final class AppController: ObservableObject {
         await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
         player.stop()
         activePlayer = nil
-        // ponytail: 250 ms settle lets CoreAudio release the output device before the
-        // mic engine claims it. Empirical; raise if 0-buffer captures reappear.
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        // ponytail: settle lets CoreAudio release the output device before the mic engine
+        // claims it. Raised to 450 ms after intermittent 0-buffer captures recurred.
+        try? await Task.sleep(nanoseconds: 450_000_000)
     }
 
     // Distinct descending two-tone "done listening" cue, via a fresh TTS player — the
