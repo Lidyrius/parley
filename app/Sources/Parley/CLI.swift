@@ -24,6 +24,15 @@ enum ParleyMain {
             return
         }
 
+        if args.contains("--list-voices") {
+            for v in LocalTTS.germanVoices() {
+                let g = v.gender == .male ? "male" : (v.gender == .female ? "female" : "?")
+                let q = v.quality == .premium ? "premium" : (v.quality == .enhanced ? "enhanced" : "default")
+                print("\(v.identifier)\t\(v.name)\t\(v.language)\t\(g)\t\(q)")
+            }
+            return
+        }
+
         ParleyApp.main()
     }
 }
