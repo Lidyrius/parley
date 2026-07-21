@@ -23,8 +23,6 @@ final class ControlServer: @unchecked Sendable {
     // The pipeline: speak + record + transcribe, then call the completion with the
     // transcribed reply ("" ends the conversation). If nil, /turn answers empty.
     var replyProvider: ((TurnPayload, @escaping (String) -> Void) -> Void)?
-    // Test hook: fires a media Play/Pause toggle, returns whether Accessibility is trusted.
-    var mediaTestProvider: (() -> Bool)?
 
     // Serialize turns: only one is spoken/recorded at a time. Others wait (their hook
     // connections stay open) and drain FIFO.
@@ -130,9 +128,6 @@ final class ControlServer: @unchecked Sendable {
         switch (req.method, req.path) {
         case ("GET", "/health"):
             return (200, #"{"ok":true}"#)
-        case ("GET", "/mediatest"):
-            let trusted = mediaTestProvider?() ?? false
-            return (200, "{\"trusted\":\(trusted)}")
         case ("POST", "/turn"):
             // Sync fallback (tests / no live connection): validate + notify only.
             guard let turn = Contract.decodeTurn(req.body) else {

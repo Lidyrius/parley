@@ -33,18 +33,6 @@ struct MenuBarView: View {
                     Text(err).font(.caption2).foregroundStyle(.red).lineLimit(2)
                 }
 
-                if !MediaKeys.isTrusted {
-                    Button {
-                        MediaKeys.ensureTrust()
-                        NSApp.activate(ignoringOtherApps: true)
-                    } label: {
-                        Label("Bedienungshilfen erlauben (für Media-Pause)", systemImage: "hand.raised.fill")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-
                 Divider()
                 HStack {
                     SettingsLink { Text("Settings…") }

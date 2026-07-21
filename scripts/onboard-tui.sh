@@ -113,26 +113,7 @@ jq -n --arg e "$EL" --arg g "$GROQ" --arg v "$VOICE_ID" --arg l "$LANG_NAME" --a
   '{elevenLabsAPIKey:$e, groqAPIKey:$g, voiceID:$v, language:$l, micDeviceUID:$m}' > "$CREDS"
 chmod 600 "$CREDS"
 
-# --- Accessibility gate: media-pause needs it; onboarding completes only once granted ---
-say "5/5 · Bedienungshilfen (für Media-Pause)"
-if [ -n "$BIN" ] && "$BIN" --check-accessibility; then
-  note "Bereits erteilt ✓"
-elif [ -n "$BIN" ]; then
-  "$BIN" --request-accessibility >/dev/null 2>&1 || true
-  open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" >/dev/null 2>&1 || true
-  note "Aktiviere Parley in: Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen."
-  printf 'Warte auf Freigabe'
-  tries=0
-  while ! "$BIN" --check-accessibility; do
-    printf '.'; sleep 2; tries=$((tries + 1))
-    if [ "$tries" -ge 90 ]; then echo; note "Timeout — später im Menüleisten-Panel nachholbar."; break; fi
-  done
-  "$BIN" --check-accessibility >/dev/null 2>&1 && { echo; say "Bedienungshilfen erteilt ✓"; }
-else
-  note "App-Binary nicht gefunden — Bedienungshilfen später erteilen."
-fi
-
-# Mark complete only now (after the Accessibility gate).
+# Media control now uses MediaRemote (no Accessibility needed) — no gate.
 [ -n "$BIN" ] && "$BIN" --mark-onboarded >/dev/null 2>&1 || true
 
 say "Fertig ✓"

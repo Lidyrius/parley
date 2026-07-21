@@ -46,7 +46,6 @@ final class AppController: ObservableObject {
                 done(transcript)
             }
         }
-        server.mediaTestProvider = { MediaKeys.togglePlayPause() }
         server.start()
     }
 
@@ -76,14 +75,15 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
         Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
 
-        // Only pause media that is actually playing (and only that will we resume) —
-        // toggling blindly would START media the user had already paused.
-        let mediaWasPlaying = MediaKeys.isTrusted && AudioDevices.isDefaultOutputActive()
+        // Pause only media that is ACTUALLY playing (real MediaRemote state, not the
+        // device-is-running heuristic), with an EXPLICIT pause command — so we never
+        // start media the user had already paused. Resume only what we paused.
+        let mediaWasPlaying = await MediaControl.shared.isPlaying()
         if mediaWasPlaying {
             Log.write("media is playing → pause")
-            MediaKeys.togglePlayPause()
+            MediaControl.shared.pause()
         } else {
-            Log.write("no media playing (trusted=\(MediaKeys.isTrusted)) → leaving it")
+            Log.write("no media playing → leaving it")
         }
 
         Log.write("speak start")
@@ -103,7 +103,7 @@ final class AppController: ObservableObject {
 
         if mediaWasPlaying {
             Log.write("media resume")
-            MediaKeys.togglePlayPause()             // resume only what we paused
+            MediaControl.shared.play()              // resume only what we paused
         }
         setStatus(key, text.isEmpty ? "idle" : "sent")
         Log.write("turn end")
