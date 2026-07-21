@@ -5,6 +5,14 @@
 # when available, otherwise plain bash prompts. No non-stdlib deps required.
 set -euo pipefail
 
+# When invoked via `curl … | bash`, stdin is the pipe (already at EOF), so read/select
+# would spin on EOF. Reconnect stdin to the controlling terminal for the interactive TUI.
+[ -t 0 ] || { [ -e /dev/tty ] && exec < /dev/tty; } || {
+  echo "Keine interaktive Terminal-Eingabe verfügbar. Führe die Einrichtung manuell aus:" >&2
+  echo "  bash $0" >&2
+  exit 1
+}
+
 CREDS_DIR="$HOME/Library/Application Support/Parley"
 CREDS="$CREDS_DIR/credentials.json"
 JARVIS="JyoJov3tFx6ucWOiDwTM"
