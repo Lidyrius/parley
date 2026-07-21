@@ -21,6 +21,7 @@ final class AppController: ObservableObject {
 
     let server = ControlServer()
     private let mic = MicCapture()
+    private let hud = RecordingHUD()
     private var activePlayer: TTSPlayer?   // fresh per playback; released before capture
     private var started = false
 
@@ -144,9 +145,16 @@ final class AppController: ObservableObject {
     }
 
     private func record() async -> Data {
-        await withCheckedContinuation { cont in
+        hud.show()
+        mic.onLevel = { [weak self] level in
+            Task { @MainActor in self?.hud.push(level) }
+        }
+        let wav = await withCheckedContinuation { cont in
             mic.start { wav in cont.resume(returning: wav) }
         }
+        mic.onLevel = nil
+        hud.finish()
+        return wav
     }
 
     private func transcribe(_ wav: Data, config: AppConfig) async -> String {

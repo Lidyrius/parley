@@ -21,6 +21,10 @@ final class MicCapture: @unchecked Sendable {
     private var maxDBSeen: Float = -120
     private var endReason = "unknown"
     private var logCounter = 0
+    private var attempt = 0
+
+    // Live input level 0…1 for the recording HUD waveform (called on the tap thread).
+    var onLevel: ((Float) -> Void)?
 
     private let noSpeechTimeout = 8.0
     private let maxListenSeconds = 90.0
@@ -37,6 +41,7 @@ final class MicCapture: @unchecked Sendable {
             self.maxDBSeen = -120
             self.endReason = "unknown"
             self.logCounter = 0
+            self.attempt = 0
 
             self.requestMicIfNeeded { granted in
                 self.q.async {
@@ -52,6 +57,9 @@ final class MicCapture: @unchecked Sendable {
 
     // runs on `q`
     private func beginCapture() {
+        maxTimer?.cancel()
+        attempt += 1
+        let myAttempt = attempt
         // Capture from the SYSTEM DEFAULT input. Per-engine AUHAL device routing proved
         // fragile (0 buffers / wrong format); the onboarding picker instead sets the
         // system default input device, which AVAudioEngine picks up reliably here.
@@ -86,6 +94,22 @@ final class MicCapture: @unchecked Sendable {
         }
         maxTimer = work
         q.asyncAfter(deadline: .now() + maxListenSeconds, execute: work)
+
+        // Dead-capture watchdog: if no buffers arrive within 3 s, the input is stuck
+        // (device contention etc.). Restart the engine once; if still dead, give up
+        // fast instead of hanging on the 90 s cap.
+        q.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self, !self.finished, self.buffersSeen == 0 else { return }
+            if myAttempt < 2 {
+                Log.write("mic: no buffers after 3s (attempt \(myAttempt)), restarting engine")
+                if let e = self.engine { e.inputNode.removeTap(onBus: 0); if e.isRunning { e.stop() }; self.engine = nil }
+                self.beginCapture()
+            } else {
+                self.endReason = "no-buffers"
+                Log.write("mic: still no buffers after restart, giving up")
+                self.finish()
+            }
+        }
     }
 
     // runs on the AVAudioEngine tap thread
@@ -114,6 +138,8 @@ final class MicCapture: @unchecked Sendable {
         totalDuration += duration
         buffersSeen += 1
         if db > maxDBSeen { maxDBSeen = db }
+        // Map dBFS (~ -55…-10) to 0…1 for the live waveform.
+        onLevel?(max(0, min(1, (db + 55) / 45)))
         logCounter += 1
         if logCounter % 20 == 0 {
             Log.write("mic: db=\(Int(db)) armed=\(vad.started) total=\(String(format: "%.1f", totalDuration))s buffers=\(buffersSeen)")
