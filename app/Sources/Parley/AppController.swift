@@ -23,8 +23,6 @@ final class AppController: ObservableObject {
     let server = ControlServer()
     private let mic = MicCapture()
     private let hud = RecordingHUD()
-    // Retained so it isn't deallocated mid-playback (a temporary NSSound often never plays).
-    private let doneSound = NSSound(named: NSSound.Name("Pop"))
     private var activePlayer: TTSPlayer?   // fresh per playback; released before capture
     private var started = false
 
@@ -96,11 +94,7 @@ final class AppController: ObservableObject {
         Log.write("record start")
         let wav = await record()
         Log.write("record done bytes=\(wav.count)")
-        // "done listening" cue. Small delay so the mic engine has fully torn down and the
-        // output device is free, then play a retained NSSound (so it isn't GC'd mid-play).
-        try? await Task.sleep(nanoseconds: 120_000_000)
-        if let s = doneSound { s.stop(); s.play(); Log.write("done-sound played") }
-        else { NSSound.beep(); Log.write("done-sound: 'Pop' not found, used NSBeep") }
+        await playDoneTone()   // audible "done listening" cue via the (working) TTS engine path
 
         setStatus(key, "transcribing")
         Log.write("transcribe start")
@@ -150,6 +144,23 @@ final class AppController: ObservableObject {
         // ponytail: 250 ms settle lets CoreAudio release the output device before the
         // mic engine claims it. Empirical; raise if 0-buffer captures reappear.
         try? await Task.sleep(nanoseconds: 250_000_000)
+    }
+
+    // Distinct descending two-tone "done listening" cue, via a fresh TTS player — the
+    // same AVAudioEngine output path as the pre-record beep (reliably audible; NSSound
+    // was not audible right after mic teardown).
+    private func playDoneTone() async {
+        let player = TTSPlayer()
+        activePlayer = player
+        do { try player.start() }
+        catch { Log.write("done-tone start failed: \(error)"); activePlayer = nil; return }
+        player.scheduleBeep(frequency: 700, seconds: 0.10)
+        await withCheckedContinuation { cont in
+            player.scheduleBeep(frequency: 470, seconds: 0.16) { cont.resume() }
+        }
+        player.stop()
+        activePlayer = nil
+        Log.write("done-tone played")
     }
 
     private func record() async -> Data {
