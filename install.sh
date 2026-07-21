@@ -43,16 +43,21 @@ info "Installiere Claude-Code-Plugin"
 mkdir -p "$HOME/.claude/skills"
 ln -sfn "$SRC/plugin" "$HOME/.claude/skills/parley"
 
-# 4. render Jarvis greeting clips if a key is around (optional, best-effort)
-if [ -f "$SRC/.env" ]; then
-  info "Rendere Begrüßungs-Clips"
-  ( set -a; . "$SRC/.env"; set +a; bash "$SRC/scripts/generate-ready-clips.sh" >/dev/null 2>&1 || true )
-  bash "$SRC/scripts/make-app.sh" >/dev/null 2>&1 || true
-fi
-
-# 5. onboarding (TUI)
+# 4. onboarding (TUI) — collects the API keys, language, voice, microphone
 info "Starte Einrichtung"
 bash "$SRC/scripts/onboard-tui.sh"
+
+# 5. render the Jarvis greeting clips using the key just entered, then rebuild so they
+#    ship in the bundle (best-effort — a silent greeting is fine if this is skipped).
+CREDS="$HOME/Library/Application Support/Parley/credentials.json"
+EL_KEY="$(jq -r '.elevenLabsAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
+VOICE="$(jq -r '.voiceID // ""' "$CREDS" 2>/dev/null || echo "")"
+if [ -n "$EL_KEY" ]; then
+  info "Rendere Begrüßungs-Clips"
+  ELEVENLABS_API_KEY="$EL_KEY" ELEVENLABS_VOICE_ID="$VOICE" \
+    bash "$SRC/scripts/generate-ready-clips.sh" >/dev/null 2>&1 || true
+  bash "$SRC/scripts/make-app.sh" >/dev/null 2>&1 || true
+fi
 
 # 6. launch the menu-bar app
 open -a Parley >/dev/null 2>&1 || true
