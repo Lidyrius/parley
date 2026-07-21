@@ -22,15 +22,21 @@ input="$(cat)"
 # same tag mentioned earlier in prose (e.g. a `<speak-end>` example in backticks) is ignored.
 # Only <speak> gets the tolerant "forgotten closing tag" fallback; <speak-end> must be closed
 # (an unclosed one would otherwise swallow the rest of the message).
+# The real directive is always the LAST line of the message, so the LAST opening tag by
+# position is the one that counts — any earlier tag in prose (even a bare unclosed
+# `<speak>` in backticks) is ignored. Extract that tag's content to its close, or to end
+# of message if the close was forgotten.
 msg="$(printf '%s' "$input" | jq -r '.last_assistant_message // ""')"
 parsed="$(printf '%s' "$msg" | perl -0777 -ne '
   my $m = $_;
-  my ($se,$sepos); while ($m =~ /<speak-end>(.*?)<\/speak-end>/sg) { $se=$1; $sepos=pos($m); }
-  my ($sp,$sppos); while ($m =~ /<speak>(.*?)<\/speak>/sg)         { $sp=$1; $sppos=pos($m); }
-  my ($text,$listen);
-  if (defined $se && (!defined $sp || $sepos > $sppos)) { $text=$se; $listen="false"; }
-  elsif (defined $sp) { $text=$sp; $listen="true"; }
-  elsif ($m =~ /.*<speak>(.*?)\z/s) { $text=$1; $listen="true"; }   # forgotten </speak>
+  my $sepos = -1; while ($m =~ /<speak-end>/g) { $sepos = $-[0]; }
+  my $sppos = -1; while ($m =~ /<speak>/g)     { $sppos = $-[0]; }
+  my ($text, $listen);
+  if ($sepos >= 0 && $sepos > $sppos) {
+    substr($m, $sepos) =~ /<speak-end>(.*?)(?:<\/speak-end>|\z)/s; $text = $1; $listen = "false";
+  } elsif ($sppos >= 0) {
+    substr($m, $sppos) =~ /<speak>(.*?)(?:<\/speak>|\z)/s; $text = $1; $listen = "true";
+  }
   if (defined $text) { $text =~ s/^\s+|\s+$//g; print "$listen\n$text"; }
 ')"
 listen="$(printf '%s' "$parsed" | head -1)"
