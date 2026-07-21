@@ -53,9 +53,11 @@ CREDS="$HOME/Library/Application Support/Parley/credentials.json"
 EL_KEY="$(jq -r '.elevenLabsAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
 VOICE="$(jq -r '.voiceID // ""' "$CREDS" 2>/dev/null || echo "")"
 if [ -n "$EL_KEY" ]; then
-  info "Rendere Begrüßungs-Clips"
+  info "Rendere Begrüßungs- und Bestätigungs-Clips"
   ELEVENLABS_API_KEY="$EL_KEY" ELEVENLABS_VOICE_ID="$VOICE" \
     bash "$SRC/scripts/generate-ready-clips.sh" >/dev/null 2>&1 || true
+  ELEVENLABS_API_KEY="$EL_KEY" ELEVENLABS_VOICE_ID="$VOICE" \
+    bash "$SRC/scripts/generate-line-clips.sh" >/dev/null 2>&1 || true
   bash "$SRC/scripts/make-app.sh" >/dev/null 2>&1 || true
 fi
 

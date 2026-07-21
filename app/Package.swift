@@ -9,7 +9,7 @@ let package = Package(
             name: "Parley",
             path: "Sources/Parley",
             exclude: ["Info.plist"],
-            resources: [.copy("Resources/ready")],
+            resources: [.copy("Resources/ready"), .copy("Resources/lines")],
             linkerSettings: [
                 // Embed an Info.plist into the bare SPM executable so it runs as a
                 // menu-bar accessory (LSUIElement) and can request mic access.

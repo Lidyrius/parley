@@ -99,12 +99,14 @@ final class AppController: ObservableObject {
         Log.write("record start")
         let wav = await record()
         Log.write("record done bytes=\(wav.count)")
-        await playDoneTone()   // audible "done listening" cue via the (working) TTS engine path
 
         setStatus(key, "transcribing")
         Log.write("transcribe start")
         let text = await transcribe(wav, config: config)
         Log.write("transcribe done chars=\(text.count)")
+
+        // Classify the reply and play the matching cached Jarvis line (replaces the chime).
+        await acknowledge(text, config: config)
 
         if mediaWasPlaying {
             Log.write("media resume")
@@ -154,23 +156,54 @@ final class AppController: ObservableObject {
     // Distinct descending two-tone "done listening" cue, via a fresh TTS player — the
     // same AVAudioEngine output path as the pre-record beep (reliably audible; NSSound
     // was not audible right after mic teardown).
-    private func playDoneTone() async {
+    // Classify the reply → play the matching cached line; fall back to the chime when
+    // there's no text, no clips bundled, or classification fails.
+    private func acknowledge(_ text: String, config: AppConfig) async {
         // Settle: the mic engine just tore down; a cold output engine started too soon
-        // renders into a contended device and produces no audible sound (the completion
-        // still fires, so "played" alone isn't proof of audio). Let the device free first.
+        // renders into a contended device and produces no audible sound. Free it first.
         try? await Task.sleep(nanoseconds: 300_000_000)
+        if !text.isEmpty {
+            let intent = await classify(text, config: config)
+            Log.write("classified: \(intent.rawValue)")
+            if let data = LineClips.randomClipData(for: intent) {
+                await playClip(data)
+                return
+            }
+            Log.write("no line clip for \(intent.rawValue) → chime")
+        }
+        await playChime()
+    }
+
+    private func classify(_ text: String, config: AppConfig) async -> Intent {
+        guard !config.groqKey.isEmpty else { return .other }
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: Classifier.request(text: text, apiKey: config.groqKey))
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return .other }
+            return Classifier.parse(data)
+        } catch { return .other }
+    }
+
+    private func playClip(_ data: Data) async {
         let player = TTSPlayer()
         activePlayer = player
-        do { try player.start() }
-        catch { Log.write("done-tone start failed: \(error)"); activePlayer = nil; return }
-        // Soft, warm ascending chime (C5 → G5), ~20% quieter.
+        do { try player.start() } catch { activePlayer = nil; return }
+        player.enqueue(pcmChunk: data)
+        let seconds = Double(data.count / 2) / ElevenLabs.sampleRate   // pcm_24000 mono 16-bit
+        try? await Task.sleep(nanoseconds: UInt64((seconds + 0.3) * 1_000_000_000))
+        player.stop()
+        activePlayer = nil
+    }
+
+    private func playChime() async {
+        let player = TTSPlayer()
+        activePlayer = player
+        do { try player.start() } catch { Log.write("chime start failed: \(error)"); activePlayer = nil; return }
         player.scheduleChime(frequency: 523.25, seconds: 0.32, amplitude: 0.4, decay: 8)
         await withCheckedContinuation { cont in
             player.scheduleChime(frequency: 783.99, seconds: 0.6, amplitude: 0.4, decay: 5.5) { cont.resume() }
         }
         player.stop()
         activePlayer = nil
-        Log.write("done-tone played")
     }
 
     private func record() async -> Data {

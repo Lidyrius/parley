@@ -8,3 +8,4 @@ app/Sources/Parley/Resources/ready/*.pcm
 *.env
 secrets*
 .claude/ralph-loop.local.md
+app/Sources/Parley/Resources/lines/**/*.pcm
