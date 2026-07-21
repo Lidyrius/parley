@@ -7,6 +7,7 @@ struct SessionInfo: Identifiable, Equatable {
     var project: String
     var pane: String
     var status: String
+    var lastActive = Date()   // refreshed on each ready/turn; used to count live instances
 }
 
 // Ties the control server to the audio + tmux pipeline and exposes session state
@@ -85,6 +86,14 @@ final class AppController: ObservableObject {
         if !pausedMedia.isEmpty {
             Log.write("paused media: \(pausedMedia.joined(separator: ","))")
             try? await Task.sleep(nanoseconds: 400_000_000)   // 0.4 s beat before speaking
+        }
+
+        // Multiple projects running in parallel → announce which one is speaking (a cached
+        // "Update für <Projekt>" clip) before the actual sentence, so turns don't blur.
+        if liveProjectCount() > 1,
+           let ann = await ProjectClips.shared.clipData(label: turn.spokenLabel, language: config.language, config: config) {
+            Log.write("multi-instance → announcing \(turn.spokenLabel)")
+            await playClip(ann, rate: config.speakingRate)
         }
 
         Log.write("speak start")
@@ -293,6 +302,14 @@ final class AppController: ObservableObject {
     private func upsert(_ info: SessionInfo) {
         if let i = sessions.firstIndex(where: { $0.id == info.id }) { sessions[i] = info }
         else { sessions.append(info) }
+    }
+
+    // Distinct projects seen within the window — i.e. instances currently running in
+    // parallel. Used to decide whether to announce which project is speaking.
+    // ponytail: 5-min recency proxy for "alive"; there's no clean session-ended signal.
+    private func liveProjectCount() -> Int {
+        let cutoff = Date().addingTimeInterval(-300)
+        return Set(sessions.filter { $0.lastActive > cutoff }.map { $0.project }).count
     }
 
     private func setStatus(_ id: String, _ status: String) {

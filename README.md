@@ -95,7 +95,21 @@ Settings live in the menu-bar app (**Settings…**) and in onboarding:
 - **Voice** (ElevenLabs)
 - **Microphone** input device
 - **API keys** — stored locally in `~/Library/Application Support/Parley/credentials.json`
-  (`0600`), never transmitted anywhere but ElevenLabs/Groq.
+  (`0600`), never transmitted anywhere but Google/Groq.
+
+### Per-project name
+
+Drop a `.parley.json` in a project root to give it a spoken name:
+
+```json
+{ "name": "Parley" }
+```
+
+When **more than one project runs in parallel**, Parley prepends a short spoken
+announcement — *"I have an update on the Parley project"* — before each summary, so you
+always know which one is talking. These announcements are pre-rendered per project (10
+phrasings, your voice + language) and cached; with a single project running, nothing is
+prepended.
 
 ## Uninstall
 

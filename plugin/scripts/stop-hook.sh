@@ -29,6 +29,11 @@ cwd="$(printf '%s' "$input" | jq -r '.cwd // ""')"
 session_id="$(printf '%s' "$input" | jq -r '.session_id // ""')"
 project="$(basename "${cwd:-unknown}")"
 
+# Optional per-project config: <project>/.parley.json → { "name": "<spoken label>" }.
+# Used to announce which project is speaking when multiple run in parallel.
+label=""
+[ -f "$cwd/.parley.json" ] && label="$(jq -r '.name // ""' "$cwd/.parley.json" 2>/dev/null || echo "")"
+
 payload="$(jq -n \
   --arg event "turn" \
   --arg session_id "$session_id" \
@@ -36,7 +41,8 @@ payload="$(jq -n \
   --arg project "$project" \
   --arg tmux_pane "${TMUX_PANE:-}" \
   --arg speak "$speak" \
-  '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak}')"
+  --arg label "$label" \
+  '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label}')"
 
 # Blocks while the app speaks + records + transcribes. Must exceed the app's max
 # recording cap (90 s) + speak + STT; the hook timeout (hooks.json) in turn exceeds this.
