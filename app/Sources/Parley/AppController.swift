@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 struct SessionInfo: Identifiable, Equatable {
     var id: String        // tmux_pane (or session_id fallback) — routing key
@@ -93,6 +94,7 @@ final class AppController: ObservableObject {
         Log.write("record start")
         let wav = await record()
         Log.write("record done bytes=\(wav.count)")
+        NSSound(named: "Pop")?.play()               // "done listening" cue (distinct from the pre-record beep)
 
         setStatus(key, "transcribing")
         Log.write("transcribe start")
