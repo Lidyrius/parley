@@ -163,9 +163,10 @@ final class AppController: ObservableObject {
         activePlayer = player
         do { try player.start() }
         catch { Log.write("done-tone start failed: \(error)"); activePlayer = nil; return }
-        player.scheduleBeep(frequency: 660, seconds: 0.12, amplitude: 0.5)
+        // Elegant ascending glass chime (G5 → D6) instead of a flat beep.
+        player.scheduleChime(frequency: 783.99, seconds: 0.30, amplitude: 0.5, decay: 9)
         await withCheckedContinuation { cont in
-            player.scheduleBeep(frequency: 440, seconds: 0.20, amplitude: 0.5) { cont.resume() }
+            player.scheduleChime(frequency: 1174.66, seconds: 0.55, amplitude: 0.5, decay: 6.5) { cont.resume() }
         }
         player.stop()
         activePlayer = nil

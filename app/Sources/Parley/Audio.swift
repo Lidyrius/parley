@@ -63,6 +63,29 @@ final class TTSPlayer {
         node.scheduleBuffer(buf, completionHandler: { completion?() })
     }
 
+    /// Schedule an elegant "glass" chime: fundamental + octave + soft 3rd harmonic under a
+    /// bell envelope (fast attack, exponential ring-out). Sounds refined, not a flat beep.
+    func scheduleChime(frequency: Double, seconds: Double = 0.5,
+                       amplitude: Double = 0.5, decay: Double = 7.0,
+                       completion: (() -> Void)? = nil) {
+        let sr = format.sampleRate
+        let n = Int(sr * seconds)
+        var samples = [Float](repeating: 0, count: n)
+        let w1 = 2.0 * Double.pi * frequency / sr
+        let w2 = 2.0 * Double.pi * frequency * 2.0 / sr
+        let w3 = 2.0 * Double.pi * frequency * 3.01 / sr   // slightly detuned → shimmer
+        let norm = 1.0 / 1.5
+        for i in 0..<n {
+            let t = Double(i) / sr
+            let attack = min(1.0, t / 0.006)
+            let env = attack * exp(-t * decay)
+            let s = sin(Double(i) * w1) + 0.32 * sin(Double(i) * w2) + 0.10 * sin(Double(i) * w3)
+            samples[i] = Float(amplitude * env * s * norm)
+        }
+        guard let buf = makeBuffer(samples) else { completion?(); return }
+        node.scheduleBuffer(buf, completionHandler: { completion?() })
+    }
+
     private func makeBuffer(_ floats: [Float]) -> AVAudioPCMBuffer? {
         guard !floats.isEmpty,
               let buf = AVAudioPCMBuffer(pcmFormat: format,
