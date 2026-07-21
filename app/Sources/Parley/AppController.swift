@@ -28,11 +28,10 @@ final class AppController: ObservableObject {
     let server = ControlServer()
     private let mic = MicCapture()
     private let hud = RecordingHUD()
-    // ONE long-lived output engine, reused for every playback. Creating a fresh
-    // AVAudioEngine per playback leaked HAL audio clients over a long session until both
-    // TTS output and mic input died (0 buffers). Reuse + stop() between playbacks frees the
-    // device for the mic without churning engines.
-    private let player = TTSPlayer()
+    // Fresh TTSPlayer per playback: its deinit tears down the AVAudioEngine, which releases
+    // the output device promptly so the mic can grab it. A single long-lived engine (tried
+    // once) held the device far longer when merely stopped → the mic sat at 0 buffers for
+    // ~10s across retries. The player is a local in each playback func, alive for its span.
     private var started = false
 
     func start() {
@@ -156,7 +155,7 @@ final class AppController: ObservableObject {
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
     private func speakAndBeep(_ text: String, config: AppConfig) async {
-        player.setRate(config.speakingRate)
+        let player = TTSPlayer(rate: config.speakingRate)
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
         if config.useGoogle {
             await synthGoogle(text, config: config, into: player)
@@ -245,7 +244,7 @@ final class AppController: ObservableObject {
     }
 
     private func playClip(_ data: Data, rate: Double = 1.0) async {
-        player.setRate(rate)
+        let player = TTSPlayer(rate: rate)
         do { try player.start() } catch { return }
         player.enqueue(pcmChunk: data)
         let seconds = Double(data.count / 2) / ElevenLabs.sampleRate / max(0.5, rate)   // faster rate → shorter
@@ -254,7 +253,7 @@ final class AppController: ObservableObject {
     }
 
     private func playChime() async {
-        player.setRate(1.0)
+        let player = TTSPlayer()
         do { try player.start() } catch { Log.write("chime start failed: \(error)"); return }
         player.scheduleChime(frequency: 523.25, seconds: 0.32, amplitude: 0.4, decay: 8)
         await withCheckedContinuation { cont in

@@ -97,17 +97,17 @@ final class MicCapture: @unchecked Sendable {
         maxTimer = work
         q.asyncAfter(deadline: .now() + maxListenSeconds, execute: work)
 
-        // Dead-capture watchdog: if no buffers arrive within 3 s, the input is stuck
-        // (device contention etc.). Restart the engine once; if still dead, give up
-        // fast instead of hanging on the 90 s cap.
-        q.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+        // Dead-capture watchdog: a live input delivers its first buffer within ~200 ms, so
+        // if none arrive in 1.5 s the input is stuck (output→input device contention). Retry
+        // fast — this is the main source of the "mic triggers seconds late" delay — up to 5
+        // times before giving up instead of hanging on the 90 s cap.
+        q.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self, !self.finished, self.buffersSeen == 0 else { return }
-            if myAttempt < 3 {
-                Log.write("mic: no buffers after 3s (attempt \(myAttempt)), tearing down + restarting after 0.6s")
+            if myAttempt < 5 {
+                Log.write("mic: no buffers after 1.5s (attempt \(myAttempt)), tearing down + restarting after 0.4s")
                 if let e = self.engine { e.inputNode.removeTap(onBus: 0); if e.isRunning { e.stop() }; self.engine = nil }
-                // Real recovery delay — restarting immediately (as before) doesn't free the
-                // contended output→input device; give CoreAudio time before a fresh engine.
-                self.q.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                // Short recovery delay so retries cluster while the output device is freeing.
+                self.q.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                     guard let self, !self.finished else { return }
                     self.beginCapture()
                 }
