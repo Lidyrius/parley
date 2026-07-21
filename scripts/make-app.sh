@@ -9,7 +9,9 @@ APP="$APP_DIR/Parley.app"
 BIN_NAME="Parley"
 
 echo "==> swift build -c release"
-( cd "$ROOT/app" && swift build -c release )
+# -suppress-warnings: keep install output clean (Swift 6 Sendable-capture noise from
+# AVFoundation closures — harmless for this single-actor app). Errors still surface.
+( cd "$ROOT/app" && swift build -c release -Xswiftc -suppress-warnings )
 
 BUILD_DIR="$ROOT/app/.build/release"
 [ -x "$BUILD_DIR/$BIN_NAME" ] || { echo "build produced no binary"; exit 1; }
