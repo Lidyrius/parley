@@ -127,51 +127,35 @@ final class AppController: ObservableObject {
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
     private func speakAndBeep(_ text: String, config: AppConfig) async {
-        if config.localVoice {
-            // Zero-cost on-device Apple voice.
-            Log.write("speak via local TTS")
-            await LocalTTS.shared.speak(text, voiceID: config.localVoiceID)
-            await playBeep()
-        } else {
-            let player = TTSPlayer()
-            activePlayer = player
-            if config.ttsReady {
-                let req = ElevenLabs.streamRequest(
-                    text: text, config: .init(apiKey: config.elevenLabsKey, voiceID: config.voiceID))
-                do {
-                    try player.start()
-                    Log.write("tts engine started, streaming")
-                    let (bytes, _) = try await URLSession.shared.bytes(for: req)
-                    var chunk = Data()
-                    for try await b in bytes {
-                        chunk.append(b)
-                        if chunk.count >= 4096 { player.enqueue(pcmChunk: chunk); chunk.removeAll(keepingCapacity: true) }
-                    }
-                    if !chunk.isEmpty { player.enqueue(pcmChunk: chunk) }
-                    Log.write("tts stream complete")
-                } catch {
-                    Log.write("tts error: \(error.localizedDescription)")
-                    lastError = "TTS: \(error.localizedDescription)"
-                }
-            } else {
-                NSLog("Parley: TTS not configured")
-            }
-            await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
-            player.stop()
-            activePlayer = nil
-        }
-        // ponytail: settle lets CoreAudio release the output device before the mic engine
-        // claims it. Raised to 450 ms after intermittent 0-buffer captures recurred.
-        try? await Task.sleep(nanoseconds: 450_000_000)
-    }
-
-    private func playBeep() async {
         let player = TTSPlayer()
         activePlayer = player
-        do { try player.start() } catch { activePlayer = nil; return }
+        if config.ttsReady {
+            let req = ElevenLabs.streamRequest(
+                text: text, config: .init(apiKey: config.elevenLabsKey, voiceID: config.voiceID))
+            do {
+                try player.start()
+                Log.write("tts engine started, streaming")
+                let (bytes, _) = try await URLSession.shared.bytes(for: req)
+                var chunk = Data()
+                for try await b in bytes {
+                    chunk.append(b)
+                    if chunk.count >= 4096 { player.enqueue(pcmChunk: chunk); chunk.removeAll(keepingCapacity: true) }
+                }
+                if !chunk.isEmpty { player.enqueue(pcmChunk: chunk) }
+                Log.write("tts stream complete")
+            } catch {
+                Log.write("tts error: \(error.localizedDescription)")
+                lastError = "TTS: \(error.localizedDescription)"
+            }
+        } else {
+            NSLog("Parley: TTS not configured")
+        }
         await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
         player.stop()
         activePlayer = nil
+        // ponytail: settle lets CoreAudio release the output device before the mic engine
+        // claims it. Raised to 450 ms after intermittent 0-buffer captures recurred.
+        try? await Task.sleep(nanoseconds: 450_000_000)
     }
 
     // Distinct descending two-tone "done listening" cue, via a fresh TTS player — the

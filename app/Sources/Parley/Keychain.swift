@@ -15,8 +15,6 @@ enum Keychain {
         case voiceID
         case language      // spoken-turn language, e.g. "Deutsch" / "English". Default Deutsch.
         case micDeviceUID  // selected input device UID; empty = system default
-        case localVoice    // "1" → use on-device Apple TTS instead of ElevenLabs
-        case localVoiceID  // AVSpeechSynthesisVoice identifier; empty = best German male
     }
 
     private static var fileURL: URL {
@@ -61,8 +59,6 @@ struct AppConfig {
     var groqKey: String
     var voiceID: String
     var language: String
-    var localVoice: Bool
-    var localVoiceID: String
 
     static func load() -> AppConfig {
         func val(_ k: Keychain.Key, _ env: String) -> String {
@@ -73,9 +69,7 @@ struct AppConfig {
             elevenLabsKey: val(.elevenLabsAPIKey, "ELEVENLABS_API_KEY"),
             groqKey: val(.groqAPIKey, "GROQ_API_KEY"),
             voiceID: val(.voiceID, "ELEVENLABS_VOICE_ID"),
-            language: lang.isEmpty ? "Deutsch" : lang,
-            localVoice: (Keychain.get(.localVoice) ?? "") == "1",
-            localVoiceID: Keychain.get(.localVoiceID) ?? "")
+            language: lang.isEmpty ? "Deutsch" : lang)
     }
 
     var ttsReady: Bool { !elevenLabsKey.isEmpty && !voiceID.isEmpty }
