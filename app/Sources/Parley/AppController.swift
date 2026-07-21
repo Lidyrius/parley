@@ -75,13 +75,17 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
         Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
 
-        // Pause only media that is ACTUALLY playing (real MediaRemote state, not the
-        // device-is-running heuristic), with an EXPLICIT pause command — so we never
-        // start media the user had already paused. Resume only what we paused.
-        let mediaWasPlaying = await MediaControl.shared.isPlaying()
-        if mediaWasPlaying {
-            Log.write("media is playing → pause")
+        // Detect playing media via CoreAudio (MediaRemote's play-state getter is
+        // restricted for third-party apps → always false). Control via EXPLICIT
+        // MediaRemote pause/play (not the toggle key), so an already-paused video is
+        // never accidentally started. Confirm we actually stopped playback before we
+        // commit to resuming (delta on the output-active state).
+        var weActuallyPaused = false
+        if AudioDevices.isDefaultOutputActive() {
             MediaControl.shared.pause()
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            weActuallyPaused = !AudioDevices.isDefaultOutputActive()   // output went quiet → real playback paused
+            Log.write("media active → pause; stopped=\(weActuallyPaused)")
         } else {
             Log.write("no media playing → leaving it")
         }
@@ -101,9 +105,9 @@ final class AppController: ObservableObject {
         let text = await transcribe(wav, config: config)
         Log.write("transcribe done chars=\(text.count)")
 
-        if mediaWasPlaying {
+        if weActuallyPaused {
             Log.write("media resume")
-            MediaControl.shared.play()              // resume only what we paused
+            MediaControl.shared.play()              // resume only what we actually paused
         }
         setStatus(key, text.isEmpty ? "idle" : "sent")
         Log.write("turn end")
