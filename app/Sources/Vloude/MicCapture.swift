@@ -1,11 +1,12 @@
 import Foundation
 import AVFoundation
 
-// Mic capture + silence VAD. Fresh AVAudioEngine per recording (reusing one instance
-// across start/stop cycles can silently stop delivering input buffers). Converts to
-// 16 kHz mono Int16, runs each buffer through SilenceVAD, calls `onFinished` with the
-// WAV once trailing silence ends. Writes a diagnostics file after each recording.
+// Mic capture + silence VAD. ALL AVAudioEngine / CoreAudio work runs on a private
+// serial queue — never the main thread — so device setup (incl. selecting a specific
+// input device via CoreAudio) or a blocking engine.start() can't freeze the UI.
+// Fresh AVAudioEngine per recording (reuse silently kills input on later cycles).
 final class MicCapture: @unchecked Sendable {
+    private let q = DispatchQueue(label: "de.developaway.vloude.mic")
     private var engine: AVAudioEngine?
     private var vad = SilenceVAD(speechThresholdDB: -50)
     private var samples: [Int16] = []
@@ -16,49 +17,51 @@ final class MicCapture: @unchecked Sendable {
     private var finished = false
     private var totalDuration = 0.0
     private var maxTimer: DispatchWorkItem?
-
-    // diagnostics (instance-local; written to a file on finish)
     private var buffersSeen = 0
     private var maxDBSeen: Float = -120
     private var endReason = "unknown"
+    private var logCounter = 0
 
     private let noSpeechTimeout = 8.0
-    // Long spoken replies must fit: VAD ends on ~0.9 s silence anyway, this is only the
-    // hard ceiling. Kept well below the hook/curl timeouts (curl 140 s, hook 150 s).
     private let maxListenSeconds = 90.0
 
     func start(onFinished: @escaping (Data) -> Void) {
-        finished = false
-        self.onFinished = onFinished
-        vad.reset()
-        samples.removeAll(keepingCapacity: true)
-        totalDuration = 0
-        buffersSeen = 0
-        maxDBSeen = -120
-        endReason = "unknown"
-
-        requestMicIfNeeded { [weak self] granted in
+        q.async { [weak self] in
             guard let self else { return }
-            guard granted else { self.endReason = "permission-denied"; self.finish(); return }
-            self.beginCapture()
+            self.finished = false
+            self.onFinished = onFinished
+            self.vad.reset()
+            self.samples.removeAll(keepingCapacity: true)
+            self.totalDuration = 0
+            self.buffersSeen = 0
+            self.maxDBSeen = -120
+            self.endReason = "unknown"
+            self.logCounter = 0
+
+            self.requestMicIfNeeded { granted in
+                self.q.async {
+                    guard granted else {
+                        Log.write("mic: permission not granted")
+                        self.endReason = "permission-denied"; self.finish(); return
+                    }
+                    self.beginCapture()
+                }
+            }
         }
     }
 
+    // runs on `q`
     private func beginCapture() {
-        let engine = AVAudioEngine()          // fresh instance every recording
+        // Capture from the SYSTEM DEFAULT input. Per-engine AUHAL device routing proved
+        // fragile (0 buffers / wrong format); the onboarding picker instead sets the
+        // system default input device, which AVAudioEngine picks up reliably here.
+        let engine = AVAudioEngine()
         self.engine = engine
-        // Route to the onboarding-selected input device, if any (else system default).
-        if let uid = Keychain.get(.micDeviceUID), !uid.isEmpty,
-           let devID = AudioDevices.deviceID(forUID: uid) {
-            AudioDevices.setInputDevice(devID, on: engine)
-        }
+
         let input = engine.inputNode
-        // Do NOT touch mainMixerNode for input-only capture: it lazily instantiates the
-        // output HAL and can renegotiate the device, zeroing the input sample rate.
-        // Use the input node's real output format for the tap.
         let inFormat = input.outputFormat(forBus: 0)
         guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
-            endReason = "no-input-format"; NSLog("Vloude: no usable mic input format"); finish(); return
+            endReason = "no-input-format"; Log.write("mic: no usable input format (\(inFormat.sampleRate)Hz)"); finish(); return
         }
         guard let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
                                             sampleRate: targetRate, channels: 1, interleaved: true) else {
@@ -71,16 +74,21 @@ final class MicCapture: @unchecked Sendable {
             self?.handle(buf)
         }
         engine.prepare()
-        do { try engine.start() }
-        catch { endReason = "engine-start-failed"; NSLog("Vloude: audio engine start failed: \(error)"); finish(); return }
+        do {
+            try engine.start()
+            Log.write("mic: engine started (\(Int(inFormat.sampleRate))Hz, \(inFormat.channelCount)ch)")
+        } catch {
+            endReason = "engine-start-failed"; Log.write("mic: engine start failed: \(error)"); finish(); return
+        }
 
         let work = DispatchWorkItem { [weak self] in
-            self?.endReason = "max-cap"; self?.finish()
+            self?.endReason = "max-cap"; Log.write("mic: max listen cap reached"); self?.finish()
         }
         maxTimer = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + maxListenSeconds, execute: work)
+        q.asyncAfter(deadline: .now() + maxListenSeconds, execute: work)
     }
 
+    // runs on the AVAudioEngine tap thread
     private func handle(_ buffer: AVAudioPCMBuffer) {
         guard let converter, let targetFormat else { return }
         let ratio = targetRate / buffer.format.sampleRate
@@ -106,21 +114,25 @@ final class MicCapture: @unchecked Sendable {
         totalDuration += duration
         buffersSeen += 1
         if db > maxDBSeen { maxDBSeen = db }
+        logCounter += 1
+        if logCounter % 20 == 0 {
+            Log.write("mic: db=\(Int(db)) armed=\(vad.started) total=\(String(format: "%.1f", totalDuration))s buffers=\(buffersSeen)")
+        }
 
         let decision = vad.process(rmsDB: db, duration: duration)
         if decision == .waiting && totalDuration >= noSpeechTimeout {
             endReason = "no-speech"
-            DispatchQueue.main.async { [weak self] in self?.finish() }
+            q.async { [weak self] in self?.finish() }
             return
         }
         if decision == .ended {
             endReason = "vad-silence"
-            DispatchQueue.main.async { [weak self] in self?.finish() }
+            q.async { [weak self] in self?.finish() }
         }
     }
 
+    // runs on `q`
     private func finish() {
-        if !Thread.isMainThread { DispatchQueue.main.async { [weak self] in self?.finish() }; return }
         guard !finished else { return }
         finished = true
         maxTimer?.cancel(); maxTimer = nil
@@ -129,7 +141,9 @@ final class MicCapture: @unchecked Sendable {
             if engine.isRunning { engine.stop() }
         }
         engine = nil
-        writeDiagnostics(samples: samples.count)
+        let count = samples.count
+        writeDiagnostics(samples: count)
+        Log.write("mic: finished reason=\(endReason) buffers=\(buffersSeen) samples=\(count) maxDB=\(Int(maxDBSeen))")
         let wav = WAV.encode(int16: samples)
         let cb = onFinished
         onFinished = nil
@@ -137,7 +151,7 @@ final class MicCapture: @unchecked Sendable {
     }
 
     func stop() {
-        DispatchQueue.main.async { [weak self] in
+        q.async { [weak self] in
             guard let self, !self.finished else { return }
             self.finished = true
             self.maxTimer?.cancel(); self.maxTimer = nil
@@ -155,9 +169,7 @@ final class MicCapture: @unchecked Sendable {
         case .authorized:
             done(true)
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                DispatchQueue.main.async { done(granted) }
-            }
+            AVCaptureDevice.requestAccess(for: .audio) { granted in done(granted) }
         default:
             done(false)
         }
@@ -173,7 +185,6 @@ final class MicCapture: @unchecked Sendable {
         }
     }
 
-    // After each recording, dump what happened so it can be inspected without logs.
     private func writeDiagnostics(samples: Int) {
         let json = """
         {"auth":"\(authString())","buffers":\(buffersSeen),"maxDB":\(Int(maxDBSeen)),"samples":\(samples),"seconds":\(String(format: "%.1f", totalDuration)),"endReason":"\(endReason)"}

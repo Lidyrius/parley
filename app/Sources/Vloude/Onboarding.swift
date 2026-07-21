@@ -164,7 +164,10 @@ struct OnboardingView: View {
             } else {
                 selectRow(title: "Systemstandard", selected: micUID.isEmpty) { micUID = "" }
                 ForEach(devices) { d in
-                    selectRow(title: d.name, selected: micUID == d.uid) { micUID = d.uid }
+                    selectRow(title: d.name, selected: micUID == d.uid) {
+                        micUID = d.uid
+                        AudioDevices.setDefaultInput(uid: d.uid)   // make it the system default input
+                    }
                 }
             }
 

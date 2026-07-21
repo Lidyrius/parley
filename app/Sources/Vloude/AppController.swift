@@ -72,18 +72,29 @@ final class AppController: ObservableObject {
         let key = routeKey(turn.tmux_pane, turn.session_id)
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
         let config = AppConfig.load()
+        Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
 
+        Log.write("media pause (trusted=\(MediaKeys.isTrusted))")
         MediaKeys.togglePlayPause()                 // pause YouTube/Spotify
+
+        Log.write("speak start")
         await speakAndBeep(turn.speak, config: config)
+        Log.write("speak+beep done")
 
         setStatus(key, "listening")
+        Log.write("record start")
         let wav = await record()
+        Log.write("record done bytes=\(wav.count)")
 
         setStatus(key, "transcribing")
+        Log.write("transcribe start")
         let text = await transcribe(wav, config: config)
+        Log.write("transcribe done chars=\(text.count)")
 
+        Log.write("media resume")
         MediaKeys.togglePlayPause()                 // resume
         setStatus(key, text.isEmpty ? "idle" : "sent")
+        Log.write("turn end")
         return text
     }
 
@@ -99,6 +110,7 @@ final class AppController: ObservableObject {
                 text: text, config: .init(apiKey: config.elevenLabsKey, voiceID: config.voiceID))
             do {
                 try player.start()
+                Log.write("tts engine started, streaming")
                 let (bytes, _) = try await URLSession.shared.bytes(for: req)
                 var chunk = Data()
                 for try await b in bytes {
@@ -106,7 +118,9 @@ final class AppController: ObservableObject {
                     if chunk.count >= 4096 { player.enqueue(pcmChunk: chunk); chunk.removeAll(keepingCapacity: true) }
                 }
                 if !chunk.isEmpty { player.enqueue(pcmChunk: chunk) }
+                Log.write("tts stream complete")
             } catch {
+                Log.write("tts error: \(error.localizedDescription)")
                 lastError = "TTS: \(error.localizedDescription)"
             }
         } else {

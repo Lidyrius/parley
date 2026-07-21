@@ -36,13 +36,19 @@ enum AudioDevices {
         inputDevices().first { $0.uid == uid }?.id
     }
 
-    /// Route this engine's input to `deviceID`. Call before `engine.start()`.
-    static func setInputDevice(_ deviceID: AudioDeviceID, on engine: AVAudioEngine) {
-        guard let unit = engine.inputNode.audioUnit else { return }
-        var dev = deviceID
-        AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
-                             kAudioUnitScope_Global, 0, &dev,
-                             UInt32(MemoryLayout<AudioDeviceID>.size))
+    /// Make `uid` the system default input device. Reliable across AVAudioEngine (which
+    /// captures from the default) — unlike per-engine AUHAL routing. Returns success.
+    @discardableResult
+    static func setDefaultInput(uid: String) -> Bool {
+        guard !uid.isEmpty, var dev = deviceID(forUID: uid) else { return false }
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &dev)
+        return status == noErr
     }
 
     // MARK: - private
