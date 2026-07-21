@@ -38,6 +38,13 @@ final class AppController: ObservableObject {
         server.onReady = { [weak self] ready in
             Task { @MainActor in self?.playReady(ready) }
         }
+        server.onQueued = { [weak self] turn in
+            Task { @MainActor in
+                guard let self else { return }
+                self.upsert(SessionInfo(id: self.routeKey(turn.tmux_pane, turn.session_id),
+                                        project: turn.project, pane: turn.tmux_pane, status: "queued"))
+            }
+        }
         // The long-poll pipeline: speak → record → transcribe → return the reply text,
         // which the hook feeds back into the Claude session (terminal-agnostic).
         server.replyProvider = { [weak self] turn, done in

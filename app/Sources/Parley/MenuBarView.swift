@@ -54,6 +54,7 @@ struct MenuBarView: View {
         case "listening": return .green
         case "transcribing": return .orange
         case "ready": return .teal
+        case "queued": return .yellow
         default: return .secondary
         }
     }

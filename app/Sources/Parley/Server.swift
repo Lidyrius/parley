@@ -20,6 +20,7 @@ final class ControlServer: @unchecked Sendable {
     // UI notify when a turn starts being spoken (fired on the server queue).
     var onTurn: ((TurnPayload) -> Void)?
     var onReady: ((ReadyPayload) -> Void)?
+    var onQueued: ((TurnPayload) -> Void)?   // a turn parked behind the active one
     // The pipeline: speak + record + transcribe, then call the completion with the
     // transcribed reply ("" ends the conversation). If nil, /turn answers empty.
     var replyProvider: ((TurnPayload, @escaping (String) -> Void) -> Void)?
@@ -93,6 +94,7 @@ final class ControlServer: @unchecked Sendable {
 
     private func enqueueReply(_ turn: TurnPayload, _ respond: @escaping (String) -> Void) {
         replyQueue.append((turn, respond))
+        if replyActive { onQueued?(turn) }   // parked behind an in-flight turn → show as waiting
         pumpReplies()
     }
 
