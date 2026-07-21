@@ -44,6 +44,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSUIElement</key>               <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Parley records your spoken reply after Claude Code finishes a turn.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Parley pauses your music while it speaks and resumes it afterwards.</string>
 </dict>
 </plist>
 PLIST

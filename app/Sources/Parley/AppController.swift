@@ -77,22 +77,15 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
         Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
 
-        // Media handling — PAUSE ONLY, never auto-resume.
-        // macOS 15.4+/26 exposes no reliable "is playing" signal to a non-entitled
-        // third-party app: MediaRemote's now-playing info/state is entitlement-gated
-        // (returns empty/false even for a confirmed-playing browser video), and CoreAudio's
-        // device/process "running" flags stay on for PAUSED media (the app keeps the audio
-        // IO alive), so they can't tell playing from paused. Auto-resume therefore always
-        // risked starting a video the user had deliberately paused. So we only ever send an
-        // EXPLICIT pause before speaking — a harmless no-op when nothing is playing or it's
-        // already paused — and never a play. The user resumes their own media. This
-        // guarantees Parley never starts stopped media. (isDefaultOutputActive gates the
-        // pause only to avoid firing a pointless command in silence; a false positive from
-        // our own TTS residue just sends a no-op pause.)
-        if AudioDevices.isDefaultOutputActive() {
-            MediaControl.shared.pause()
-            Log.write("media active → paused (no auto-resume)")
-            try? await Task.sleep(nanoseconds: 500_000_000)   // 0.5 s beat before speaking
+        // Pause media that is ACTUALLY playing (via each app's own player state — the only
+        // reliable signal), then resume exactly those apps afterwards. Never touches media
+        // the user had already paused. See MediaControl.
+        // osascript is blocking I/O — run it off the main actor to keep the UI responsive.
+        let pausedApps = await Task.detached { MediaControl.shared.playingApps() }.value
+        if !pausedApps.isEmpty {
+            await Task.detached { MediaControl.shared.pause(pausedApps) }.value
+            Log.write("paused playing media: \(pausedApps.joined(separator: ","))")
+            try? await Task.sleep(nanoseconds: 400_000_000)   // 0.4 s beat before speaking
         }
 
         Log.write("speak start")
@@ -116,7 +109,11 @@ final class AppController: ObservableObject {
                                      recordSeconds: recordSeconds, intent: intent.rawValue,
                                      project: turn.project)
 
-        // (No media resume — see the pause-only rationale above.)
+        // Resume exactly the apps we paused (they were playing at the start).
+        if !pausedApps.isEmpty {
+            await Task.detached { MediaControl.shared.play(pausedApps) }.value
+            Log.write("resumed media: \(pausedApps.joined(separator: ","))")
+        }
         // "Stop heißt Stop": a STOP reply is NOT fed back — returning "" makes the hook
         // exit cleanly, so no further speak/record turn is prompted. The STOP ack clip
         // already played as the sign-off.
