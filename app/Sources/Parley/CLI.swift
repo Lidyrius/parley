@@ -24,6 +24,15 @@ enum ParleyMain {
             return
         }
 
+        // Accessibility gate for the terminal onboarding.
+        if args.contains("--check-accessibility") {
+            exit(MediaKeys.isTrusted ? 0 : 1)
+        }
+        if args.contains("--request-accessibility") {
+            _ = MediaKeys.ensureTrust()          // shows the system prompt + adds Parley to the list
+            exit(MediaKeys.isTrusted ? 0 : 1)
+        }
+
         ParleyApp.main()
     }
 }
