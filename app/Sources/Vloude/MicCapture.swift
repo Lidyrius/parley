@@ -78,7 +78,9 @@ final class MicCapture: @unchecked Sendable {
         targetFormat = outFormat
         converter = AVAudioConverter(from: inFormat, to: outFormat)
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: inFormat) { [weak self] buf, _ in
+        // Smaller buffer → more frequent level samples for a smooth waveform (the tap
+        // may round this up, but it beats the ~4/s that a 4096 buffer gave at 16 kHz).
+        input.installTap(onBus: 0, bufferSize: 512, format: inFormat) { [weak self] buf, _ in
             self?.handle(buf)
         }
         engine.prepare()
