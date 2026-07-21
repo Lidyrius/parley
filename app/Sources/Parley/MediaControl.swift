@@ -1,19 +1,18 @@
 import Foundation
 
-// Media pause/resume via AppleScript (Apple Events). A media app's own state is the only
-// reliable "is it playing" signal — MediaRemote now-playing is entitlement-gated for
-// third-party apps on macOS 15.4+/26, and CoreAudio "running" stays true for paused media.
-//
-// Two kinds of source:
-//  • Scriptable players (Spotify, Apple Music): `player state` → playing/paused/stopped.
-//  • Browser <video> (Chrome): JS `!video.paused` per tab. Requires Chrome's
-//    "View → Developer → Allow JavaScript from Apple Events" (off by default) — if it's
-//    off the JS throws, we catch it, and browser video simply isn't controlled.
+// Media pause/resume via AppleScript (Apple Events) to scriptable media apps. A media
+// app's own `player state` is the only reliable "is it playing" signal — MediaRemote
+// now-playing is entitlement-gated for third-party apps on macOS 15.4+/26, and CoreAudio
+// "running" stays true for paused media.
 //
 // We detect what is ACTUALLY playing, pause exactly that, and resume exactly that — never
-// touching media the user had already paused. pausePlaying() returns opaque tokens that
-// resume() consumes. Needs Automation permission (NSAppleEventsUsageDescription), granted
-// once per target app.
+// touching media the user had already paused. pausePlaying() returns tokens that resume()
+// consumes. Needs Automation permission (NSAppleEventsUsageDescription), granted once per
+// target app.
+//
+// Scope: scriptable players (Spotify, Apple Music). Browser <video> is intentionally not
+// covered — it would need per-browser "Allow JavaScript from Apple Events" enabled.
+// ponytail: add to `scriptableApps` any player exposing the standard player state vocab.
 final class MediaControl: @unchecked Sendable {
     static let shared = MediaControl()
     private init() {}
@@ -27,66 +26,19 @@ final class MediaControl: @unchecked Sendable {
             _ = osa("tell application \"\(app)\" to pause")
             paused.append("app:\(app)")
         }
-        for (w, t) in chromePlayingTabs() {
-            _ = chromeJS(w, t, "var v=document.querySelector('video'); if(v) v.pause();")
-            paused.append("chrome:\(w),\(t)")
-        }
         return paused
     }
 
     /// Resume exactly what pausePlaying() paused.
     func resume(_ tokens: [String]) {
-        for tok in tokens {
-            if tok.hasPrefix("app:") {
-                _ = osa("tell application \"\(tok.dropFirst(4))\" to play")
-            } else if tok.hasPrefix("chrome:") {
-                let p = tok.dropFirst(7).split(separator: ",")
-                if p.count == 2, let w = Int(p[0]), let t = Int(p[1]) {
-                    _ = chromeJS(w, t, "var v=document.querySelector('video'); if(v) v.play();")
-                }
-            }
+        for tok in tokens where tok.hasPrefix("app:") {
+            _ = osa("tell application \"\(tok.dropFirst(4))\" to play")
         }
     }
-
-    // MARK: - scriptable players
 
     private func playerState(_ app: String) -> String {
         osa("if application \"\(app)\" is running then tell application \"\(app)\" to return (player state as text)")
     }
-
-    // MARK: - Chrome tabs
-
-    /// (window, tab) 1-based indices of Chrome tabs with a playing <video>. Empty if Chrome
-    /// isn't running or JS-from-Apple-Events is disabled.
-    private func chromePlayingTabs() -> [(Int, Int)] {
-        let script = """
-        if application "Google Chrome" is running then
-          tell application "Google Chrome"
-            set out to ""
-            repeat with w from 1 to (count windows)
-              repeat with t from 1 to (count tabs of window w)
-                try
-                  set p to execute (tab t of window w) javascript "(function(){var v=document.querySelector('video');return v&&!v.paused&&!v.ended&&v.currentTime>0?'1':'0';})()"
-                  if p is "1" then set out to out & w & "," & t & linefeed
-                end try
-              end repeat
-            end repeat
-            return out
-          end tell
-        end if
-        """
-        return osa(script).split(separator: "\n").compactMap { line in
-            let p = line.split(separator: ","); guard p.count == 2, let w = Int(p[0]), let t = Int(p[1]) else { return nil }
-            return (w, t)
-        }
-    }
-
-    @discardableResult
-    private func chromeJS(_ w: Int, _ t: Int, _ js: String) -> String {
-        osa("tell application \"Google Chrome\" to execute (tab \(t) of window \(w)) javascript \"\(js.replacingOccurrences(of: "\"", with: "\\\""))\"")
-    }
-
-    // MARK: - osascript
 
     @discardableResult
     private func osa(_ script: String) -> String {
