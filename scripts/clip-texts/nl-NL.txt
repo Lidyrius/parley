@@ -1,0 +1,35 @@
+ready|Tot uw dienst, meneer. Ik ben gereed.
+ready|Systemen opgestart. Ik sta paraat, meneer.
+ready|Klaar wanneer u het bent, meneer.
+ready|Geheel tot uw dienst. Waar beginnen we?
+ready|Ik ben online, meneer. Zegt u het maar.
+ready|Gereed en wachtend, meneer.
+ready|Alles gereed. Ik luister, meneer.
+ready|Tot uw dienst. Wat staat er op de agenda, meneer?
+ready|Ik ben er, meneer. Laten we beginnen.
+ready|Gereed voor de volgende taak, meneer.
+feature|Zeer goed, meneer. Ik bouw het in en meld me zodra het klaar is.
+feature|Begrepen. Ik voer het uit en laat het weten wanneer het gereed is.
+feature|Meteen — ik ga ermee aan de slag en kom terug met het resultaat.
+bug|Begrepen, meneer. Ik onderzoek het onmiddellijk en kom terug met een oplossing.
+bug|Goed, ik zoek de fout tot op de bodem uit en verhelp hem.
+bug|Tot uw dienst. Ik bekijk het probleem en meld me zodra het verholpen is.
+stop|Zeer goed, meneer. Ik stop hier.
+stop|Begrepen, ik stop en wacht op uw volgende aanwijzing.
+stop|Goed, ik pauzeer.
+continue|Goed, meneer. Ik ga verder.
+continue|Begrepen, ik ga door.
+continue|Zeer goed, ik zet het voort, meneer.
+other|Begrepen, meneer. Ik zorg ervoor.
+other|Goed, ik werp er een blik op.
+other|Tot uw dienst. Ik neem de zaak op me.
+question|Goede vraag, meneer. Ik controleer het even en heb zo een antwoord.
+question|Een ogenblik, ik kijk het na en antwoord meteen.
+question|Laat me het even verifiëren, dan heb ik uw antwoord.
+research|Begrepen, meneer. Ik zoek het even uit en meld me.
+research|Goed, ik kijk even rond en breng u verslag uit.
+research|Tot uw dienst. Ik informeer en kom terug met resultaten.
+feature_research|Zeer goed, ik doe kort onderzoek en bouw daarna de functie in.
+feature_research|Begrepen — eerst het onderzoek, dan de inbouw. Ik meld me.
+bug_feature|Begrepen, meneer. Ik verhelp de fout en bouw de uitbreiding in.
+bug_feature|Goed, fix en functie — ik pak beide aan.

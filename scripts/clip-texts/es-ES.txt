@@ -1,0 +1,35 @@
+ready|A su servicio, señor. Estoy listo.
+ready|Sistemas en marcha. Quedo a la espera, señor.
+ready|Listo cuando usted lo esté, señor.
+ready|Enteramente a su servicio. ¿Por dónde empezamos?
+ready|Estoy en línea, señor. Usted dirá.
+ready|Listo y a la espera, señor.
+ready|Todo listo. Le escucho, señor.
+ready|A su servicio. ¿Qué hay en la agenda, señor?
+ready|Aquí estoy, señor. Comencemos.
+ready|Listo para la próxima tarea, señor.
+feature|Muy bien, señor. Lo incorporo y le aviso en cuanto esté listo.
+feature|Entendido. Me encargo de ello y le informo cuando esté hecho.
+feature|Enseguida — me pongo con ello y vuelvo con el resultado.
+bug|Entendido, señor. Lo examino de inmediato y vuelvo con una solución.
+bug|Bien, iré al fondo del fallo y lo corregiré.
+bug|A su servicio. Reviso el problema y le aviso cuando esté resuelto.
+stop|Muy bien, señor. Me detengo aquí.
+stop|Entendido, me detengo y aguardo su próxima indicación.
+stop|Bien, hago una pausa.
+continue|Bien, señor. Continúo.
+continue|Entendido, sigo adelante.
+continue|Muy bien, prosigo, señor.
+other|Entendido, señor. Me ocupo de ello.
+other|Bien, echaré un vistazo.
+other|A su servicio. Me hago cargo del asunto.
+question|Buena pregunta, señor. Lo compruebo y tendré una respuesta enseguida.
+question|Un momento, lo reviso y respondo de inmediato.
+question|Permítame verificarlo brevemente y tendré su respuesta.
+research|Entendido, señor. Investigo el asunto y vuelvo a informarle.
+research|Bien, echo un vistazo y le doy un informe.
+research|A su servicio. Me informo y vuelvo con resultados.
+feature_research|Muy bien, investigo brevemente y luego incorporo la función.
+feature_research|Entendido — primero la investigación, luego la incorporación. Le aviso.
+bug_feature|Entendido, señor. Corrijo el fallo e incorporo la ampliación.
+bug_feature|Bien, corrección y función — me ocupo de ambas.

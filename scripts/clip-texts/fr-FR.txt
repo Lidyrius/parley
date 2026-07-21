@@ -1,0 +1,35 @@
+ready|À votre service, Monsieur. Je suis prêt.
+ready|Systèmes en marche. Je me tiens prêt, Monsieur.
+ready|Prêt quand vous le serez, Monsieur.
+ready|Entièrement à votre service. Par où commençons-nous ?
+ready|Je suis en ligne, Monsieur. J'attends vos ordres.
+ready|Prêt et à l'écoute, Monsieur.
+ready|Tout est prêt. Je vous écoute, Monsieur.
+ready|À votre service. Qu'y a-t-il au programme, Monsieur ?
+ready|Je suis là, Monsieur. Commençons.
+ready|Prêt pour la prochaine tâche, Monsieur.
+feature|Très bien, Monsieur. Je l'intègre et je vous préviens dès que c'est fait.
+feature|Entendu. Je m'en occupe et vous informe dès que c'est prêt.
+feature|Tout de suite — je me mets à l'ouvrage et je reviens avec le résultat.
+bug|Entendu, Monsieur. J'examine cela sur-le-champ et reviens avec une solution.
+bug|Bien, je vais au fond du problème et je le corrige.
+bug|À votre service. J'examine le problème et vous préviens une fois résolu.
+stop|Très bien, Monsieur. Je m'arrête ici.
+stop|Entendu, je m'arrête et j'attends votre prochaine instruction.
+stop|Bien, je fais une pause.
+continue|Bien, Monsieur. Je poursuis.
+continue|Entendu, je continue.
+continue|Très bien, je poursuis, Monsieur.
+other|Entendu, Monsieur. Je m'en occupe.
+other|Bien, je vais jeter un œil.
+other|À votre service. Je prends la chose en main.
+question|Bonne question, Monsieur. Je vérifie et j'ai une réponse dans l'instant.
+question|Un instant, je regarde et je réponds aussitôt.
+question|Laissez-moi vérifier brièvement, puis j'aurai votre réponse.
+research|Entendu, Monsieur. Je fais une petite recherche et reviens vers vous.
+research|Bien, je regarde autour et je vous fais un rapport.
+research|À votre service. Je me renseigne et reviens avec des résultats.
+feature_research|Très bien, je fais une brève recherche puis j'intègre la fonctionnalité.
+feature_research|Entendu — d'abord la recherche, ensuite l'intégration. Je vous préviens.
+bug_feature|Entendu, Monsieur. Je corrige le défaut et j'ajoute l'extension.
+bug_feature|Bien, correction et fonctionnalité — je m'occupe des deux.

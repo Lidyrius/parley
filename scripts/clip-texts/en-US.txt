@@ -1,0 +1,35 @@
+ready|At your service, Sir. I'm ready.
+ready|Systems online. I stand ready, Sir.
+ready|Ready whenever you are, Sir.
+ready|Entirely at your service. Where shall we begin?
+ready|I'm online, Sir. Say the word.
+ready|Ready and waiting, Sir.
+ready|All set. I'm listening, Sir.
+ready|At your service. What's on the agenda, Sir?
+ready|I'm here, Sir. Let's begin.
+ready|Ready for the next task, Sir.
+feature|Very good, Sir. I'll build it in and report back once it's done.
+feature|Understood. I'll implement that and let you know when it's ready.
+feature|Right away — I'll get to work on it and report with the result.
+bug|Understood, Sir. I'll look into it at once and report back with a fix.
+bug|Right, I'll get to the bottom of the fault and resolve it.
+bug|At your service. I'll examine the problem and report when it's fixed.
+stop|Very good, Sir. I'll stop here.
+stop|Understood, I'll halt and await your next instruction.
+stop|Right, I'll pause.
+continue|Very good, Sir. I'll carry on.
+continue|Understood, I'll continue.
+continue|Very good, I'll proceed, Sir.
+other|Understood, Sir. I'll see to it.
+other|Right, I'll take a look.
+other|At your service. I'll attend to it.
+question|Good question, Sir. Let me check and I'll have an answer shortly.
+question|One moment, I'll look into it and answer directly.
+question|Let me verify that briefly, then I'll have your answer.
+research|Understood, Sir. I'll research that and report back.
+research|Right, I'll have a look around and report to you.
+research|At your service. I'll look into it and return with findings.
+feature_research|Very good, I'll research briefly and then build the feature.
+feature_research|Understood — research first, then the build. I'll report back.
+bug_feature|Understood, Sir. I'll fix the fault and build the addition.
+bug_feature|Right, fix and feature — I'll get to both.

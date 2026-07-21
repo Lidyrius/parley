@@ -52,8 +52,9 @@ bash "$SRC/scripts/onboard-tui.sh"
 CREDS="$HOME/Library/Application Support/Parley/credentials.json"
 GOOGLE_KEY="$(jq -r '.googleAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
 if [ -n "$GOOGLE_KEY" ]; then
-  info "Rendere Begrüßungs- und Bestätigungs-Clips (Google Chirp3 HD)"
-  bash "$SRC/scripts/generate-clips-google.sh" >/dev/null 2>&1 || true   # reads key+voice from creds
+  info "Rendere Sprach-Clips in deiner Sprache (Google Chirp3 HD)"
+  bash "$SRC/scripts/generate-clips-google.sh" || true   # reads key+voice+language from creds; shows progress
+  info "Baue App mit den Clips"
   bash "$SRC/scripts/make-app.sh" >/dev/null 2>&1 || true
 fi
 

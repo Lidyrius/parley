@@ -1,0 +1,35 @@
+ready|Al suo servizio, signore. Sono pronto.
+ready|Sistemi avviati. Resto a disposizione, signore.
+ready|Pronto quando lo è lei, signore.
+ready|Interamente al suo servizio. Da dove cominciamo?
+ready|Sono in linea, signore. Mi dica pure.
+ready|Pronto e in attesa, signore.
+ready|Tutto pronto. La ascolto, signore.
+ready|Al suo servizio. Cosa c'è in programma, signore?
+ready|Sono qui, signore. Cominciamo.
+ready|Pronto per il prossimo compito, signore.
+feature|Molto bene, signore. Lo integro e la avviso non appena è pronto.
+feature|Inteso. Me ne occupo e le faccio sapere quando è fatto.
+feature|Subito — mi metto all'opera e torno con il risultato.
+bug|Inteso, signore. Esamino la cosa immediatamente e torno con una soluzione.
+bug|Bene, vado a fondo del problema e lo risolvo.
+bug|Al suo servizio. Esamino il problema e la avviso una volta risolto.
+stop|Molto bene, signore. Mi fermo qui.
+stop|Inteso, mi fermo e attendo la sua prossima istruzione.
+stop|Bene, faccio una pausa.
+continue|Bene, signore. Proseguo.
+continue|Inteso, continuo.
+continue|Molto bene, proseguo, signore.
+other|Inteso, signore. Me ne occupo.
+other|Bene, do un'occhiata.
+other|Al suo servizio. Prendo in mano la questione.
+question|Bella domanda, signore. Controllo e avrò una risposta a breve.
+question|Un momento, do un'occhiata e rispondo subito.
+question|Mi lasci verificare brevemente, poi avrò la sua risposta.
+research|Inteso, signore. Faccio una breve ricerca e torno da lei.
+research|Bene, do un'occhiata in giro e le riferisco.
+research|Al suo servizio. Mi informo e torno con dei risultati.
+feature_research|Molto bene, faccio una breve ricerca e poi integro la funzione.
+feature_research|Inteso — prima la ricerca, poi l'integrazione. La avviso.
+bug_feature|Inteso, signore. Correggo il difetto e aggiungo l'estensione.
+bug_feature|Bene, correzione e funzione — mi occupo di entrambe.
