@@ -6,11 +6,7 @@ import Foundation
 // caller falls back to the chime.
 enum LineClips {
     static func all(for intent: Intent) -> [URL] {
-        guard let base = Bundle.module.url(forResource: "lines", withExtension: nil) else { return [] }
-        let dir = base.appendingPathComponent(intent.folder, isDirectory: true)
-        guard let items = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: nil) else { return [] }
-        return items.filter { $0.pathExtension == "pcm" }.sorted { $0.path < $1.path }
+        ClipPaths.pcmFiles("lines/\(intent.folder)")
     }
 
     static func randomClipData(for intent: Intent) -> Data? {

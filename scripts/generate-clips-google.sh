@@ -47,8 +47,11 @@ synth() { # text outfile — retries on transient non-200 (e.g. 403 during API p
   DONE=$((DONE+1)); progress
 }
 
-ready_out="$here/app/Sources/Parley/Resources/ready"
-lines_out="$here/app/Sources/Parley/Resources/lines"
+# Default: the runtime clip dir the app reads first (no app rebuild needed). Override
+# with PARLEY_CLIPS_DIR (e.g. the SPM Resources dir when refreshing bundled defaults).
+CLIPS_DIR="${PARLEY_CLIPS_DIR:-$HOME/Library/Application Support/Parley/clips}"
+ready_out="$CLIPS_DIR/ready"
+lines_out="$CLIPS_DIR/lines"
 mkdir -p "$ready_out"; rm -f "$ready_out"/*.pcm
 for c in feature bug stop continue other question research feature_research bug_feature; do
   mkdir -p "$lines_out/$c"; rm -f "$lines_out/$c"/*.pcm 2>/dev/null || true

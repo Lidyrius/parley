@@ -4,12 +4,9 @@ import Foundation
 // pcm_24000 files bundled as SPM resources (generate-ready-clips.sh). If none are
 // bundled (no API key at build time), pick() returns nil and /ready stays silent.
 enum ReadyClips {
-    /// All bundled .pcm clip URLs.
+    /// All .pcm clip URLs (user-rendered dir if present, else bundled).
     static func all() -> [URL] {
-        guard let dir = Bundle.module.url(forResource: "ready", withExtension: nil),
-              let items = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: nil) else { return [] }
-        return items.filter { $0.pathExtension == "pcm" }.sorted { $0.path < $1.path }
+        ClipPaths.pcmFiles("ready")
     }
 
     /// Pick a random clip from the given list (pure — testable). nil if empty.

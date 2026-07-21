@@ -16,7 +16,8 @@ die()  { printf '\033[1;31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
 command -v git  >/dev/null || die "git fehlt."
 command -v jq   >/dev/null || die "jq fehlt (brew install jq)."
 command -v curl >/dev/null || die "curl fehlt."
-command -v swift >/dev/null || die "Xcode / Swift-Toolchain fehlt (Xcode 26)."
+# swift is NOT required: the prebuilt release is downloaded. Only the source-build
+# fallback (no release available) needs it — checked there.
 
 # 1. locate or fetch the source
 SRC=""
@@ -34,9 +35,22 @@ else
   SRC="$INSTALL_DIR"
 fi
 
-# 2. build + install the app bundle
-info "Baue Parley.app"
-bash "$SRC/scripts/make-app.sh"
+# 2. install the app bundle: prefer a prebuilt release (no Xcode); build only as fallback.
+APP="$HOME/Applications/Parley.app"
+REPO_SLUG="${PARLEY_REPO#https://github.com/}"; REPO_SLUG="${REPO_SLUG:-Lidyrius/parley}"
+REL_URL="https://github.com/${REPO_SLUG}/releases/latest/download/Parley.app.zip"
+if curl -fsSL "$REL_URL" -o "$INSTALL_DIR/Parley.app.zip" 2>/dev/null \
+   && [ -s "$INSTALL_DIR/Parley.app.zip" ]; then
+  info "Installiere fertige Parley.app (kein Build nötig)"
+  rm -rf "$APP"; mkdir -p "$HOME/Applications"
+  ditto -x -k "$INSTALL_DIR/Parley.app.zip" "$HOME/Applications"
+  xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true   # let Gatekeeper run the downloaded app
+  rm -f "$INSTALL_DIR/Parley.app.zip"
+else
+  command -v swift >/dev/null || die "Kein Release verfügbar und Swift/Xcode fehlt zum Bauen."
+  info "Baue Parley.app aus Quellcode"
+  bash "$SRC/scripts/make-app.sh"
+fi
 
 # 3. install the plugin (auto-loads every session as parley@skills-dir)
 info "Installiere Claude-Code-Plugin"
@@ -53,9 +67,9 @@ CREDS="$HOME/Library/Application Support/Parley/credentials.json"
 GOOGLE_KEY="$(jq -r '.googleAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
 if [ -n "$GOOGLE_KEY" ]; then
   info "Rendere Sprach-Clips in deiner Sprache (Google Chirp3 HD)"
-  bash "$SRC/scripts/generate-clips-google.sh" || true   # reads key+voice+language from creds; shows progress
-  info "Baue App mit den Clips"
-  bash "$SRC/scripts/make-app.sh" >/dev/null 2>&1 || true
+  # Writes to Application Support/Parley/clips — the app reads these at runtime, so no
+  # app rebuild (and no Xcode) is needed to get clips in the chosen language + voice.
+  bash "$SRC/scripts/generate-clips-google.sh" || true
 fi
 
 # 6. launch the menu-bar app
