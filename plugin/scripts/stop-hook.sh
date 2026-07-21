@@ -18,17 +18,26 @@ input="$(cat)"
 #   <speak>…</speak>          → speak, then LISTEN for the user's reply (normal turn).
 #   <speak-end>…</speak-end>  → speak only, DON'T listen (closing line, or "I started a
 #                               background task and will report back myself").
-# A response carries exactly one. Prefer <speak-end> if present; else <speak>. The greedy
-# `.*` prefix takes the LAST block; the closing tag is optional (forgotten → take to end).
+# Pick the LAST COMPLETE tag block by position — so the real final directive wins and the
+# same tag mentioned earlier in prose (e.g. a `<speak-end>` example in backticks) is ignored.
+# Only <speak> gets the tolerant "forgotten closing tag" fallback; <speak-end> must be closed
+# (an unclosed one would otherwise swallow the rest of the message).
 msg="$(printf '%s' "$input" | jq -r '.last_assistant_message // ""')"
-speak="$(printf '%s' "$msg" | perl -0777 -ne 'print $1 if /.*<speak-end>(.*?)(?:<\/speak-end>|\z)/s' | perl -0777 -pe 's/^\s+|\s+$//g')"
-listen=false
-if [ -z "$speak" ]; then
-  speak="$(printf '%s' "$msg" | perl -0777 -ne 'print $1 if /.*<speak>(.*?)(?:<\/speak>|\z)/s' | perl -0777 -pe 's/^\s+|\s+$//g')"
-  listen=true
-fi
+parsed="$(printf '%s' "$msg" | perl -0777 -ne '
+  my $m = $_;
+  my ($se,$sepos); while ($m =~ /<speak-end>(.*?)<\/speak-end>/sg) { $se=$1; $sepos=pos($m); }
+  my ($sp,$sppos); while ($m =~ /<speak>(.*?)<\/speak>/sg)         { $sp=$1; $sppos=pos($m); }
+  my ($text,$listen);
+  if (defined $se && (!defined $sp || $sepos > $sppos)) { $text=$se; $listen="false"; }
+  elsif (defined $sp) { $text=$sp; $listen="true"; }
+  elsif ($m =~ /.*<speak>(.*?)\z/s) { $text=$1; $listen="true"; }   # forgotten </speak>
+  if (defined $text) { $text =~ s/^\s+|\s+$//g; print "$listen\n$text"; }
+')"
+listen="$(printf '%s' "$parsed" | head -1)"
+speak="$(printf '%s' "$parsed" | tail -n +2)"
 
 [ -z "$speak" ] && exit 0
+[ "$listen" = "false" ] || listen=true
 
 cwd="$(printf '%s' "$input" | jq -r '.cwd // ""')"
 session_id="$(printf '%s' "$input" | jq -r '.session_id // ""')"
