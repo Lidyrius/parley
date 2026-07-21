@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var groqKey = ""
     @State private var voiceID = ""
     @State private var language = "Deutsch"
+    @State private var speakingRate = 1.0
     @State private var saved = false
 
     // Spoken-turn languages. Add more freely — the value is passed verbatim to Claude
@@ -18,6 +19,12 @@ struct SettingsView: View {
             Section("Sprache / Language") {
                 Picker("Gesprochene Sprache", selection: $language) {
                     ForEach(languages, id: \.self) { Text($0).tag($0) }
+                }
+            }
+            Section("Sprechtempo") {
+                HStack {
+                    Slider(value: $speakingRate, in: 0.5...2.0, step: 0.25)
+                    Text(String(format: "%.2g×", speakingRate)).monospacedDigit().frame(width: 44)
                 }
             }
             Section("ElevenLabs (TTS)") {
@@ -43,6 +50,7 @@ struct SettingsView: View {
         groqKey = Keychain.get(.groqAPIKey) ?? ""
         voiceID = Keychain.get(.voiceID) ?? ""
         language = Keychain.get(.language) ?? "Deutsch"
+        speakingRate = Double(Keychain.get(.speakingRate) ?? "") ?? 1.0
     }
 
     private func save() {
@@ -50,6 +58,7 @@ struct SettingsView: View {
         Keychain.set(groqKey, for: .groqAPIKey)
         Keychain.set(voiceID, for: .voiceID)
         Keychain.set(language, for: .language)
+        Keychain.set(String(speakingRate), for: .speakingRate)
         saved = true
     }
 }

@@ -25,14 +25,19 @@ enum PCM {
 final class TTSPlayer {
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
+    private let timePitch = AVAudioUnitTimePitch()   // playback speed w/o pitch shift
     private let format: AVAudioFormat
     private var carry = Data()   // odd trailing byte between streamed chunks
 
-    init(sampleRate: Double = ElevenLabs.sampleRate) {
+    // rate 1.0 = normal; >1 faster. Preserves pitch (natural voice at speed).
+    init(sampleRate: Double = ElevenLabs.sampleRate, rate: Double = 1.0) {
         format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                sampleRate: sampleRate, channels: 1, interleaved: false)!
+        timePitch.rate = Float(min(2.0, max(0.5, rate)))
         engine.attach(node)
-        engine.connect(node, to: engine.mainMixerNode, format: format)
+        engine.attach(timePitch)
+        engine.connect(node, to: timePitch, format: format)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: format)
     }
 
     func start() throws {

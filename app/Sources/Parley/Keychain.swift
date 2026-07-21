@@ -17,6 +17,7 @@ enum Keychain {
         case micDeviceUID  // selected input device UID; empty = system default
         case googleAPIKey  // Google Cloud TTS key — if set, used instead of ElevenLabs
         case googleVoice   // Chirp3 HD voice name; empty = default (Alnilam)
+        case speakingRate  // TTS playback speed, 0.5–2.0; empty = 1.0
     }
 
     private static var fileURL: URL {
@@ -63,6 +64,7 @@ struct AppConfig {
     var language: String
     var googleKey: String
     var googleVoice: String
+    var speakingRate: Double
 
     static func load() -> AppConfig {
         func val(_ k: Keychain.Key, _ env: String) -> String {
@@ -70,13 +72,15 @@ struct AppConfig {
         }
         let lang = Keychain.get(.language) ?? ProcessInfo.processInfo.environment["PARLEY_LANGUAGE"] ?? ""
         let gVoice = Keychain.get(.googleVoice) ?? ""
+        let rate = Double(Keychain.get(.speakingRate) ?? "") ?? 1.0
         return AppConfig(
             elevenLabsKey: val(.elevenLabsAPIKey, "ELEVENLABS_API_KEY"),
             groqKey: val(.groqAPIKey, "GROQ_API_KEY"),
             voiceID: val(.voiceID, "ELEVENLABS_VOICE_ID"),
             language: lang.isEmpty ? "Deutsch" : lang,
             googleKey: val(.googleAPIKey, "GOOGLE_TTS_API_KEY"),
-            googleVoice: gVoice.isEmpty ? GoogleTTS.defaultVoice : gVoice)
+            googleVoice: gVoice.isEmpty ? GoogleTTS.defaultVoice : gVoice,
+            speakingRate: min(2.0, max(0.5, rate)))
     }
 
     var ttsReady: Bool { !elevenLabsKey.isEmpty && !voiceID.isEmpty }

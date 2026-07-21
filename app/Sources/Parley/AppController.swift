@@ -66,7 +66,7 @@ final class AppController: ObservableObject {
             NSLog("Parley: no ready clips bundled, greeting silent")
             return
         }
-        let p = TTSPlayer()
+        let p = TTSPlayer(rate: AppConfig.load().speakingRate)
         activePlayer = p
         try? p.start()
         p.enqueue(pcmChunk: data)
@@ -134,7 +134,7 @@ final class AppController: ObservableObject {
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
     private func speakAndBeep(_ text: String, config: AppConfig) async {
-        let player = TTSPlayer()
+        let player = TTSPlayer(rate: config.speakingRate)
         activePlayer = player
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
         if config.useGoogle {
@@ -206,7 +206,7 @@ final class AppController: ObservableObject {
             intent = await classify(text, config: config)
             Log.write("classified: \(intent.rawValue)")
             if let data = LineClips.randomClipData(for: intent) {
-                await playClip(data)
+                await playClip(data, rate: config.speakingRate)
                 return intent
             }
             Log.write("no line clip for \(intent.rawValue) → chime")
@@ -224,12 +224,12 @@ final class AppController: ObservableObject {
         } catch { return .other }
     }
 
-    private func playClip(_ data: Data) async {
-        let player = TTSPlayer()
+    private func playClip(_ data: Data, rate: Double = 1.0) async {
+        let player = TTSPlayer(rate: rate)
         activePlayer = player
         do { try player.start() } catch { activePlayer = nil; return }
         player.enqueue(pcmChunk: data)
-        let seconds = Double(data.count / 2) / ElevenLabs.sampleRate   // pcm_24000 mono 16-bit
+        let seconds = Double(data.count / 2) / ElevenLabs.sampleRate / max(0.5, rate)   // faster rate → shorter
         try? await Task.sleep(nanoseconds: UInt64((seconds + 0.3) * 1_000_000_000))
         player.stop()
         activePlayer = nil
