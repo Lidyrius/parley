@@ -1,7 +1,7 @@
 namespace Parley;
 
-// Entry point: single-instance guard, system-tray icon (mute toggle + quit), and the
-// loopback server driving the voice pipeline. Windows counterpart of the macOS menu-bar app.
+// Entry point: single-instance guard, system-tray icon (mute, stats, settings, quit),
+// waveform pill overlay, and the loopback server driving the voice pipeline.
 internal static class Program
 {
     [STAThread]
@@ -20,12 +20,15 @@ internal sealed class TrayApp : ApplicationContext
     private readonly NotifyIcon _tray;
     private readonly TurnPipeline _pipeline;
     private readonly Server _server;
+    private readonly PillOverlay _pill = new();
 
     public TrayApp()
     {
+        _ = _pill.Handle;   // create the handle on the UI thread so BeginInvoke works
+
         Server? serverRef = null;
-        _pipeline = new TurnPipeline(() => serverRef?.QueuedTurns ?? 0);
-        _server = new Server(turn => _pipeline.Run(turn));
+        _pipeline = new TurnPipeline(() => serverRef?.QueuedTurns ?? 0, _pill);
+        _server = new Server(turn => _pipeline.Run(turn), () => StatsStore.StartSession());
         serverRef = _server;
 
         var menu = new ContextMenuStrip();
@@ -36,6 +39,12 @@ internal sealed class TrayApp : ApplicationContext
             _tray!.Text = mute.Checked ? "Parley (stumm)" : "Parley";
         };
         menu.Items.Add(mute);
+        var stats = new ToolStripMenuItem("Statistiken…");
+        stats.Click += (_, _) => new StatsForm().Show();
+        menu.Items.Add(stats);
+        var settings = new ToolStripMenuItem("Einstellungen…");
+        settings.Click += (_, _) => new SettingsForm().Show();
+        menu.Items.Add(settings);
         menu.Items.Add(new ToolStripSeparator());
         var quit = new ToolStripMenuItem("Beenden");
         quit.Click += (_, _) => { _tray!.Visible = false; Application.Exit(); };

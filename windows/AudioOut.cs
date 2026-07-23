@@ -6,6 +6,53 @@ namespace Parley;
 // the macOS fresh-player pattern); Play() then wait until the buffer drains.
 public static class AudioOut
 {
+    /// Time-stretch (pitch-preserved) 16-bit mono PCM by `rate` via SoundTouch —
+    /// the Windows counterpart of the macOS timePitch node.
+    public static byte[] ApplyRate(byte[] pcm, double rate, int sampleRate = GoogleTts.SampleRate)
+    {
+        rate = Math.Clamp(rate, 0.5, 2.0);
+        if (Math.Abs(rate - 1.0) < 0.01 || pcm.Length < 4) return pcm;
+        var st = new SoundTouch.SoundTouchProcessor { SampleRate = sampleRate, Channels = 1, Tempo = rate };
+        var n = pcm.Length / 2;
+        var floats = new float[n];
+        for (var i = 0; i < n; i++)
+            floats[i] = BitConverter.ToInt16(pcm, i * 2) / 32768f;
+        st.PutSamples(floats, n);
+        st.Flush();
+        var outSamples = new List<float>(n);
+        var buf = new float[4096];
+        int got;
+        while ((got = st.ReceiveSamples(buf, buf.Length)) > 0)
+            outSamples.AddRange(buf.Take(got));
+        var outPcm = new byte[outSamples.Count * 2];
+        for (var i = 0; i < outSamples.Count; i++)
+        {
+            var s = (short)Math.Clamp(outSamples[i] * short.MaxValue, short.MinValue, short.MaxValue);
+            outPcm[i * 2] = (byte)(s & 0xff);
+            outPcm[i * 2 + 1] = (byte)((s >> 8) & 0xff);
+        }
+        return outPcm;
+    }
+
+    /// Wait until the default output runs at a hi-fi rate again (Bluetooth headsets drop
+    /// to 16/24 kHz while their mic is used; playing during the switch is swallowed).
+    public static async Task WaitForHiFiOutput()
+    {
+        var start = DateTime.UtcNow;
+        while ((DateTime.UtcNow - start).TotalSeconds < 3.0)
+        {
+            try
+            {
+                using var en = new NAudio.CoreAudioApi.MMDeviceEnumerator();
+                using var dev = en.GetDefaultAudioEndpoint(
+                    NAudio.CoreAudioApi.DataFlow.Render, NAudio.CoreAudioApi.Role.Multimedia);
+                if (dev.AudioClient.MixFormat.SampleRate >= 40000) return;
+            }
+            catch { return; }
+            await Task.Delay(150);
+        }
+    }
+
     /// Play raw 16-bit LE mono PCM at `sampleRate`, blocking until done.
     public static async Task PlayPcm(byte[] pcm, int sampleRate = GoogleTts.SampleRate)
     {

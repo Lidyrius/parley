@@ -13,13 +13,15 @@ public sealed class Server
     private readonly HttpListener _listener = new();
     private readonly SemaphoreSlim _turnGate = new(1, 1);   // serializes the pipeline
     private readonly Func<TurnPayload, Task<string>> _runTurn;
+    private readonly Action _onReady;
     private int _queued;
 
     public int QueuedTurns => Volatile.Read(ref _queued);
 
-    public Server(Func<TurnPayload, Task<string>> runTurn)
+    public Server(Func<TurnPayload, Task<string>> runTurn, Action onReady)
     {
         _runTurn = runTurn;
+        _onReady = onReady;
         // 127.0.0.1 covers native Git Bash and WSL2 mirrored networking. (WSL NAT mode
         // would need an urlacl + firewall rule — documented, not default.)
         _listener.Prefixes.Add("http://127.0.0.1:8787/");
@@ -62,6 +64,7 @@ public sealed class Server
             if (req.HttpMethod == "POST" && path == "/ready")
             {
                 Log.Write("ready received");
+                try { _onReady(); } catch { }
                 await Respond(ctx, 200, "{\"ok\":true}");
                 return;
             }
