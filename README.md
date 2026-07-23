@@ -88,7 +88,7 @@ Re-run onboarding anytime with `bash scripts/onboard-tui.sh`.
 Settings live in the menu-bar app (**Settings…**) and in onboarding:
 
 - **Language** of the spoken summaries
-- **Voice** (ElevenLabs)
+- **Voice** (Google Chirp3 HD)
 - **Microphone** input device
 - **API keys** — stored locally in `~/Library/Application Support/Parley/credentials.json`
   (`0600`), never transmitted anywhere but Google/Groq.
@@ -118,7 +118,7 @@ defaults delete de.developaway.parley 2>/dev/null || true
 
 ## Built with
 
-Swift 6 / SwiftUI (menu-bar, Liquid Glass) · ElevenLabs (TTS) · Groq Whisper (STT) ·
+Swift 6 / SwiftUI (menu-bar, Liquid Glass) · Google Cloud TTS Chirp3 HD · Groq Whisper (STT) ·
 a Claude Code plugin (Stop-hook long-poll).
 
 ## License
