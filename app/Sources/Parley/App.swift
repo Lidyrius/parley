@@ -27,7 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (with menuBarExtraStyle(.window)) only runs when the popover is first opened.
         MainActor.assumeIsolated {
             AppController.shared.start()
-            OnboardingPresenter.shared.showIfNeeded()   // first-run setup
         }
     }
 }

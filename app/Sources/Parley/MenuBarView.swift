@@ -47,7 +47,6 @@ struct MenuBarView: View {
                 HStack {
                     Button("Statistiken…") { StatsPresenter.shared.show() }
                     SettingsLink { Text("Settings…") }
-                    Button("Setup…") { OnboardingPresenter.shared.show() }
                     Spacer()
                     Button("Quit") { NSApp.terminate(nil) }
                 }
