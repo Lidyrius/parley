@@ -14,6 +14,15 @@ set -euo pipefail
 PORT="${PARLEY_PORT:-8787}"
 input="$(cat)"
 
+# Host resolution: 127.0.0.1 everywhere (macOS, native Git Bash, WSL2 mirrored
+# networking). Under WSL NAT mode the Windows host is reachable via the default
+# gateway instead — fall back to it when loopback doesn't answer.
+HOST="127.0.0.1"
+if [ -n "${WSL_DISTRO_NAME:-}" ] && ! curl -sS --max-time 1 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+  gw="$(ip route show default 2>/dev/null | awk '{print $3; exit}')"
+  [ -n "$gw" ] && HOST="$gw"
+fi
+
 # Two spoken tags:
 #   <speak>…</speak>          → speak, then LISTEN for the user's reply (normal turn).
 #   <speak-end>…</speak-end>  → speak only, DON'T listen (closing line, or "I started a
@@ -67,7 +76,7 @@ payload="$(jq -n \
 
 # Blocks while the app speaks + records + transcribes. Must exceed the app's max
 # recording cap (90 s) + speak + STT; the hook timeout (hooks.json) in turn exceeds this.
-resp="$(curl -sS --max-time 140 -X POST "http://127.0.0.1:${PORT}/turn" \
+resp="$(curl -sS --max-time 140 -X POST "http://${HOST}:${PORT}/turn" \
   -H 'Content-Type: application/json' -d "$payload" 2>/dev/null || true)"
 
 transcript="$(printf '%s' "$resp" | jq -r '.transcript // ""' 2>/dev/null || true)"

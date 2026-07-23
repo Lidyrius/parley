@@ -3,11 +3,18 @@
 set -euo pipefail
 PORT="${PARLEY_PORT:-8787}"
 
+# WSL NAT mode: the Windows host lives at the default gateway, not loopback.
+HOST="127.0.0.1"
+if [ -n "${WSL_DISTRO_NAME:-}" ] && ! curl -sS --max-time 1 "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
+  gw="$(ip route show default 2>/dev/null | awk '{print $3; exit}')"
+  [ -n "$gw" ] && HOST="$gw"
+fi
+
 # Launch app if a bundle is installed; harmless if already running or not bundled.
 open -a Parley >/dev/null 2>&1 || true
 # Give a cold launch a moment to bind the port.
 for _ in 1 2 3 4 5 6; do
-  curl -sS --max-time 1 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 && break
+  curl -sS --max-time 1 "http://${HOST}:${PORT}/health" >/dev/null 2>&1 && break
   sleep 0.5
 done
 
@@ -17,7 +24,7 @@ payload="$(jq -n \
   --arg project "$(basename "$PWD")" \
   '{event:"ready", tmux_pane:$tmux_pane, cwd:$cwd, project:$project}')"
 
-if curl -sS --max-time 3 -X POST "http://127.0.0.1:${PORT}/ready" \
+if curl -sS --max-time 3 -X POST "http://${HOST}:${PORT}/ready" \
      -H 'Content-Type: application/json' -d "$payload" >/dev/null 2>&1; then
   echo "parley: armed (app reachable on :${PORT})"
 else
@@ -25,8 +32,11 @@ else
 fi
 
 # Report the user's configured spoken-turn language so the command instructs Claude to
-# speak in it. Default Deutsch. Source: the app's credential store.
+# speak in it. Default Deutsch. Source: the app's credential store — macOS path first,
+# then Windows (Git Bash %APPDATA%), then WSL (/mnt/c).
 CREDS="$HOME/Library/Application Support/Parley/credentials.json"
+[ -f "$CREDS" ] || CREDS="${APPDATA:-/nonexistent}/Parley/credentials.json"
+[ -f "$CREDS" ] || CREDS="$(ls /mnt/c/Users/*/AppData/Roaming/Parley/credentials.json 2>/dev/null | head -1 || true)"
 LANG_NAME="Deutsch"
 if [ -f "$CREDS" ]; then
   LANG_NAME="$(jq -r '.language // "Deutsch"' "$CREDS" 2>/dev/null || echo Deutsch)"
