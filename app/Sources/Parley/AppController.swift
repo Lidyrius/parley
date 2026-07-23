@@ -117,7 +117,7 @@ final class AppController: ObservableObject {
         }
 
         Log.write("speak start (listen=\(turn.wantsListen))")
-        await speakAndBeep(turn.speak, config: config, beep: turn.wantsListen)
+        await speakAndBeep(turn.speak, config: config)
         Log.write("speak done")
 
         // speak-only turn (<speak-end>): no mic, no pill. Resume media, end cleanly so the
@@ -189,7 +189,7 @@ final class AppController: ObservableObject {
     // mic engine starts. A still-running (or merely stopped-but-alive) output engine
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
-    private func speakAndBeep(_ text: String, config: AppConfig, beep: Bool = true) async {
+    private func speakAndBeep(_ text: String, config: AppConfig) async {
         let player = TTSPlayer(rate: config.speakingRate)
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
         if config.useGoogle {
@@ -199,12 +199,12 @@ final class AppController: ObservableObject {
         } else {
             NSLog("Parley: TTS not configured")
         }
-        // A trailing tone is queued after the speech buffers; its .dataPlayedBack completion
-        // also tells us speech is done. amplitude 0 when `beep` is false (speak-only turn:
-        // no "your turn" cue) but we still use it as the finish marker. A short tail lets the
-        // output pipeline flush before we stop, so the beep is never clipped.
+        // Silent finish marker: its .dataPlayedBack completion tells us the speech has fully
+        // played out. The audible "you can talk now" beep is NOT played here anymore — it
+        // plays in record() once the mic delivers its first buffer, so nothing the user says
+        // after hearing it is ever lost. A short tail lets the pipeline flush before stop.
         await withCheckedContinuation { cont in
-            player.scheduleBeep(amplitude: beep ? 0.3 : 0.0) { cont.resume() }
+            player.scheduleBeep(amplitude: 0.0) { cont.resume() }
         }
         try? await Task.sleep(nanoseconds: 120_000_000)
         player.stop()
@@ -284,12 +284,29 @@ final class AppController: ObservableObject {
         mic.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.push(level) }
         }
+        // Beep the moment the mic is provably capturing (first buffer) — from then on the
+        // user can talk immediately; nothing after the beep is lost.
+        mic.onStarted = { [weak self] in
+            Task { @MainActor in self?.playReadyBeep() }
+        }
         let wav = await withCheckedContinuation { cont in
             mic.start { wav in cont.resume(returning: wav) }
         }
         mic.onLevel = nil
+        mic.onStarted = nil
         hud.finish()
         return wav
+    }
+
+    // Short cue over its own output player while the mic keeps capturing (full-duplex).
+    private func playReadyBeep() {
+        Task { @MainActor in
+            let p = TTSPlayer()
+            do { try p.start() } catch { return }
+            await withCheckedContinuation { cont in p.scheduleBeep { cont.resume() } }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            p.stop()
+        }
     }
 
     private func transcribe(_ wav: Data, config: AppConfig) async -> String {

@@ -8,7 +8,7 @@ import AVFoundation
 final class MicCapture: @unchecked Sendable {
     private let q = DispatchQueue(label: "de.developaway.parley.mic")
     private var engine: AVAudioEngine?
-    private var vad = SilenceVAD(speechThresholdDB: -50)
+    private var vad = SilenceVAD(speechThresholdDB: -50, trailingSilence: 0.7)
     private var samples: [Int16] = []
     private let targetRate = 16000.0
     private var onFinished: ((Data) -> Void)?
@@ -25,6 +25,12 @@ final class MicCapture: @unchecked Sendable {
 
     // Live input level 0…1 for the recording HUD waveform (called on the tap thread).
     var onLevel: ((Float) -> Void)?
+    // Fired once when the FIRST buffer arrives — the mic is provably hot. The caller plays
+    // the "you can talk now" beep here, so nothing said after the beep is ever lost.
+    var onStarted: (() -> Void)?
+    // Ignore the VAD for the first moments: the ready-beep (played while capturing) must
+    // not arm it. Samples are still recorded during the grace window.
+    private let vadGraceSeconds = 0.5
 
     private let noSpeechTimeout = 8.0
     private let maxListenSeconds = 90.0
@@ -144,6 +150,7 @@ final class MicCapture: @unchecked Sendable {
         let duration = Double(n) / targetRate
         totalDuration += duration
         buffersSeen += 1
+        if buffersSeen == 1 { onStarted?() }
         if db > maxDBSeen { maxDBSeen = db }
         // Map dBFS (~ -55…-10) to 0…1 for the live waveform.
         onLevel?(max(0, min(1, (db + 55) / 45)))
@@ -152,6 +159,7 @@ final class MicCapture: @unchecked Sendable {
             Log.write("mic: db=\(Int(db)) armed=\(vad.started) total=\(String(format: "%.1f", totalDuration))s buffers=\(buffersSeen)")
         }
 
+        if totalDuration < vadGraceSeconds { return }   // grace: don't let the beep arm the VAD
         let decision = vad.process(rmsDB: db, duration: duration)
         if decision == .waiting && totalDuration >= noSpeechTimeout {
             endReason = "no-speech"
