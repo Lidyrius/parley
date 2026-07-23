@@ -93,6 +93,17 @@ final class AppController: ObservableObject {
             return ""
         }
 
+        // Kick off Google TTS synthesis IMMEDIATELY — it runs in parallel with the media
+        // pause, the previous ack clip and the project announcement, so the actual sentence
+        // is (usually) already synthesized when its turn to play comes: no gap after
+        // "Update aus dem Projekt X".
+        let prefetch: Task<Data?, Never>? = config.useGoogle ? Task {
+            let req = GoogleTTS.request(text: turn.speak, apiKey: config.googleKey, voice: config.googleVoice)
+            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+                  (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return GoogleTTS.pcm(from: data)
+        } : nil
+
         // Pause media that is ACTUALLY playing (see MediaControl); resume happens only once
         // the turn QUEUE is empty — with another project's turn waiting, resuming between
         // turns would blast YouTube for a second just to pause it again.
@@ -118,7 +129,8 @@ final class AppController: ObservableObject {
         }
 
         Log.write("speak start (listen=\(turn.wantsListen))")
-        await speakAndBeep(turn.speak, config: config)
+        let prefetchedPCM: Data? = prefetch == nil ? nil : await prefetch!.value
+        await speakAndBeep(turn.speak, config: config, prefetched: prefetchedPCM)
         Log.write("speak done")
 
         // speak-only turn (<speak-end>): no mic, no pill. Resume media (queue permitting),
@@ -199,11 +211,14 @@ final class AppController: ObservableObject {
     // mic engine starts. A still-running (or merely stopped-but-alive) output engine
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
-    private func speakAndBeep(_ text: String, config: AppConfig) async {
+    private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil) async {
         let player = TTSPlayer(rate: config.speakingRate)
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
-        if config.useGoogle {
-            await synthGoogle(text, config: config, into: player)
+        if let pcm = prefetched {
+            player.enqueue(pcmChunk: pcm)
+            Log.write("google tts prefetched (\(pcm.count) bytes)")
+        } else if config.useGoogle {
+            await synthGoogle(text, config: config, into: player)   // prefetch failed → inline retry
         } else if config.ttsReady {
             await synthElevenLabs(text, config: config, into: player)
         } else {
