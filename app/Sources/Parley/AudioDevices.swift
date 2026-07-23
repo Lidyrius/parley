@@ -58,6 +58,28 @@ enum AudioDevices {
         return running != 0
     }
 
+    /// Nominal sample rate of the default OUTPUT device. Bluetooth headsets (AirPods) drop
+    /// to 16/24 kHz while their mic is in use (HFP) and return to 44.1/48 kHz (A2DP) after
+    /// release — so this doubles as a "hi-fi output restored" signal.
+    static func defaultOutputSampleRate() -> Double? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var dev = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &dev) == noErr,
+              dev != 0 else { return nil }
+        var rate: Float64 = 0
+        var rsize = UInt32(MemoryLayout<Float64>.size)
+        var raddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(dev, &raddr, 0, nil, &rsize, &rate) == noErr else { return nil }
+        return rate
+    }
+
     /// Make `uid` the system default input device. Reliable across AVAudioEngine (which
     /// captures from the default) — unlike per-engine AUHAL routing. Returns success.
     @discardableResult

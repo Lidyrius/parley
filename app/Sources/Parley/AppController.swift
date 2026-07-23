@@ -210,6 +210,17 @@ final class AppController: ObservableObject {
         guard !hasQueuedTurn else { Log.write("media resume deferred (turns queued)"); return }
         let tokens = pendingMediaResume
         pendingMediaResume = []
+        // AirPods: releasing the mic makes Bluetooth renegotiate from HFP (16/24 kHz) back
+        // to hi-fi A2DP — resuming during the switch swallows the first second of audio.
+        // Wait until the output device is back at a hi-fi rate (instant on speakers).
+        let start = Date()
+        while let sr = AudioDevices.defaultOutputSampleRate(), sr < 40_000,
+              Date().timeIntervalSince(start) < 3.0 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        if Date().timeIntervalSince(start) > 0.2 {
+            Log.write("media resume waited \(String(format: "%.1f", Date().timeIntervalSince(start)))s for hi-fi output")
+        }
         await Task.detached { MediaControl.shared.resume(tokens) }.value
         Log.write("resumed media: \(tokens.joined(separator: ","))")
     }
