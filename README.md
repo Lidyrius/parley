@@ -8,11 +8,26 @@ calm, dry-witted butler.
 Works in **any terminal** (Warp, iTerm, tmux, …) — no keystroke injection, no setup of
 your shell.
 
+## Install
+
+**Recommended — let Claude Code install it for you.** Paste this prompt into any Claude Code session; it guides you to the two API keys (both effectively **free**) and sets everything up:
+
+> Install Parley (github.com/Lidyrius/parley), a voice layer for Claude Code, on this Mac:
+> 1. First walk me through getting the two API keys — both are basically free:
+>    - **Groq** (speech-to-text, free developer tier — no payment needed): guide me step by step: console.groq.com → sign in → API Keys → Create API Key.
+>    - **Google Cloud Text-to-Speech** (the voice, first **1 million characters/month free**): guide me step by step: console.cloud.google.com → create or select a project → search "Cloud Text-to-Speech API" → Enable → APIs & Services → Credentials → Create credentials → API key.
+> 2. Ask me for both keys, my spoken language, and my preferred Chirp3-HD voice (default: Alnilam).
+> 3. Write them to `~/Library/Application Support/Parley/credentials.json` (chmod 600) as JSON with keys `googleAPIKey`, `groqAPIKey`, `language` (e.g. "Deutsch"), `googleVoice` (e.g. "de-DE-Chirp3-HD-Alnilam").
+> 4. Then run `curl -fsSL https://raw.githubusercontent.com/Lidyrius/parley/main/install.sh | bash` — it detects the credentials, skips the interactive onboarding, downloads the prebuilt app and renders my voice clips.
+> 5. Finally tell me to start a **new** Claude Code session and type `/parley:voice`.
+
+**Or by hand — one command** (a short terminal onboarding asks for the keys):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lidyrius/parley/main/install.sh | bash
 ```
 
-Then start a new Claude Code session and type `/parley:voice`.
+Re-running the same command later **updates** Parley in place — keys, settings and statistics are kept.
 
 ---
 
@@ -24,7 +39,7 @@ Claude Code turn ends
         ▼
    Parley.app  (menu-bar, 127.0.0.1:8787)
      1. pause any playing media
-     2. speak the summary        ── ElevenLabs TTS (your voice, e.g. "Jarvis")
+     2. speak the summary        ── Google TTS (Chirp3 HD)
      3. 🎤 record your reply      ── live waveform pill, silence-detected end
      4. transcribe               ── Groq Whisper
      5. resume media
@@ -48,7 +63,7 @@ it's completely terminal-agnostic.
 - ⏯️ **Smart media pause** — pauses YouTube/Spotify while speaking, resumes after —
   and leaves already-paused media alone.
 - 🌍 **Any language** — pick the spoken language in onboarding.
-- 🎚️ **Your voice** — choose any ElevenLabs voice (clone or premade).
+- 🎚️ **Your voice** — pick any Google Chirp3-HD voice during onboarding.
 - 🖥️ **Terminal-agnostic** — Warp, iTerm, tmux, plain Terminal.
 
 ## Requirements
@@ -59,24 +74,6 @@ it's completely terminal-agnostic.
 
 On the first real turn, grant **Microphone**. No Accessibility needed (media pause uses MediaRemote).
 
-## Install
-
-**One command:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Lidyrius/parley/main/install.sh | bash
-```
-
-**Or one prompt** — paste into Claude Code:
-
-> Install Parley for me: run
-> `curl -fsSL https://raw.githubusercontent.com/Lidyrius/parley/main/install.sh | bash`
-> in the terminal, then tell me to start a new session and run `/parley:voice`.
-
-The installer builds `Parley.app` into `~/Applications`, installs the plugin into
-`~/.claude/skills/parley` (auto-loads every session), and runs a short terminal
-onboarding (API keys, language, voice, microphone).
-
 ## Usage
 
 1. Start (or restart) a Claude Code session.
@@ -84,8 +81,7 @@ onboarding (API keys, language, voice, microphone).
 3. Work as usual. When a turn finishes, Parley speaks the summary and listens.
 4. Reply by voice; stop talking and it's injected back automatically.
 
-Re-run onboarding anytime with **Setup…** in the menu-bar app, or
-`bash scripts/onboard-tui.sh`.
+Re-run onboarding anytime with `bash scripts/onboard-tui.sh`.
 
 ## Configuration
 
