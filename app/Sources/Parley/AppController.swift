@@ -210,24 +210,30 @@ final class AppController: ObservableObject {
         guard !hasQueuedTurn else { Log.write("media resume deferred (turns queued)"); return }
         let tokens = pendingMediaResume
         pendingMediaResume = []
-        // AirPods: releasing the mic makes Bluetooth renegotiate from HFP (16/24 kHz) back
-        // to hi-fi A2DP — resuming during the switch swallows the first second of audio.
-        // Wait until the output device is back at a hi-fi rate (instant on speakers).
+        await waitForHiFiOutput()
+        await Task.detached { MediaControl.shared.resume(tokens) }.value
+        Log.write("resumed media: \(tokens.joined(separator: ","))")
+    }
+
+    // AirPods: releasing the mic makes Bluetooth renegotiate from HFP (16/24 kHz) back to
+    // hi-fi A2DP — audio played/resumed during the switch is swallowed. Wait until the
+    // output device is back at a hi-fi rate (instant on speakers; 3s cap).
+    private func waitForHiFiOutput() async {
         let start = Date()
         while let sr = AudioDevices.defaultOutputSampleRate(), sr < 40_000,
               Date().timeIntervalSince(start) < 3.0 {
             try? await Task.sleep(nanoseconds: 150_000_000)
         }
-        if Date().timeIntervalSince(start) > 0.2 {
-            Log.write("media resume waited \(String(format: "%.1f", Date().timeIntervalSince(start)))s for hi-fi output")
-        }
-        await Task.detached { MediaControl.shared.resume(tokens) }.value
-        Log.write("resumed media: \(tokens.joined(separator: ","))")
+        let waited = Date().timeIntervalSince(start)
+        if waited > 0.2 { Log.write("waited \(String(format: "%.1f", waited))s for hi-fi output") }
     }
 
-    // Settle after mic teardown, then play the intent's cached Jarvis line (or a chime).
+    // Settle after mic teardown, then play the intent's cached Jarvis line (or a chime) —
+    // but only once the output is back in hi-fi mode (AirPods HFP→A2DP switch), else the
+    // ack clip itself gets swallowed.
     private func playAck(intent: Intent, hasText: Bool, config: AppConfig) async {
         try? await Task.sleep(nanoseconds: 300_000_000)
+        await waitForHiFiOutput()
         if hasText, let data = LineClips.randomClipData(for: intent) {
             await playClip(data, rate: config.speakingRate)
         } else {
