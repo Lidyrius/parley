@@ -35,6 +35,16 @@ Re-running the same command later **updates** Parley in place — keys, settings
 irm https://raw.githubusercontent.com/Lidyrius/parley/main/windows/install.ps1 | iex
 ```
 
+Or paste this prompt into Claude Code on Windows:
+
+> Install Parley (github.com/Lidyrius/parley), a voice layer for Claude Code, on this Windows PC:
+> 1. Walk me through getting the two API keys (both basically free): **Groq** — console.groq.com → API Keys → Create (free developer tier). **Google Cloud Text-to-Speech** — console.cloud.google.com → enable "Cloud Text-to-Speech API" → Credentials → API key (first 1M chars/month free).
+> 2. Ask me for both keys and my spoken language.
+> 3. Write them to `%APPDATA%\Parley\credentials.json` as JSON with keys `googleAPIKey`, `groqAPIKey`, `language` (e.g. "Deutsch"), `googleVoice` (e.g. "de-DE-Chirp3-HD-Alnilam").
+> 4. Run in PowerShell: `irm https://raw.githubusercontent.com/Lidyrius/parley/main/windows/install.ps1 | iex` — it detects the credentials and skips its own onboarding.
+> 5. If I use Claude Code in WSL, also run the WSL setup line the installer prints.
+> 6. Tell me to start a **new** Claude Code session and type `/parley:voice`.
+
 ---
 
 ## How it works
