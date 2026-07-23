@@ -93,13 +93,14 @@ final class AppController: ObservableObject {
             return ""
         }
 
-        // Pause media that is ACTUALLY playing (via each app's own player state — the only
-        // reliable signal), then resume exactly those apps afterwards. Never touches media
-        // the user had already paused. See MediaControl.
-        // osascript is blocking I/O — run it off the main actor to keep the UI responsive.
-        let pausedMedia = await Task.detached { MediaControl.shared.pausePlaying() }.value
-        if !pausedMedia.isEmpty {
-            Log.write("paused media: \(pausedMedia.joined(separator: ","))")
+        // Pause media that is ACTUALLY playing (see MediaControl); resume happens only once
+        // the turn QUEUE is empty — with another project's turn waiting, resuming between
+        // turns would blast YouTube for a second just to pause it again.
+        // osascript/perl are blocking I/O — run off the main actor to keep the UI responsive.
+        let newlyPaused = await Task.detached { MediaControl.shared.pausePlaying() }.value
+        if !newlyPaused.isEmpty {
+            for t in newlyPaused where !pendingMediaResume.contains(t) { pendingMediaResume.append(t) }
+            Log.write("paused media: \(newlyPaused.joined(separator: ","))")
             try? await Task.sleep(nanoseconds: 400_000_000)   // 0.4 s beat before speaking
         }
 
@@ -120,12 +121,10 @@ final class AppController: ObservableObject {
         await speakAndBeep(turn.speak, config: config)
         Log.write("speak done")
 
-        // speak-only turn (<speak-end>): no mic, no pill. Resume media, end cleanly so the
-        // hook exits — Claude reports back on its own (e.g. when a background task finishes).
+        // speak-only turn (<speak-end>): no mic, no pill. Resume media (queue permitting),
+        // end cleanly so the hook exits — Claude reports back on its own.
         if !turn.wantsListen {
-            if !pausedMedia.isEmpty {
-                await Task.detached { MediaControl.shared.resume(pausedMedia) }.value
-            }
+            await maybeResumeMedia()
             setStatus(key, "idle")
             Log.write("turn end (speak-only)")
             return ""
@@ -149,11 +148,8 @@ final class AppController: ObservableObject {
                                      recordSeconds: recordSeconds, intent: intent.rawValue,
                                      project: turn.project)
 
-        // Resume exactly what we paused (each was playing at the start).
-        if !pausedMedia.isEmpty {
-            await Task.detached { MediaControl.shared.resume(pausedMedia) }.value
-            Log.write("resumed media: \(pausedMedia.joined(separator: ","))")
-        }
+        // Resume what was paused — but only once no further turn is queued.
+        await maybeResumeMedia()
 
         // Play the spoken acknowledgment in the BACKGROUND. Returning the transcript now
         // lets the hook inject it immediately, so Claude starts working while the ack line
@@ -174,6 +170,20 @@ final class AppController: ObservableObject {
     }
 
     private var ackTask: Task<Void, Never>?
+
+    // Media paused across the whole queued conversation burst; resumed only once no
+    // further turn is waiting (a queued turn would immediately re-pause it anyway).
+    private var pendingMediaResume: [String] = []
+    private var hasQueuedTurn: Bool { sessions.contains { $0.status == "queued" } }
+
+    private func maybeResumeMedia() async {
+        guard !pendingMediaResume.isEmpty else { return }
+        guard !hasQueuedTurn else { Log.write("media resume deferred (turns queued)"); return }
+        let tokens = pendingMediaResume
+        pendingMediaResume = []
+        await Task.detached { MediaControl.shared.resume(tokens) }.value
+        Log.write("resumed media: \(tokens.joined(separator: ","))")
+    }
 
     // Settle after mic teardown, then play the intent's cached Jarvis line (or a chime).
     private func playAck(intent: Intent, hasText: Bool, config: AppConfig) async {
