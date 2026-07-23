@@ -37,6 +37,7 @@ final class AppController: ObservableObject {
     func start() {
         guard !started else { return }   // idempotent: launch + menu .task may both call
         started = true
+        mic.prepareInput()   // expensive AUHAL setup now → near-instant mic starts later
         server.onTurn = { [weak self] turn in
             Task { @MainActor in
                 self?.upsert(SessionInfo(id: self?.routeKey(turn.tmux_pane, turn.session_id) ?? turn.session_id,

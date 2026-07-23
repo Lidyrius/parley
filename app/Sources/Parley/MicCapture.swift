@@ -8,6 +8,10 @@ import AVFoundation
 final class MicCapture: @unchecked Sendable {
     private let q = DispatchQueue(label: "de.developaway.parley.mic")
     private var engine: AVAudioEngine?
+    // Pre-initialized AUHAL input (VoiceInk technique): prepare once, start instantly.
+    // Attempt 1 uses it; the AVAudioEngine path remains the fallback (attempts 2+).
+    private let auhal = AUHALInput()
+    private var usingAUHAL = false
     private var vad = SilenceVAD(speechThresholdDB: -50, trailingSilence: 0.9)
     private var samples: [Int16] = []
     private let targetRate = 16000.0
@@ -34,6 +38,16 @@ final class MicCapture: @unchecked Sendable {
 
     private let noSpeechTimeout = 8.0
     private let maxListenSeconds = 90.0
+
+    /// Do the expensive AUHAL setup ahead of time (app launch / after each recording),
+    /// so the next start is near-instant. Cheap no-op if already prepared.
+    func prepareInput() {
+        q.async { [weak self] in
+            guard let self, !self.auhal.prepared else { return }
+            let ok = self.auhal.prepare()
+            Log.write("mic: auhal prepare \(ok ? "ok" : "failed")")
+        }
+    }
 
     func start(onFinished: @escaping (Data) -> Void) {
         q.async { [weak self] in
@@ -66,9 +80,30 @@ final class MicCapture: @unchecked Sendable {
         maxTimer?.cancel()
         attempt += 1
         let myAttempt = attempt
+
+        // Attempt 1: the prepared AUHAL unit — start is near-instant. Later attempts (or
+        // AUHAL failure) fall through to a fresh AVAudioEngine.
+        if myAttempt == 1, auhal.prepared || auhal.prepare(), let inFmt = auhal.format {
+            guard let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
+                                                sampleRate: targetRate, channels: 1, interleaved: true) else {
+                endReason = "no-out-format"; finish(); return
+            }
+            targetFormat = outFormat
+            converter = AVAudioConverter(from: inFmt, to: outFormat)
+            if auhal.start(onBuffer: { [weak self] buf in self?.handle(buf) }) {
+                usingAUHAL = true
+                Log.write("mic: auhal started (\(Int(inFmt.sampleRate))Hz, instant)")
+                armWatchdogs(myAttempt)
+                return
+            }
+            Log.write("mic: auhal start failed → engine fallback")
+            auhal.teardown()
+        }
+
         // Capture from the SYSTEM DEFAULT input. Per-engine AUHAL device routing proved
         // fragile (0 buffers / wrong format); the onboarding picker instead sets the
         // system default input device, which AVAudioEngine picks up reliably here.
+        usingAUHAL = false
         let engine = AVAudioEngine()
         self.engine = engine
 
@@ -97,6 +132,11 @@ final class MicCapture: @unchecked Sendable {
             endReason = "engine-start-failed"; Log.write("mic: engine start failed: \(error)"); finish(); return
         }
 
+        armWatchdogs(myAttempt)
+    }
+
+    // runs on `q` — max-listen cap + dead-capture watchdog for the current attempt.
+    private func armWatchdogs(_ myAttempt: Int) {
         let work = DispatchWorkItem { [weak self] in
             self?.endReason = "max-cap"; Log.write("mic: max listen cap reached"); self?.finish()
         }
@@ -104,13 +144,13 @@ final class MicCapture: @unchecked Sendable {
         q.asyncAfter(deadline: .now() + maxListenSeconds, execute: work)
 
         // Dead-capture watchdog: a live input delivers its first buffer within ~200 ms, so
-        // if none arrive in 1.5 s the input is stuck (output→input device contention). Retry
-        // fast — this is the main source of the "mic triggers seconds late" delay — up to 5
-        // times before giving up instead of hanging on the 90 s cap.
+        // if none arrive in 1.5 s the input is stuck. Tear down (AUHAL fully, so the next
+        // attempt takes the engine path) and retry, up to 5 times before giving up.
         q.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self, !self.finished, self.buffersSeen == 0 else { return }
             if myAttempt < 5 {
                 Log.write("mic: no buffers after 1.5s (attempt \(myAttempt)), tearing down + restarting after 0.4s")
+                if self.usingAUHAL { self.auhal.teardown(); self.usingAUHAL = false }
                 if let e = self.engine { e.inputNode.removeTap(onBus: 0); if e.isRunning { e.stop() }; self.engine = nil }
                 // Short recovery delay so retries cluster while the output device is freeing.
                 self.q.asyncAfter(deadline: .now() + 0.4) { [weak self] in
@@ -119,7 +159,7 @@ final class MicCapture: @unchecked Sendable {
                 }
             } else {
                 self.endReason = "no-buffers"
-                Log.write("mic: still no buffers after 3 attempts, giving up")
+                Log.write("mic: still no buffers after 5 attempts, giving up")
                 self.finish()
             }
         }
@@ -177,11 +217,21 @@ final class MicCapture: @unchecked Sendable {
         guard !finished else { return }
         finished = true
         maxTimer?.cancel(); maxTimer = nil
+        if usingAUHAL {
+            auhal.stop()          // keep prepared — the NEXT start stays instant
+            usingAUHAL = false
+        }
         if let engine {
             engine.inputNode.removeTap(onBus: 0)
             if engine.isRunning { engine.stop() }
         }
         engine = nil
+        // Off the critical path: make sure the AUHAL is prepared for the next turn
+        // (covers the engine-fallback case and any teardown).
+        q.async { [weak self] in
+            guard let self, !self.auhal.prepared else { return }
+            _ = self.auhal.prepare()
+        }
         let count = samples.count
         writeDiagnostics(samples: count)
         Log.write("mic: finished reason=\(endReason) buffers=\(buffersSeen) samples=\(count) maxDB=\(Int(maxDBSeen))")
@@ -196,6 +246,7 @@ final class MicCapture: @unchecked Sendable {
             guard let self, !self.finished else { return }
             self.finished = true
             self.maxTimer?.cancel(); self.maxTimer = nil
+            if self.usingAUHAL { self.auhal.stop(); self.usingAUHAL = false }
             if let engine = self.engine {
                 engine.inputNode.removeTap(onBus: 0)
                 if engine.isRunning { engine.stop() }
