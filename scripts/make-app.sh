@@ -27,6 +27,10 @@ if [ -d "$BUILD_DIR/${BIN_NAME}_${BIN_NAME}.bundle" ]; then
   cp -R "$BUILD_DIR/${BIN_NAME}_${BIN_NAME}.bundle" "$APP/Contents/Resources/"
 fi
 
+# mediaremote-adapter (BSD-3, vendored): lets /usr/bin/perl read the (entitlement-gated)
+# system Now-Playing state + send play/pause — universal media pause with zero user setup.
+cp -R "$ROOT/third_party/mediaremote-adapter" "$APP/Contents/Resources/"
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
