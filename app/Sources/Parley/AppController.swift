@@ -117,6 +117,11 @@ final class AppController: ObservableObject {
             await playClip(ann, rate: config.speakingRate)
         }
 
+        // Full-duplex prewarm: start the input engine now, while we're about to speak, in
+        // discard mode. By record() time the mic is already hot → arming is instant and the
+        // ready-beep comes right after speech (no engine-start or settle latency).
+        if turn.wantsListen { mic.prewarm() }
+
         Log.write("speak start (listen=\(turn.wantsListen))")
         await speakAndBeep(turn.speak, config: config)
         Log.write("speak done")
@@ -219,7 +224,8 @@ final class AppController: ObservableObject {
         }
         try? await Task.sleep(nanoseconds: 40_000_000)
         player.stop()
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        // No settle needed anymore: the mic engine is prewarmed BEFORE speech starts
+        // (full-duplex), so there's no post-output input-engine start to protect.
     }
 
     // Google Cloud TTS (Chirp3 HD): one-shot synthesize → PCM → enqueue.

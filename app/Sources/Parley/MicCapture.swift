@@ -34,21 +34,66 @@ final class MicCapture: @unchecked Sendable {
 
     private let noSpeechTimeout = 8.0
     private let maxListenSeconds = 90.0
+    private var armed = false          // false = prewarm/discard mode, true = recording
+    private var startedNotified = false
+    private var prewarmSafety: DispatchWorkItem?
 
+    /// Start the input engine EARLY (e.g. while TTS is still speaking) in discard mode —
+    /// buffers flow but nothing is recorded. arm() then flips to recording with near-zero
+    /// activation latency (the engine-start cost is the slow part). Safety teardown if
+    /// arm() never follows.
+    func prewarm() {
+        q.async { [weak self] in
+            guard let self, self.engine == nil else { return }
+            self.finished = false
+            self.armed = false
+            self.buffersSeen = 0
+            self.attempt = 0
+            self.requestMicIfNeeded { granted in
+                self.q.async {
+                    guard granted, self.engine == nil, !self.finished else { return }
+                    Log.write("mic: prewarm")
+                    self.beginCapture()
+                    let safety = DispatchWorkItem { [weak self] in
+                        guard let self, !self.armed else { return }
+                        Log.write("mic: prewarm never armed — tearing down")
+                        self.endReason = "prewarm-expired"; self.finish()
+                    }
+                    self.prewarmSafety = safety
+                    self.q.asyncAfter(deadline: .now() + 120, execute: safety)
+                }
+            }
+        }
+    }
+
+    /// Begin actually recording. With a prewarmed engine this is instant (next buffer);
+    /// otherwise falls back to a cold engine start.
     func start(onFinished: @escaping (Data) -> Void) {
         q.async { [weak self] in
             guard let self else { return }
+            self.prewarmSafety?.cancel(); self.prewarmSafety = nil
             self.finished = false
             self.onFinished = onFinished
             self.vad.reset()
             self.samples.removeAll(keepingCapacity: true)
             self.totalDuration = 0
-            self.buffersSeen = 0
             self.maxDBSeen = -120
             self.endReason = "unknown"
             self.logCounter = 0
-            self.attempt = 0
+            self.startedNotified = false
+            self.armed = true
 
+            self.maxTimer?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                self?.endReason = "max-cap"; Log.write("mic: max listen cap reached"); self?.finish()
+            }
+            self.maxTimer = work
+            self.q.asyncAfter(deadline: .now() + self.maxListenSeconds, execute: work)
+
+            if self.engine != nil { return }   // prewarmed and running — armed, done
+
+            self.buffersSeen = 0
+            self.attempt = 0
             self.requestMicIfNeeded { granted in
                 self.q.async {
                     guard granted else {
@@ -140,6 +185,8 @@ final class MicCapture: @unchecked Sendable {
         guard err == nil, let ch = out.int16ChannelData else { return }
         let n = Int(out.frameLength)
         guard n > 0 else { return }
+        buffersSeen += 1
+        guard armed else { return }   // prewarm: engine hot, but NOTHING is recorded
         var floats = [Float](repeating: 0, count: n)
         for i in 0..<n {
             let s = ch[0][i]
@@ -149,8 +196,7 @@ final class MicCapture: @unchecked Sendable {
         let db = Level.dB(Level.rms(floats))
         let duration = Double(n) / targetRate
         totalDuration += duration
-        buffersSeen += 1
-        if buffersSeen == 1 { onStarted?() }
+        if !startedNotified { startedNotified = true; onStarted?() }
         if db > maxDBSeen { maxDBSeen = db }
         // Map dBFS (~ -55…-10) to 0…1 for the live waveform.
         onLevel?(max(0, min(1, (db + 55) / 45)))
@@ -176,7 +222,9 @@ final class MicCapture: @unchecked Sendable {
     private func finish() {
         guard !finished else { return }
         finished = true
+        armed = false
         maxTimer?.cancel(); maxTimer = nil
+        prewarmSafety?.cancel(); prewarmSafety = nil
         if let engine {
             engine.inputNode.removeTap(onBus: 0)
             if engine.isRunning { engine.stop() }
@@ -195,7 +243,9 @@ final class MicCapture: @unchecked Sendable {
         q.async { [weak self] in
             guard let self, !self.finished else { return }
             self.finished = true
+            self.armed = false
             self.maxTimer?.cancel(); self.maxTimer = nil
+            self.prewarmSafety?.cancel(); self.prewarmSafety = nil
             if let engine = self.engine {
                 engine.inputNode.removeTap(onBus: 0)
                 if engine.isRunning { engine.stop() }
