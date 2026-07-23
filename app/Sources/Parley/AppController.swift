@@ -225,17 +225,16 @@ final class AppController: ObservableObject {
         } else {
             NSLog("Parley: TTS not configured")
         }
-        // Tiny silent finish marker: its .dataPlayedBack completion tells us the speech has
-        // fully played out. The audible "you can talk now" beep plays in record() once the
-        // mic delivers its first buffer. Marker + tail + settle are trimmed hard so the mic
-        // goes hot as fast as possible after speech; the 1.5s watchdog covers the rare
-        // contention case a longer settle used to hide.
-        await withCheckedContinuation { cont in
-            player.scheduleBeep(seconds: 0.02, amplitude: 0.0) { cont.resume() }
-        }
-        try? await Task.sleep(nanoseconds: 40_000_000)
+        // Audible "you can talk now" beep after the speech. Beeping BEFORE the mic starts is
+        // fine again because the prepared AUHAL start is near-instant — capture begins
+        // ~0.1s after the beep ends. (Beeping AFTER mic start doesn't work: an output
+        // engine started while input IO runs is silent on this system.)
+        await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
+        try? await Task.sleep(nanoseconds: 120_000_000)
         player.stop()
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        // Minimal settle before the mic claims the device — AUHAL needs far less than the
+        // old cold engine start; the watchdog covers the rare stuck case.
+        try? await Task.sleep(nanoseconds: 100_000_000)
     }
 
     // Google Cloud TTS (Chirp3 HD): one-shot synthesize → PCM → enqueue.
@@ -309,29 +308,12 @@ final class AppController: ObservableObject {
         mic.onLevel = { [weak self] level in
             Task { @MainActor in self?.hud.push(level) }
         }
-        // Beep the moment the mic is provably capturing (first buffer) — from then on the
-        // user can talk immediately; nothing after the beep is lost.
-        mic.onStarted = { [weak self] in
-            Task { @MainActor in self?.playReadyBeep() }
-        }
         let wav = await withCheckedContinuation { cont in
             mic.start { wav in cont.resume(returning: wav) }
         }
         mic.onLevel = nil
-        mic.onStarted = nil
         hud.finish()
         return wav
-    }
-
-    // Short cue over its own output player while the mic keeps capturing (full-duplex).
-    private func playReadyBeep() {
-        Task { @MainActor in
-            let p = TTSPlayer()
-            do { try p.start() } catch { return }
-            await withCheckedContinuation { cont in p.scheduleBeep { cont.resume() } }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            p.stop()
-        }
     }
 
     private func transcribe(_ wav: Data, config: AppConfig) async -> String {
