@@ -94,37 +94,43 @@ final class AppController: ObservableObject {
             return ""
         }
 
-        // Kick off Google TTS synthesis IMMEDIATELY — it runs in parallel with the media
-        // pause, the previous ack clip and the project announcement, so the actual sentence
-        // is (usually) already synthesized when its turn to play comes: no gap after
-        // "Update aus dem Projekt X".
-        let prefetch: Task<Data?, Never>? = config.useGoogle ? Task {
+        // Kick off Google TTS synthesis IMMEDIATELY — it runs in parallel with everything
+        // below. Its observed duration feeds the TTSTiming prediction model.
+        let synthStart = Date()
+        let synthFlag = SynthFlag()
+        let prefetch: Task<Data?, Never>? = config.useGoogle ? Task { [synthFlag] in
+            defer { synthFlag.done = true }
             let req = GoogleTTS.request(text: turn.speak, apiKey: config.googleKey, voice: config.googleVoice)
             guard let (data, resp) = try? await URLSession.shared.data(for: req),
                   (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            TTSTiming.record(chars: turn.speak.count, seconds: Date().timeIntervalSince(synthStart))
             return GoogleTTS.pcm(from: data)
         } : nil
-
-        // Pause media that is ACTUALLY playing (see MediaControl); resume happens only once
-        // the turn QUEUE is empty — with another project's turn waiting, resuming between
-        // turns would blast YouTube for a second just to pause it again.
-        // osascript/perl are blocking I/O — run off the main actor to keep the UI responsive.
-        let newlyPaused = await Task.detached { MediaControl.shared.pausePlaying() }.value
-        if !newlyPaused.isEmpty {
-            for t in newlyPaused where !pendingMediaResume.contains(t) { pendingMediaResume.append(t) }
-            Log.write("paused media: \(newlyPaused.joined(separator: ","))")
-            try? await Task.sleep(nanoseconds: 400_000_000)   // 0.4 s beat before speaking
-        }
 
         // Wait out the previous turn's background ack clip so this turn's audio never
         // overlaps it (only ever blocks if Claude replied faster than the ack played).
         await ackTask?.value
         ackTask = nil
 
-        // Multiple projects running in parallel → announce which one is speaking (a cached
-        // "Update für <Projekt>" clip) before the actual sentence, so turns don't blur.
-        if liveProjectCount() > 1,
-           let ann = await ProjectClips.shared.clipData(label: turn.spokenLabel, language: config.language, config: config) {
+        // Multiple projects running in parallel → announce which one is speaking (cached,
+        // plays instantly — so media must pause right away in that case).
+        let announcement: Data? = liveProjectCount() > 1
+            ? await ProjectClips.shared.clipData(label: turn.spokenLabel, language: config.language, config: config)
+            : nil
+
+        // Smart media pause: don't silence YouTube while we're still WAITING for the TTS.
+        // Hold until the synthesis is done — or until ~1s before its PREDICTED completion
+        // (learned model), so the pause lands just ahead of playback. With an announcement
+        // (instant audio) or without a prefetch, pause immediately.
+        if announcement == nil, let _ = prefetch {
+            let target = max(0, TTSTiming.predict(chars: turn.speak.count) - 1.0)
+            while !synthFlag.done, Date().timeIntervalSince(synthStart) < target {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        await pauseMediaIfPlaying()
+
+        if let ann = announcement {
             Log.write("multi-instance → announcing \(turn.spokenLabel)")
             await playClip(ann, rate: config.speakingRate)
         }
@@ -183,6 +189,16 @@ final class AppController: ObservableObject {
     }
 
     private var ackTask: Task<Void, Never>?
+
+    // Pause anything playing and remember it for the deferred resume; 0.4s beat if we
+    // actually paused something. osascript/perl are blocking → off the main actor.
+    private func pauseMediaIfPlaying() async {
+        let newly = await Task.detached { MediaControl.shared.pausePlaying() }.value
+        guard !newly.isEmpty else { return }
+        for t in newly where !pendingMediaResume.contains(t) { pendingMediaResume.append(t) }
+        Log.write("paused media: \(newly.joined(separator: ","))")
+        try? await Task.sleep(nanoseconds: 400_000_000)
+    }
 
     // Media paused across the whole queued conversation burst; resumed only once no
     // further turn is waiting (a queued turn would immediately re-pause it anyway).
@@ -367,3 +383,6 @@ final class AppController: ObservableObject {
         sessions[i].status = status
     }
 }
+
+// Completion flag readable from the smart-pause poll loop (prefetch task sets it).
+final class SynthFlag: @unchecked Sendable { var done = false }

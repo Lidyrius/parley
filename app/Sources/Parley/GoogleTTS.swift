@@ -35,3 +35,25 @@ enum GoogleTTS {
         return audio
     }
 }
+
+// Learned synthesis-latency model: EWMA of seconds-per-character, persisted across runs.
+// Used to pause media just ~1s BEFORE the TTS is predicted to be ready instead of at turn
+// start — YouTube keeps playing during most of the synthesis wait.
+enum TTSTiming {
+    private static let key = "parley.ttsSecPerChar"
+
+    /// Predicted synthesis duration for a text of `chars` characters (clamped 0.3–8 s).
+    static func predict(chars: Int) -> Double {
+        let stored = UserDefaults.standard.double(forKey: key)
+        let secPerChar = stored > 0 ? stored : 0.012   // ~3s for a 250-char line, pre-learning
+        return min(8, max(0.3, secPerChar * Double(max(chars, 1))))
+    }
+
+    /// Feed an observed synthesis (chars → seconds); EWMA alpha 0.3.
+    static func record(chars: Int, seconds: Double) {
+        guard chars > 0, seconds > 0.05, seconds < 30 else { return }
+        let sample = seconds / Double(chars)
+        let old = UserDefaults.standard.double(forKey: key)
+        UserDefaults.standard.set(old > 0 ? old * 0.7 + sample * 0.3 : sample, forKey: key)
+    }
+}
