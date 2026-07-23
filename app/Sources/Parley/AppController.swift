@@ -137,7 +137,7 @@ final class AppController: ObservableObject {
 
         Log.write("speak start (listen=\(turn.wantsListen))")
         let prefetchedPCM: Data? = prefetch == nil ? nil : await prefetch!.value
-        await speakAndBeep(turn.speak, config: config, prefetched: prefetchedPCM)
+        await speakAndBeep(turn.speak, config: config, prefetched: prefetchedPCM, beep: turn.wantsListen)
         Log.write("speak done")
 
         // speak-only turn (<speak-end>): no mic, no pill. Resume media (queue permitting),
@@ -247,7 +247,7 @@ final class AppController: ObservableObject {
     // mic engine starts. A still-running (or merely stopped-but-alive) output engine
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
-    private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil) async {
+    private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil, beep: Bool = true) async {
         let player = TTSPlayer(rate: config.speakingRate)
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
         if let pcm = prefetched {
@@ -260,11 +260,14 @@ final class AppController: ObservableObject {
         } else {
             NSLog("Parley: TTS not configured")
         }
-        // Audible "you can talk now" beep after the speech. Beeping BEFORE the mic starts is
-        // fine again because the prepared AUHAL start is near-instant — capture begins
-        // ~0.1s after the beep ends. (Beeping AFTER mic start doesn't work: an output
-        // engine started while input IO runs is silent on this system.)
-        await withCheckedContinuation { cont in player.scheduleBeep { cont.resume() } }
+        // Audible "you can talk now" beep after the speech — but ONLY on listen turns.
+        // A speak-end turn plays a silent 0.02s finish marker instead (no cue: nobody is
+        // being asked to talk). Beeping BEFORE the mic starts is fine because the prepared
+        // AUHAL start is near-instant; beeping AFTER mic start is silent on this system.
+        await withCheckedContinuation { cont in
+            if beep { player.scheduleBeep { cont.resume() } }
+            else { player.scheduleBeep(seconds: 0.02, amplitude: 0.0) { cont.resume() } }
+        }
         try? await Task.sleep(nanoseconds: 120_000_000)
         player.stop()
         // Minimal settle before the mic claims the device — AUHAL needs far less than the
