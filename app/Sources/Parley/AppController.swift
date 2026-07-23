@@ -167,14 +167,16 @@ final class AppController: ObservableObject {
                                      recordSeconds: recordSeconds, intent: intent.rawValue,
                                      project: turn.project)
 
-        // Resume what was paused — but only once no further turn is queued.
-        await maybeResumeMedia()
-
         // Play the spoken acknowledgment in the BACKGROUND. Returning the transcript now
         // lets the hook inject it immediately, so Claude starts working while the ack line
         // ("Alles klar, ich sehe es mir an") is still playing — no waiting on playback. The
         // next turn awaits this task before it speaks, so audio never overlaps.
-        ackTask = Task { [weak self] in await self?.playAck(intent: intent, hasText: !text.isEmpty, config: config) }
+        // ORDER inside the task: hi-fi restored → ack clip → THEN media resume, so the
+        // video never plays over the acknowledgment.
+        ackTask = Task { [weak self] in
+            await self?.playAck(intent: intent, hasText: !text.isEmpty, config: config)
+            await self?.maybeResumeMedia()
+        }
 
         // "Stop heißt Stop": a STOP reply is NOT fed back. The STOP ack clip still plays
         // (background) as the sign-off; returning "" makes the hook exit cleanly.
