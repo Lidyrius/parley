@@ -209,18 +209,17 @@ final class AppController: ObservableObject {
         } else {
             NSLog("Parley: TTS not configured")
         }
-        // Silent finish marker: its .dataPlayedBack completion tells us the speech has fully
-        // played out. The audible "you can talk now" beep is NOT played here anymore — it
-        // plays in record() once the mic delivers its first buffer, so nothing the user says
-        // after hearing it is ever lost. A short tail lets the pipeline flush before stop.
+        // Tiny silent finish marker: its .dataPlayedBack completion tells us the speech has
+        // fully played out. The audible "you can talk now" beep plays in record() once the
+        // mic delivers its first buffer. Marker + tail + settle are trimmed hard so the mic
+        // goes hot as fast as possible after speech; the 1.5s watchdog covers the rare
+        // contention case a longer settle used to hide.
         await withCheckedContinuation { cont in
-            player.scheduleBeep(amplitude: 0.0) { cont.resume() }
+            player.scheduleBeep(seconds: 0.02, amplitude: 0.0) { cont.resume() }
         }
-        try? await Task.sleep(nanoseconds: 120_000_000)
+        try? await Task.sleep(nanoseconds: 40_000_000)
         player.stop()
-        // ponytail: settle lets CoreAudio release the output device before the mic engine
-        // claims it. Raised to 450 ms after intermittent 0-buffer captures recurred.
-        try? await Task.sleep(nanoseconds: 450_000_000)
+        try? await Task.sleep(nanoseconds: 250_000_000)
     }
 
     // Google Cloud TTS (Chirp3 HD): one-shot synthesize → PCM → enqueue.

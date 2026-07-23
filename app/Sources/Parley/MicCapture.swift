@@ -8,7 +8,7 @@ import AVFoundation
 final class MicCapture: @unchecked Sendable {
     private let q = DispatchQueue(label: "de.developaway.parley.mic")
     private var engine: AVAudioEngine?
-    private var vad = SilenceVAD(speechThresholdDB: -50, trailingSilence: 0.7)
+    private var vad = SilenceVAD(speechThresholdDB: -50, trailingSilence: 0.9)
     private var samples: [Int16] = []
     private let targetRate = 16000.0
     private var onFinished: ((Data) -> Void)?
