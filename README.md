@@ -29,6 +29,12 @@ curl -fsSL https://raw.githubusercontent.com/Lidyrius/parley/main/install.sh | b
 
 Re-running the same command later **updates** Parley in place — keys, settings and statistics are kept.
 
+**Windows** (beta — tray app, same voice loop; works with Claude Code in Git Bash and WSL):
+
+```powershell
+irm https://raw.githubusercontent.com/Lidyrius/parley/main/windows/install.ps1 | iex
+```
+
 ---
 
 ## How it works
