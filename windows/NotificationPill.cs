@@ -113,6 +113,8 @@ public sealed class NotificationPill : Form
 
     private double Dwell() => Math.Min(5000, Math.Max(2600, 1600 + _msg.Length * 36));
 
+    private static double Smooth(double p) { p = Math.Clamp(p, 0, 1); return p * p * (3 - 2 * p); }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
