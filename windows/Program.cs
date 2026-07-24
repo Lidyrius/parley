@@ -57,6 +57,7 @@ internal sealed class TrayApp : ApplicationContext
             Visible = true,
             ContextMenuStrip = menu,
         };
+        Notifier.Init(_tray);
 
         try { _server.Start(); }
         catch (Exception e)

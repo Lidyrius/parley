@@ -65,6 +65,8 @@ public sealed class Server
             {
                 Log.Write("ready received");
                 try { _onReady(); } catch { }
+                var project = TurnPayload.Decode(body)?.Project ?? "";
+                Notifier.Notify("Parley", "Voice-Modus aktiv" + (project.Length > 0 ? $" · {project}" : ""));
                 await Respond(ctx, 200, "{\"ok\":true}");
                 return;
             }

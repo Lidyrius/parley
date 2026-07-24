@@ -38,6 +38,7 @@ final class AppController: ObservableObject {
         guard !started else { return }   // idempotent: launch + menu .task may both call
         started = true
         mic.prepareInput()   // expensive AUHAL setup now → near-instant mic starts later
+        Notifier.requestAuth()
         server.onTurn = { [weak self] turn in
             Task { @MainActor in
                 self?.upsert(SessionInfo(id: self?.routeKey(turn.tmux_pane, turn.session_id) ?? turn.session_id,
@@ -73,6 +74,8 @@ final class AppController: ObservableObject {
         StatsStore.shared.startSession()
         upsert(SessionInfo(id: routeKey(ready.tmux_pane, ready.session_id),
                            project: ready.project, pane: ready.tmux_pane, status: "ready"))
+        let project = ready.project.isEmpty ? "" : " · \(ready.project)"
+        Notifier.notify(title: "Parley", body: "Voice-Modus aktiv\(project)")
     }
 
     // MARK: - /turn pipeline
