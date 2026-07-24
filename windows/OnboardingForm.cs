@@ -1,58 +1,74 @@
+using System.Drawing.Drawing2D;
 using System.Text.Json;
 
 namespace Parley;
 
-// First-run onboarding wizard — Windows counterpart of the macOS OnboardingView: a dark,
-// stepped flow (welcome → keys → language+voice → notifications → done) with a progress
-// row and Back/Next. Writes the shared credentials.json and marks onboarding complete.
+// First-run onboarding wizard — styled to match the macOS OnboardingView 1:1: dark
+// background, a tinted rounded icon tile, a big bold title + muted subtitle, segmented
+// progress, notification choice cards, and rounded Back/Continue buttons. Writes the
+// shared credentials.json and marks onboarding complete.
 public sealed class OnboardingForm : Form
 {
+    private static readonly Color Bg = Color.FromArgb(28, 28, 32);
+    private static readonly Color Accent = Color.FromArgb(50, 120, 246);
+    private static readonly Color Muted = Color.FromArgb(150, 152, 160);
+
     private static readonly string[] Langs = { "Deutsch", "English", "Français", "Español", "Italiano", "Nederlands" };
     private static readonly string[] Voices = { "Alnilam", "Aoede", "Charon", "Kore", "Puck", "Fenrir" };
-    private static readonly (string title, string sub)[] Steps =
+
+    private static readonly (string icon, string title, string sub)[] Steps =
     {
-        ("Willkommen bei Parley", "Deine Sprachschicht für Claude Code — freihändig, im Charakter eines ruhigen Butlers."),
-        ("API-Schlüssel", "Beide sind praktisch kostenlos."),
-        ("Sprache & Stimme", "In welcher Sprache spreche ich, und mit welcher Stimme?"),
-        ("Benachrichtigungen", "Wie soll ich dich informieren?"),
-        ("Fertig!", "Starte eine neue Claude-Code-Sitzung und tippe /parley:voice."),
+        ("🎙️", "Willkommen bei Parley", "Deine Sprachschicht für Claude Code. Am Ende jeder Antwort spreche ich die Zusammenfassung, höre deine Antwort und speise sie zurück — freihändig, im Charakter eines ruhigen Butlers."),
+        ("🔑", "API-Schlüssel", "Beide sind praktisch kostenlos."),
+        ("🌐", "Sprache & Stimme", "In welcher Sprache spreche ich, und mit welcher Stimme?"),
+        ("🔔", "Benachrichtigungen", "Wie soll ich dich informieren, z. B. wenn ein Projekt wartet?"),
+        ("🎤", "Mikrofon", "Parley braucht dein Mikrofon, um deine Antworten aufzunehmen."),
+        ("✅", "Fertig!", "Starte eine neue Claude-Code-Sitzung und tippe /parley:voice. Ich melde mich."),
     };
 
     private int _step;
-    private readonly Panel _body = new() { Dock = DockStyle.Fill, Padding = new Padding(48, 20, 48, 20) };
-    private readonly Label _title = new() { AutoSize = false, Dock = DockStyle.Top, Height = 44, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.White };
-    private readonly Label _sub = new() { AutoSize = false, Dock = DockStyle.Top, Height = 44, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 10), ForeColor = Color.Gainsboro };
-    private readonly Panel _content = new() { Dock = DockStyle.Fill };
-    private readonly Button _back = new() { Text = "Zurück", Width = 100, Height = 34, FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
-    private readonly Button _next = new() { Text = "Weiter", Width = 120, Height = 34, FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
-    private readonly FlowLayoutPanel _dots = new() { Height = 22, Dock = DockStyle.Top, FlowDirection = FlowDirection.LeftToRight, Anchor = AnchorStyles.None };
+    private readonly Panel _dots = new() { BackColor = Bg };
+    private readonly Label _iconTile = new() { Font = new Font("Segoe UI Emoji", 22), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White, BackColor = Color.Transparent };
+    private readonly Label _title = new() { Font = new Font("Segoe UI", 21, FontStyle.Bold), ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, AutoSize = false, BackColor = Bg };
+    private readonly Label _sub = new() { Font = new Font("Segoe UI", 10.5f), ForeColor = Muted, TextAlign = ContentAlignment.TopCenter, AutoSize = false, BackColor = Bg };
+    private readonly Panel _content = new() { BackColor = Bg };
+    private readonly RoundButton _back = new() { Text = "Zurück", Fill = Color.FromArgb(52, 52, 58), Width = 100, Height = 38 };
+    private readonly RoundButton _next = new() { Text = "Weiter", Fill = Accent, Width = 130, Height = 38 };
 
-    private readonly TextBox _google = new() { Width = 360, UseSystemPasswordChar = true };
-    private readonly TextBox _groq = new() { Width = 360, UseSystemPasswordChar = true };
-    private readonly ComboBox _lang = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly ComboBox _voice = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly ComboBox _notify = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly TextBox _google = new() { Width = 380, UseSystemPasswordChar = true, BorderStyle = BorderStyle.FixedSingle };
+    private readonly TextBox _groq = new() { Width = 380, UseSystemPasswordChar = true, BorderStyle = BorderStyle.FixedSingle };
+    private readonly ComboBox _lang = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat };
+    private readonly ComboBox _voice = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat };
+    private string _notifyMode = "pill";
 
     public OnboardingForm()
     {
         Text = "Parley";
-        Width = 660; Height = 580;
+        ClientSize = new Size(640, 560);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
-        BackColor = Color.FromArgb(28, 28, 32);
+        MaximizeBox = false; MinimizeBox = false;
+        BackColor = Bg;
+        DoubleBuffered = true;
 
         _lang.Items.AddRange(Langs);
         _voice.Items.AddRange(Voices);
-        _notify.Items.AddRange(new object[] { "In der Pill", "System-Mitteilung", "Keine" });
         var c = Config.Load();
         _google.Text = c.GoogleKey; _groq.Text = c.GroqKey;
         _lang.SelectedItem = c.Language; if (_lang.SelectedIndex < 0) _lang.SelectedIndex = 0;
         _voice.SelectedIndex = 0;
-        _notify.SelectedIndex = c.NotifyMode switch { "system" => 1, "none" => 2, _ => 0 };
-        _notify.SelectedIndexChanged += (_, _) => Notifier.Preview(_notify.SelectedIndex switch { 1 => "system", 2 => "none", _ => "pill" });
+        _notifyMode = c.NotifyMode;
+        foreach (var tb in new[] { _google, _groq }) { tb.BackColor = Color.FromArgb(44, 44, 50); tb.ForeColor = Color.White; }
+        foreach (var cb in new[] { _lang, _voice }) { cb.BackColor = Color.FromArgb(44, 44, 50); cb.ForeColor = Color.White; }
 
-        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 60, Padding = new Padding(40, 12, 40, 12) };
+        _dots.SetBounds(0, 20, ClientSize.Width, 12); _dots.Paint += PaintDots;
+        _iconTile.SetBounds(ClientSize.Width / 2 - 30, 58, 60, 60);
+        _title.SetBounds(60, 130, ClientSize.Width - 120, 38);
+        _sub.SetBounds(70, 172, ClientSize.Width - 140, 62);
+        _content.SetBounds(60, 244, ClientSize.Width - 120, 206);
+        _back.Location = new Point(40, ClientSize.Height - 58);
+        _next.Location = new Point(ClientSize.Width - 40 - _next.Width, ClientSize.Height - 58);
+
         _back.Click += (_, _) => { if (_step > 0) { _step--; Render(); } };
         _next.Click += (_, _) =>
         {
@@ -60,59 +76,89 @@ public sealed class OnboardingForm : Form
             if (_step == 1 && (_google.Text.Trim().Length == 0 || _groq.Text.Trim().Length == 0)) return;
             _step++; Render();
         };
-        _back.FlatAppearance.BorderColor = Color.Gray;
-        _next.BackColor = Color.FromArgb(60, 120, 240);
-        _next.FlatAppearance.BorderSize = 0;
-        bottom.Controls.Add(_next); bottom.Controls.Add(_back);
-        _next.Location = new Point(bottom.Width - 160, 12); _next.Anchor = AnchorStyles.Right | AnchorStyles.Top;
-        _back.Location = new Point(0, 12); _back.Anchor = AnchorStyles.Left | AnchorStyles.Top;
 
-        _dots.Padding = new Padding((Width - 6 * 30) / 2, 4, 0, 0);
-        Controls.Add(_body);
-        Controls.Add(bottom);
-        var head = new Panel { Dock = DockStyle.Top, Height = 150 };
-        head.Controls.Add(_content); // placeholder to keep order; actual content set in _body
-        _body.Controls.Add(_content);
-        _body.Controls.Add(_sub);
-        _body.Controls.Add(_title);
-        _body.Controls.Add(_dots);
+        Controls.AddRange(new Control[] { _dots, _iconTile, _title, _sub, _content, _back, _next });
+        Paint += PaintIconTile;
         Render();
+    }
+
+    private void PaintDots(object? s, PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        int n = Steps.Length, gap = 6, active = 22, dot = 8;
+        int total = (n - 1) * (dot + gap) + active;
+        int x = (_dots.Width - total) / 2, y = 3;
+        for (var i = 0; i < n; i++)
+        {
+            var w = i == _step ? active : dot;
+            using var b = new SolidBrush(i <= _step ? Accent : Color.FromArgb(70, 70, 78));
+            e.Graphics.FillRoundedRect(new Rectangle(x, y, w, 6), 3, b);
+            x += w + gap;
+        }
+    }
+
+    private void PaintIconTile(object? s, PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var r = new Rectangle(_iconTile.Left, _iconTile.Top, 60, 60);
+        using var b = new SolidBrush(Color.FromArgb(38, Accent.R, Accent.G, Accent.B));
+        e.Graphics.FillRoundedRect(r, 17, b);
     }
 
     private void Render()
     {
+        _iconTile.Text = Steps[_step].icon;
         _title.Text = Steps[_step].title;
         _sub.Text = Steps[_step].sub;
         _back.Visible = _step > 0;
         _next.Text = _step == Steps.Length - 1 ? "Los geht's" : "Weiter";
-
-        _dots.Controls.Clear();
-        for (var i = 0; i < Steps.Length; i++)
-            _dots.Controls.Add(new Panel { Width = i == _step ? 22 : 8, Height = 6, Margin = new Padding(3, 8, 3, 0),
-                BackColor = i <= _step ? Color.FromArgb(60, 120, 240) : Color.FromArgb(70, 70, 78) });
+        _next.Enabled = !(_step == 1 && (_google.Text.Trim().Length == 0 || _groq.Text.Trim().Length == 0));
+        Invalidate();
 
         _content.Controls.Clear();
-        var stack = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(60, 20, 60, 0) };
-        void Field(string label, Control c)
-        {
-            stack.Controls.Add(new Label { Text = label, ForeColor = Color.White, AutoSize = true, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), Margin = new Padding(0, 10, 0, 4) });
-            stack.Controls.Add(c);
-        }
         switch (_step)
         {
             case 1:
-                Field("Google Cloud TTS API-Key  (console.cloud.google.com · 1 Mio/Monat gratis)", _google);
-                Field("Groq API-Key  (console.groq.com · kostenlos)", _groq);
+                AddField(0, "Google Cloud TTS API-Key", "console.cloud.google.com · 1 Mio Zeichen/Monat gratis", _google);
+                AddField(74, "Groq API-Key", "console.groq.com · kostenloser Developer-Key", _groq);
                 break;
             case 2:
-                Field("Sprache", _lang);
-                Field("Chirp3-HD-Stimme", _voice);
+                AddInput(10, "Sprache", _lang);
+                AddInput(74, "Chirp3-HD-Stimme", _voice);
                 break;
             case 3:
-                Field("Anzeige", _notify);
+                _content.Controls.Add(Card(0, "In der Pill", "Elegante Einblendung unten mittig", "🔔", "pill"));
+                _content.Controls.Add(Card(64, "System-Mitteilung", "Klassische Windows-Benachrichtigung", "🪟", "system"));
+                _content.Controls.Add(Card(128, "Keine", "Ganz ohne Benachrichtigungen", "🔕", "none"));
                 break;
         }
-        if (_step is 1 or 2 or 3) _content.Controls.Add(stack);
+    }
+
+    private void AddField(int y, string label, string hint, Control input)
+    {
+        input.Left = (_content.Width - input.Width) / 2; input.Top = y + 22;
+        _content.Controls.Add(new Label { Text = label, ForeColor = Color.White, BackColor = Bg, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), AutoSize = true, Left = input.Left, Top = y });
+        _content.Controls.Add(input);
+        _content.Controls.Add(new Label { Text = hint, ForeColor = Muted, BackColor = Bg, Font = new Font("Segoe UI", 8.5f), AutoSize = true, Left = input.Left, Top = y + 48 });
+    }
+
+    private void AddInput(int y, string label, Control input)
+    {
+        input.Left = (_content.Width - input.Width) / 2; input.Top = y + 22;
+        _content.Controls.Add(new Label { Text = label, ForeColor = Color.White, BackColor = Bg, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), AutoSize = true, Left = input.Left, Top = y });
+        _content.Controls.Add(input);
+    }
+
+    private ChoiceCard Card(int y, string title, string sub, string icon, string value)
+    {
+        var card = new ChoiceCard(title, sub, icon, value == _notifyMode) { Width = _content.Width, Height = 56, Top = y, Left = 0 };
+        card.Clicked += () =>
+        {
+            _notifyMode = value;
+            foreach (Control ctl in _content.Controls) if (ctl is ChoiceCard cc) cc.SetSelected(cc.Value == value);
+            Notifier.Preview(value);   // live example on select
+        };
+        return card;
     }
 
     private void Finish()
@@ -131,7 +177,7 @@ public sealed class OnboardingForm : Form
         d["groqAPIKey"] = _groq.Text.Trim();
         d["language"] = lang;
         d["googleVoice"] = $"{code}-Chirp3-HD-{_voice.SelectedItem}";
-        d["notifyMode"] = _notify.SelectedIndex switch { 1 => "system", 2 => "none", _ => "pill" };
+        d["notifyMode"] = _notifyMode;
         d["onboarded"] = "1";
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
     }
@@ -144,5 +190,96 @@ public sealed class OnboardingForm : Form
             return d != null && d.TryGetValue("onboarded", out var v) && v.GetString() == "1";
         }
         catch { return false; }
+    }
+}
+
+// Rounded, flat, filled capsule button matching the macOS onboarding buttons.
+internal sealed class RoundButton : Button
+{
+    public Color Fill = Color.FromArgb(50, 120, 246);
+    public RoundButton()
+    {
+        FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0;
+        ForeColor = Color.White; Font = new Font("Segoe UI", 10, FontStyle.Bold);
+        BackColor = Color.FromArgb(28, 28, 32);
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        e.Graphics.Clear(Parent?.BackColor ?? BackColor);
+        var fill = Enabled ? Fill : Color.FromArgb(70, Fill.R, Fill.G, Fill.B);
+        using var b = new SolidBrush(fill);
+        e.Graphics.FillRoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), Height / 2, b);
+        TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle,
+            Enabled ? ForeColor : Color.Gainsboro,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+}
+
+// Selectable notification card matching the macOS onboarding choice rows.
+internal sealed class ChoiceCard : Panel
+{
+    public string Value { get; }
+    public event Action? Clicked;
+    private bool _selected;
+    private readonly string _title, _sub, _icon;
+    private static readonly Color Accent = Color.FromArgb(50, 120, 246);
+
+    public ChoiceCard(string title, string sub, string icon, bool selected)
+    {
+        _title = title; _sub = sub; _icon = icon; _selected = selected; Value = title;
+        BackColor = Color.FromArgb(28, 28, 32); Cursor = Cursors.Hand;
+        Click += (_, _) => Clicked?.Invoke();
+        DoubleBuffered = true;
+    }
+
+    public void SetSelected(bool on) { _selected = on; Invalidate(); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Parent?.BackColor ?? BackColor);
+        var r = new Rectangle(0, 0, Width - 1, Height - 1);
+        using var bg = new SolidBrush(_selected ? Color.FromArgb(34, Accent.R, Accent.G, Accent.B) : Color.FromArgb(14, 255, 255, 255));
+        g.FillRoundedRect(r, 12, bg);
+        using var pen = new Pen(_selected ? Accent : Color.FromArgb(24, 255, 255, 255));
+        g.DrawRoundedRect(r, 12, pen);
+
+        using var iconFont = new Font("Segoe UI Emoji", 15);
+        g.DrawString(_icon, iconFont, Brushes.White, 14, Height / 2 - 15);
+        using var tFont = new Font("Segoe UI", 10.5f, FontStyle.Bold);
+        using var sFont = new Font("Segoe UI", 8.5f);
+        g.DrawString(_title, tFont, Brushes.White, 52, 9);
+        using var sBrush = new SolidBrush(Color.FromArgb(160, 162, 170));
+        g.DrawString(_sub, sFont, sBrush, 52, 30);
+
+        var cy = Height / 2 - 9;
+        var cr = new Rectangle(Width - 34, cy, 18, 18);
+        if (_selected)
+        {
+            using var cb = new SolidBrush(Accent); g.FillEllipse(cb, cr);
+            using var cp = new Pen(Color.White, 2);
+            g.DrawLines(cp, new[] { new Point(Width - 30, cy + 9), new Point(Width - 27, cy + 12), new Point(Width - 21, cy + 5) });
+        }
+        else { using var cp = new Pen(Color.FromArgb(90, 255, 255, 255)); g.DrawEllipse(cp, cr); }
+    }
+}
+
+internal static class GraphicsRoundedExtensions
+{
+    public static void FillRoundedRect(this Graphics g, Rectangle r, int radius, Brush b)
+    { using var p = Path(r, radius); g.FillPath(b, p); }
+    public static void DrawRoundedRect(this Graphics g, Rectangle r, int radius, Pen pen)
+    { using var p = Path(r, radius); g.DrawPath(pen, p); }
+    private static GraphicsPath Path(Rectangle r, int radius)
+    {
+        int d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
+        var p = new GraphicsPath();
+        p.AddArc(r.X, r.Y, d, d, 180, 90);
+        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
     }
 }
