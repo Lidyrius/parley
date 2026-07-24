@@ -17,6 +17,10 @@ public sealed class NotificationPill : Form
     private double _phase;          // 0→1 in, hold, 1→0 out
     private int _state;            // 0 in, 1 hold, 2 out
     private DateTime _holdUntil;
+    private DateTime _shownAt;     // for the slow sweep
+    private double _dwellFrac = 1; // 1→0 during hold
+    private double _holdMs = 3000;
+    private const double SweepSeconds = 1.4;   // slow, clearly visible
 
     private NotificationPill()
     {
@@ -67,7 +71,8 @@ public sealed class NotificationPill : Form
         _title = next.Item1;
         _msg = next.Item2;
         Position();
-        _phase = 0; _state = 0; Opacity = 0;
+        _phase = 0; _state = 0; _dwellFrac = 1; Opacity = 0;
+        _shownAt = DateTime.UtcNow;
         Show();
         _anim.Start();
     }
@@ -84,10 +89,12 @@ public sealed class NotificationPill : Form
         {
             case 0:   // fade + zoom in
                 _phase += 0.12;
-                if (_phase >= 1) { _phase = 1; _state = 1; _holdUntil = DateTime.UtcNow.AddMilliseconds(Dwell()); }
+                if (_phase >= 1) { _phase = 1; _state = 1; _holdMs = Dwell(); _holdUntil = DateTime.UtcNow.AddMilliseconds(_holdMs); }
                 break;
-            case 1:   // hold
-                if (DateTime.UtcNow >= _holdUntil) _state = 2;
+            case 1:   // hold — deplete the dwell bar
+                var remain = (_holdUntil - DateTime.UtcNow).TotalMilliseconds;
+                _dwellFrac = Math.Clamp(remain / _holdMs, 0, 1);
+                if (remain <= 0) _state = 2;
                 break;
             case 2:   // fade out
                 _phase -= 0.09;
@@ -136,11 +143,34 @@ public sealed class NotificationPill : Form
         using var titleFont = new Font("Segoe UI", 11.5f, FontStyle.Bold);
         using var msgFont = new Font("Segoe UI", 10f);
         using var white = new SolidBrush(Color.White);
-        using var grey = new SolidBrush(Color.FromArgb(210, 235, 235, 245));
         g.DrawString(_title, titleFont, white, new RectangleF(textX, cy - 22, textW, 22));
+
+        // Stagger: message reveals after the title (fade + slight slide).
+        var reveal = Smooth(Math.Clamp((_phase - 0.45) / 0.55, 0, 1));
+        using var grey = new SolidBrush(Color.FromArgb((int)(210 * reveal), 235, 235, 245));
         g.DrawString(_msg, msgFont, grey,
-            new RectangleF(textX, cy - 2, textW, 40),
+            new RectangleF(textX + (float)((1 - reveal) * 10), cy - 2, textW, 40),
             new StringFormat { Trimming = StringTrimming.EllipsisCharacter });
+
+        // Slow one-time glass sweep across the capsule.
+        var sp = Math.Min(1.0, (DateTime.UtcNow - _shownAt).TotalSeconds / SweepSeconds);
+        if (sp < 1)
+        {
+            var sx = (float)((sp * 1.5 - 0.3) * w) + ox;
+            var band = w * 0.4f;
+            using var sweepBrush = new LinearGradientBrush(
+                new RectangleF(sx, oy, band, h),
+                Color.FromArgb(0, 255, 255, 255), Color.FromArgb(70, 255, 255, 255), LinearGradientMode.Horizontal);
+            sweepBrush.SetBlendTriangularShape(0.5f);
+            var clip = g.Clip; g.SetClip(path);
+            g.FillRectangle(sweepBrush, sx, oy, band, h);
+            g.Clip = clip;
+        }
+
+        // Dwell bar along the bottom.
+        var barW = (float)((w - 44) * _dwellFrac);
+        using var barBrush = new SolidBrush(Color.FromArgb(230, 90, 160, 255));
+        g.FillRectangle(barBrush, ox + 22, oy + h - 8, Math.Max(0, barW), 3);
     }
 
     private static GraphicsPath Capsule(RectangleF r)
