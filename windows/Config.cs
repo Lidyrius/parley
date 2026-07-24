@@ -12,10 +12,16 @@ public sealed class Config
     public string GroqKey { get; init; } = "";
     public string Language { get; init; } = "Deutsch";
     public double SpeakingRate { get; init; } = 1.0;
-    public bool NotifyInPill { get; init; } = true;
+    public string NotifyMode { get; init; } = "pill";   // "pill" | "system" | "none"
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
+
+    private static string ResolveNotifyMode(string mode, string legacy)
+    {
+        if (mode is "pill" or "system" or "none") return mode;
+        return legacy == "0" ? "system" : "pill";
+    }
 
     public static string Dir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Parley");
@@ -41,7 +47,7 @@ public sealed class Config
                 GroqKey = S("groqAPIKey"),
                 Language = S("language", "Deutsch"),
                 SpeakingRate = Math.Clamp(rate, 0.5, 2.0),
-                NotifyInPill = S("notifyInPill") != "0",   // default: in-app pill
+                NotifyMode = ResolveNotifyMode(S("notifyMode"), S("notifyInPill")),
             };
         }
         catch

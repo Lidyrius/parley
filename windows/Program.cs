@@ -45,6 +45,9 @@ internal sealed class TrayApp : ApplicationContext
         var settings = new ToolStripMenuItem("Einstellungen…");
         settings.Click += (_, _) => new SettingsForm().Show();
         menu.Items.Add(settings);
+        var setup = new ToolStripMenuItem("Setup…");
+        setup.Click += (_, _) => new OnboardingForm().Show();
+        menu.Items.Add(setup);
         menu.Items.Add(new ToolStripSeparator());
         var quit = new ToolStripMenuItem("Beenden");
         quit.Click += (_, _) => { _tray!.Visible = false; Application.Exit(); };
@@ -59,6 +62,8 @@ internal sealed class TrayApp : ApplicationContext
         };
         Notifier.Init(_tray);
         NotificationPill.EnsureCreated();   // create the pill on the UI thread
+
+        if (!OnboardingForm.IsComplete()) new OnboardingForm().Show();
 
         try { _server.Start(); }
         catch (Exception e)

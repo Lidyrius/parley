@@ -10,7 +10,7 @@ public sealed class SettingsForm : Form
     private readonly ComboBox _lang = new() { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TrackBar _rate = new() { Minimum = 2, Maximum = 8, TickFrequency = 1, Width = 200 };
     private readonly Label _rateLabel = new() { AutoSize = true };
-    private readonly CheckBox _pill = new() { Text = "In der Pill anzeigen (statt System)", AutoSize = true };
+    private readonly ComboBox _notify = new() { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList };
 
     public SettingsForm()
     {
@@ -22,6 +22,8 @@ public sealed class SettingsForm : Form
         MaximizeBox = false;
 
         _lang.Items.AddRange(new object[] { "Deutsch", "English", "Français", "Español", "Italiano", "Nederlands" });
+        _notify.Items.AddRange(new object[] { "In der Pill", "System-Mitteilung", "Keine" });
+        _notify.SelectedIndexChanged += (_, _) => Notifier.Preview(_notify.SelectedIndex switch { 1 => "system", 2 => "none", _ => "pill" });
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(12) };
         void Row(string label, Control c)
@@ -37,7 +39,7 @@ public sealed class SettingsForm : Form
         ratePanel.Controls.Add(_rateLabel);
         Row("Sprechtempo", ratePanel);
         _rate.ValueChanged += (_, _) => _rateLabel.Text = $"{_rate.Value / 4.0:0.00}×";
-        Row("Benachrichtigungen", _pill);
+        Row("Benachrichtigungen", _notify);
 
         var save = new Button { Text = "Speichern", AutoSize = true };
         save.Click += (_, _) => { Save(); Close(); };
@@ -54,7 +56,7 @@ public sealed class SettingsForm : Form
         _lang.SelectedItem = c.Language;
         if (_lang.SelectedIndex < 0) _lang.SelectedIndex = 0;
         _rate.Value = Math.Clamp((int)Math.Round(c.SpeakingRate * 4), _rate.Minimum, _rate.Maximum);
-        _pill.Checked = c.NotifyInPill;
+        _notify.SelectedIndex = c.NotifyMode switch { "system" => 1, "none" => 2, _ => 0 };
         _rateLabel.Text = $"{_rate.Value / 4.0:0.00}×";
     }
 
@@ -81,7 +83,7 @@ public sealed class SettingsForm : Form
         d["language"] = lang;
         d["googleVoice"] = $"{code}-Chirp3-HD-Alnilam";
         d["speakingRate"] = (_rate.Value / 4.0).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        d["notifyInPill"] = _pill.Checked ? "1" : "0";
+        d["notifyMode"] = _notify.SelectedIndex switch { 1 => "system", 2 => "none", _ => "pill" };
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
     }
 }

@@ -8,7 +8,7 @@ struct SettingsView: View {
     @State private var voiceID = ""
     @State private var language = "Deutsch"
     @State private var speakingRate = 1.0
-    @State private var notifyInPill = false
+    @State private var notifyMode = "pill"
     @State private var saved = false
 
     // Spoken-turn languages. Add more freely — the value is passed verbatim to Claude
@@ -29,7 +29,12 @@ struct SettingsView: View {
                 }
             }
             Section("Benachrichtigungen") {
-                Toggle("In der Pill anzeigen (statt System)", isOn: $notifyInPill)
+                Picker("Anzeige", selection: $notifyMode) {
+                    Text("In der Pill").tag("pill")
+                    Text("System-Mitteilung").tag("system")
+                    Text("Keine").tag("none")
+                }
+                .onChange(of: notifyMode) { _, m in Notifier.preview(m) }
             }
             Section("ElevenLabs (TTS)") {
                 SecureField("API key (xi-api-key)", text: $elevenKey)
@@ -55,7 +60,7 @@ struct SettingsView: View {
         voiceID = Keychain.get(.voiceID) ?? ""
         language = Keychain.get(.language) ?? "Deutsch"
         speakingRate = Double(Keychain.get(.speakingRate) ?? "") ?? 1.0
-        notifyInPill = Keychain.get(.notifyInPill) != "0"
+        notifyMode = AppConfig.load().notifyMode
     }
 
     private func save() {
@@ -64,7 +69,7 @@ struct SettingsView: View {
         Keychain.set(voiceID, for: .voiceID)
         Keychain.set(language, for: .language)
         Keychain.set(String(speakingRate), for: .speakingRate)
-        Keychain.set(notifyInPill ? "1" : "0", for: .notifyInPill)
+        Keychain.set(notifyMode, for: .notifyMode)
         saved = true
     }
 }

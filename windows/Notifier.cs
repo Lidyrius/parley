@@ -9,13 +9,25 @@ public static class Notifier
 
     public static void Init(NotifyIcon tray) => _tray = tray;
 
+    // Example notification in the given mode (onboarding/settings preview), regardless of config.
+    public static void Preview(string mode)
+    {
+        switch (mode)
+        {
+            case "pill": NotificationPill.Present("Parley", "So sieht die Pill aus, Sir."); break;
+            case "system":
+                try { _tray?.ShowBalloonTip(4000, "Parley", "So sieht die Mitteilung aus, Sir.", ToolTipIcon.Info); } catch { }
+                break;
+        }
+    }
+
     public static void Notify(string title, string body)
     {
-        // In-app pill instead of a tray toast, if the user chose it in Settings.
-        if (Config.Load().NotifyInPill)
+        switch (Config.Load().NotifyMode)
         {
-            NotificationPill.Present(title, body);
-            return;
+            case "none": return;
+            case "system": break;
+            default: NotificationPill.Present(title, body); return;
         }
         var tray = _tray;
         if (tray is null) return;

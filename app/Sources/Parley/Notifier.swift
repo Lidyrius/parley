@@ -18,11 +18,26 @@ enum Notifier {
         }
     }
 
+    // Show one example notification in the given mode (for the onboarding/settings preview),
+    // regardless of the saved config.
+    static func preview(_ mode: String) {
+        switch mode {
+        case "pill":   NotificationPill.shared.present(title: "Parley", message: "So sieht die Pill aus, Sir.")
+        case "system":
+            if let c = center() {
+                let content = UNMutableNotificationContent()
+                content.title = "Parley"; content.body = "So sieht die Mitteilung aus, Sir."
+                c.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            } else { osa("Parley", "So sieht die Mitteilung aus, Sir.") }
+        default: break
+        }
+    }
+
     static func notify(title: String, body: String) {
-        // In-app pill instead of a system notification, if the user chose it in Settings.
-        if AppConfig.load().notifyInPill {
-            NotificationPill.shared.present(title: title, message: body)
-            return
+        switch AppConfig.load().notifyMode {
+        case "none":   return
+        case "system": break
+        default:       NotificationPill.shared.present(title: title, message: body); return
         }
         guard let c = center() else { osa(title, body); return }
         let content = UNMutableNotificationContent()
