@@ -21,6 +21,8 @@ public sealed class NotificationPill : Form
     private double _dwellFrac = 1; // 1→0 during hold
     private double _holdMs = 3000;
     private const double SweepSeconds = 1.4;   // slow, clearly visible
+    private int _restY;            // rest Y (bottom-center); slides up from below
+    private int _travel;
 
     private NotificationPill()
     {
@@ -79,8 +81,12 @@ public sealed class NotificationPill : Form
 
     private void Position()
     {
-        var wa = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 720);
-        Location = new Point(wa.Left + (wa.Width - Width) / 2, wa.Bottom - Height - 28);
+        // Screen under the mouse = where the user is looking (multi-monitor safe).
+        var scr = Screen.FromPoint(Cursor.Position);
+        var wa = scr.WorkingArea;
+        _restY = wa.Bottom - Height - 28;
+        _travel = Height + 60;
+        Location = new Point(wa.Left + (wa.Width - Width) / 2, _restY + _travel);   // start below
     }
 
     private void Animate()
@@ -106,8 +112,12 @@ public sealed class NotificationPill : Form
                 }
                 break;
         }
-        var eased = _phase * _phase * (3 - 2 * _phase);   // smoothstep
-        Opacity = eased;
+        Opacity = Math.Min(1, _phase * 2);   // quick fade; the slide carries the motion
+
+        // Slide: rise from below on entry, sink back down on exit (Y is down-positive here).
+        var slide = _state == 2 ? _phase * _phase              // easeIn back down
+                                : 1 - Math.Pow(1 - _phase, 3); // easeOutCubic up
+        Location = new Point(Location.X, _restY + (int)((1 - slide) * _travel));
         Invalidate();
     }
 
@@ -121,10 +131,9 @@ public sealed class NotificationPill : Form
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
-        // subtle zoom: scale the drawn capsule around center by 0.9→1.0
-        var scale = 0.9f + 0.1f * (float)_phase;
-        var w = Width * scale; var h = Height * scale;
-        var ox = (Width - w) / 2f; var oy = (Height - h) / 2f;
+        // No zoom — the vertical slide carries the entrance/exit motion.
+        float w = Width, h = Height;
+        float ox = 0, oy = 0;
         var rect = new RectangleF(ox + 2, oy + 2, w - 5, h - 5);
 
         using var path = Capsule(rect);

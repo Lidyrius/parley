@@ -22,6 +22,9 @@ final class NotificationPill: ObservableObject {
     private var state = 0            // 0 in · 1 hold · 2 out
     private var dwellTotal = 3.0
     private var busy = false
+    private var restX: CGFloat = 0   // rest position (bottom-center)
+    private var restY: CGFloat = 0
+    private var travel: CGFloat = 0  // how far below the rest the pill starts/leaves
 
     func present(title: String, message: String) {
         queue.append((title, message))
@@ -58,7 +61,7 @@ final class NotificationPill: ObservableObject {
                     self.dwell -= dt / self.dwellTotal
                     if self.dwell <= 0 { self.dwell = 0; self.state = 2 }
                 default:
-                    self.appear -= dt / 0.34
+                    self.appear -= dt / 0.42
                     if self.appear <= 0 {
                         self.appear = 0
                         self.panel?.orderOut(nil)
@@ -67,6 +70,10 @@ final class NotificationPill: ObservableObject {
                         return
                     }
                 }
+                // Slide: rises from below the screen edge, sinks back down on exit.
+                let eased = self.state == 2 ? pow(self.appear, 2)         // easeIn back down
+                                            : 1 - pow(1 - self.appear, 3)  // easeOutCubic up
+                self.panel?.setFrameOrigin(NSPoint(x: self.restX, y: self.restY - (1 - eased) * self.travel))
                 self.tick &+= 1
             }
         }
@@ -100,7 +107,10 @@ final class NotificationPill: ObservableObject {
         guard let screen else { return }
         let size = panel.frame.size
         let vf = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: vf.midX - size.width / 2, y: vf.minY + 30))
+        restX = vf.midX - size.width / 2
+        restY = vf.minY + 30
+        travel = size.height + 60                       // start fully below the rest spot
+        panel.setFrameOrigin(NSPoint(x: restX, y: restY - travel))   // begin off the bottom
     }
 }
 
@@ -118,8 +128,7 @@ private struct NotificationPillView: View {
             .overlay(sweep)
             .overlay(alignment: .bottom) { dwellBar }
             .clipShape(Capsule(style: .continuous))
-            .scaleEffect(0.9 + 0.1 * smooth(a))         // gentle zoom
-            .opacity(min(1, a * 1.5))                    // fade
+            .opacity(min(1, a * 2.0))                    // quick fade; the panel slides in/out
             .frame(width: 400, height: 100)              // panel padding for shadow
     }
 
