@@ -80,6 +80,8 @@ public sealed class Server
                     return;
                 }
                 Interlocked.Increment(ref _queued);
+                if (_turnGate.CurrentCount == 0)   // another turn is active → this one waits
+                    Notifier.Notify("Parley", $"Projekt {turn.SpokenLabel} wartet auf Antwort");
                 await _turnGate.WaitAsync();   // FIFO-ish serialization; hook connection stays open
                 string transcript;
                 try

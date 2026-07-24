@@ -29,7 +29,9 @@ public static class Groq
             var body = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
-                Log.Write($"stt http {(int)resp.StatusCode}: {body[..Math.Min(200, body.Length)]}");
+                var code = (int)resp.StatusCode;
+                Log.Write($"stt http {code}: {body[..Math.Min(200, body.Length)]}");
+                Notifier.Notify("Parley — Fehler", $"Transkription fehlgeschlagen (HTTP {code}).");
                 return "";
             }
             return body.Trim();

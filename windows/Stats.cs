@@ -64,6 +64,8 @@ public static class StatsStore
         }
     }
 
+    private static string _costWarnedMonth = "";
+
     public static void RecordTurn(string speak, string transcript, double recordSeconds, string intent, string project)
     {
         var month = DateTime.UtcNow.ToString("yyyy-MM");
@@ -72,6 +74,16 @@ public static class StatsStore
             Total.Record(speak, transcript, recordSeconds, intent, project, month);
             Session.Record(speak, transcript, recordSeconds, intent, project, month);
             Save();
+
+            // Cost warning at 90% of the free monthly TTS-character tier — once per month.
+            var threshold = (int)(StatsData.FreeCharsPerMonth * 0.9);
+            if (Total.CharsThisMonth >= threshold && _costWarnedMonth != month)
+            {
+                _costWarnedMonth = month;
+                var pct = (int)(Total.CharsThisMonth / (double)StatsData.FreeCharsPerMonth * 100);
+                Notifier.Notify("Parley — Kosten",
+                    $"Google-Gratiskontingent zu {pct}% genutzt ({Total.CharsThisMonth} / {StatsData.FreeCharsPerMonth} Zeichen).");
+            }
         }
     }
 

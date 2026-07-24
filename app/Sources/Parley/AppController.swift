@@ -53,6 +53,7 @@ final class AppController: ObservableObject {
                 guard let self else { return }
                 self.upsert(SessionInfo(id: self.routeKey(turn.tmux_pane, turn.session_id),
                                         project: turn.project, pane: turn.tmux_pane, status: "queued"))
+                Notifier.notify(title: "Parley", body: "Projekt \(turn.spokenLabel) wartet auf Antwort")
             }
         }
         // The long-poll pipeline: speak → record → transcribe → return the reply text,
@@ -94,6 +95,9 @@ final class AppController: ObservableObject {
         if effectivelyMuted {
             Log.write("muted (manual=\(muted) dnd=\(FocusStatus.doNotDisturbActive())) → skipping turn")
             setStatus(key, "muted")
+            // Stumm: nicht sprechen, aber die Zusammenfassung als Notification zeigen, damit
+            // du mitbekommst, dass der Turn fertig ist — auch ohne dass ich rede.
+            Notifier.notify(title: "Parley · \(turn.spokenLabel)", body: turn.speak)
             return ""
         }
 
@@ -148,6 +152,9 @@ final class AppController: ObservableObject {
         if !turn.wantsListen {
             await maybeResumeMedia()
             setStatus(key, "idle")
+            // Ich melde mich selbst zurück (Background-Arbeit fertig) — Notification fängt
+            // dich, falls du weg bist und die Ansage verpasst.
+            Notifier.notify(title: "Parley · \(turn.spokenLabel)", body: turn.speak)
             Log.write("turn end (speak-only)")
             return ""
         }
@@ -287,6 +294,8 @@ final class AppController: ObservableObject {
             guard code == 200, let pcm = GoogleTTS.pcm(from: data) else {
                 Log.write("google tts http \(code): \(String(data: data, encoding: .utf8)?.prefix(200) ?? "")")
                 lastError = "Google TTS HTTP \(code)"
+                Notifier.notify(title: "Parley — Fehler",
+                                body: code == 429 ? "Google-Kontingent erschöpft." : "Sprachausgabe fehlgeschlagen (HTTP \(code)).")
                 return
             }
             player.enqueue(pcmChunk: pcm)
@@ -374,6 +383,7 @@ final class AppController: ObservableObject {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 NSLog("Parley: STT HTTP \(code): \(body)")
                 lastError = "STT HTTP \(code)"
+                Notifier.notify(title: "Parley — Fehler", body: "Transkription fehlgeschlagen (HTTP \(code)).")
                 return ""   // never feed an error body back as the reply
             }
             return String(data: data, encoding: .utf8)?

@@ -30,7 +30,10 @@ public static class GoogleTts
             var body = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
-                Log.Write($"google tts http {(int)resp.StatusCode}: {body[..Math.Min(200, body.Length)]}");
+                var code = (int)resp.StatusCode;
+                Log.Write($"google tts http {code}: {body[..Math.Min(200, body.Length)]}");
+                Notifier.Notify("Parley — Fehler",
+                    code == 429 ? "Google-Kontingent erschöpft." : $"Sprachausgabe fehlgeschlagen (HTTP {code}).");
                 return null;
             }
             using var doc = JsonDocument.Parse(body);

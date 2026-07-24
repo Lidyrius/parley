@@ -29,6 +29,8 @@ public sealed class TurnPipeline
         if (Muted)
         {
             Log.Write("muted → skipping turn");
+            // Stumm: nicht sprechen, aber die Zusammenfassung als Notification zeigen.
+            Notifier.Notify($"Parley · {turn.SpokenLabel}", turn.Speak);
             return "";
         }
 
@@ -77,6 +79,8 @@ public sealed class TurnPipeline
         if (!turn.WantsListen)
         {
             await MaybeResumeMedia();
+            // Ich melde mich selbst zurück — Notification fängt dich, falls du weg bist.
+            Notifier.Notify($"Parley · {turn.SpokenLabel}", turn.Speak);
             Log.Write("turn end (speak-only)");
             return "";
         }

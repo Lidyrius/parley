@@ -85,7 +85,18 @@ final class StatsStore: ObservableObject {
         session.record(speak: speak, transcript: transcript, recordSeconds: recordSeconds,
                        intent: intent, project: project, month: month)
         save()
+
+        // Cost warning at 90% of the free monthly TTS-character tier — once per month.
+        let threshold = Int(Double(StatsData.freeCharsPerMonth) * 0.9)
+        if total.charsThisMonth >= threshold, costWarnedMonth != month {
+            costWarnedMonth = month
+            let pct = Int(Double(total.charsThisMonth) / Double(StatsData.freeCharsPerMonth) * 100)
+            Notifier.notify(title: "Parley — Kosten",
+                            body: "Google-Gratiskontingent zu \(pct)% genutzt (\(total.charsThisMonth) / \(StatsData.freeCharsPerMonth) Zeichen).")
+        }
     }
+
+    private var costWarnedMonth = ""   // in-memory guard; resets on relaunch (fine — once/session/month)
 
     func addActiveTime(_ seconds: Double) {
         total.activeSeconds += seconds
