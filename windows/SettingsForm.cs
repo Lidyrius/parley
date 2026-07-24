@@ -10,12 +10,13 @@ public sealed class SettingsForm : Form
     private readonly ComboBox _lang = new() { Width = 200, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TrackBar _rate = new() { Minimum = 2, Maximum = 8, TickFrequency = 1, Width = 200 };
     private readonly Label _rateLabel = new() { AutoSize = true };
+    private readonly CheckBox _pill = new() { Text = "In der Pill anzeigen (statt System)", AutoSize = true };
 
     public SettingsForm()
     {
         Text = "Parley — Einstellungen";
         Width = 420;
-        Height = 330;
+        Height = 370;
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -36,6 +37,7 @@ public sealed class SettingsForm : Form
         ratePanel.Controls.Add(_rateLabel);
         Row("Sprechtempo", ratePanel);
         _rate.ValueChanged += (_, _) => _rateLabel.Text = $"{_rate.Value / 4.0:0.00}×";
+        Row("Benachrichtigungen", _pill);
 
         var save = new Button { Text = "Speichern", AutoSize = true };
         save.Click += (_, _) => { Save(); Close(); };
@@ -52,6 +54,7 @@ public sealed class SettingsForm : Form
         _lang.SelectedItem = c.Language;
         if (_lang.SelectedIndex < 0) _lang.SelectedIndex = 0;
         _rate.Value = Math.Clamp((int)Math.Round(c.SpeakingRate * 4), _rate.Minimum, _rate.Maximum);
+        _pill.Checked = c.NotifyInPill;
         _rateLabel.Text = $"{_rate.Value / 4.0:0.00}×";
     }
 
@@ -78,6 +81,7 @@ public sealed class SettingsForm : Form
         d["language"] = lang;
         d["googleVoice"] = $"{code}-Chirp3-HD-Alnilam";
         d["speakingRate"] = (_rate.Value / 4.0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        d["notifyInPill"] = _pill.Checked ? "1" : "";
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
     }
 }

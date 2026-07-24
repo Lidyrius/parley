@@ -12,6 +12,7 @@ public sealed class Config
     public string GroqKey { get; init; } = "";
     public string Language { get; init; } = "Deutsch";
     public double SpeakingRate { get; init; } = 1.0;
+    public bool NotifyInPill { get; init; }
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
@@ -40,6 +41,7 @@ public sealed class Config
                 GroqKey = S("groqAPIKey"),
                 Language = S("language", "Deutsch"),
                 SpeakingRate = Math.Clamp(rate, 0.5, 2.0),
+                NotifyInPill = S("notifyInPill") == "1",
             };
         }
         catch

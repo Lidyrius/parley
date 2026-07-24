@@ -11,6 +11,12 @@ public static class Notifier
 
     public static void Notify(string title, string body)
     {
+        // In-app pill instead of a tray toast, if the user chose it in Settings.
+        if (Config.Load().NotifyInPill)
+        {
+            NotificationPill.Present(title, body);
+            return;
+        }
         var tray = _tray;
         if (tray is null) return;
         void Show()

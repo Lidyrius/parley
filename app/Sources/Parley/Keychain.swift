@@ -18,6 +18,7 @@ enum Keychain {
         case googleAPIKey  // Google Cloud TTS key — if set, used instead of ElevenLabs
         case googleVoice   // Chirp3 HD voice name; empty = default (Alnilam)
         case speakingRate  // TTS playback speed, 0.5–2.0; empty = 1.0
+        case notifyInPill  // "1" = show notifications in the in-app pill instead of system
     }
 
     private static var fileURL: URL {
@@ -65,6 +66,7 @@ struct AppConfig {
     var googleKey: String
     var googleVoice: String
     var speakingRate: Double
+    var notifyInPill: Bool
 
     static func load() -> AppConfig {
         func val(_ k: Keychain.Key, _ env: String) -> String {
@@ -80,7 +82,8 @@ struct AppConfig {
             language: lang.isEmpty ? "Deutsch" : lang,
             googleKey: val(.googleAPIKey, "GOOGLE_TTS_API_KEY"),
             googleVoice: gVoice.isEmpty ? GoogleTTS.defaultVoice : gVoice,
-            speakingRate: min(2.0, max(0.5, rate)))
+            speakingRate: min(2.0, max(0.5, rate)),
+            notifyInPill: Keychain.get(.notifyInPill) == "1")
     }
 
     var ttsReady: Bool { !elevenLabsKey.isEmpty && !voiceID.isEmpty }

@@ -58,6 +58,7 @@ internal sealed class TrayApp : ApplicationContext
             ContextMenuStrip = menu,
         };
         Notifier.Init(_tray);
+        NotificationPill.EnsureCreated();   // create the pill on the UI thread
 
         try { _server.Start(); }
         catch (Exception e)

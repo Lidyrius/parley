@@ -19,6 +19,11 @@ enum Notifier {
     }
 
     static func notify(title: String, body: String) {
+        // In-app pill instead of a system notification, if the user chose it in Settings.
+        if AppConfig.load().notifyInPill {
+            NotificationPill.shared.present(title: title, message: body)
+            return
+        }
         guard let c = center() else { osa(title, body); return }
         let content = UNMutableNotificationContent()
         content.title = title
