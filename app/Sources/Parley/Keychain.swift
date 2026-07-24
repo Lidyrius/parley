@@ -83,7 +83,7 @@ struct AppConfig {
             googleKey: val(.googleAPIKey, "GOOGLE_TTS_API_KEY"),
             googleVoice: gVoice.isEmpty ? GoogleTTS.defaultVoice : gVoice,
             speakingRate: min(2.0, max(0.5, rate)),
-            notifyInPill: Keychain.get(.notifyInPill) == "1")
+            notifyInPill: Keychain.get(.notifyInPill) != "0")   // default: in-app pill
     }
 
     var ttsReady: Bool { !elevenLabsKey.isEmpty && !voiceID.isEmpty }

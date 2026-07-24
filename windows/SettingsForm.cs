@@ -81,7 +81,7 @@ public sealed class SettingsForm : Form
         d["language"] = lang;
         d["googleVoice"] = $"{code}-Chirp3-HD-Alnilam";
         d["speakingRate"] = (_rate.Value / 4.0).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        d["notifyInPill"] = _pill.Checked ? "1" : "";
+        d["notifyInPill"] = _pill.Checked ? "1" : "0";
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
     }
 }

@@ -55,7 +55,7 @@ struct SettingsView: View {
         voiceID = Keychain.get(.voiceID) ?? ""
         language = Keychain.get(.language) ?? "Deutsch"
         speakingRate = Double(Keychain.get(.speakingRate) ?? "") ?? 1.0
-        notifyInPill = Keychain.get(.notifyInPill) == "1"
+        notifyInPill = Keychain.get(.notifyInPill) != "0"
     }
 
     private func save() {
@@ -64,7 +64,7 @@ struct SettingsView: View {
         Keychain.set(voiceID, for: .voiceID)
         Keychain.set(language, for: .language)
         Keychain.set(String(speakingRate), for: .speakingRate)
-        Keychain.set(notifyInPill ? "1" : "", for: .notifyInPill)
+        Keychain.set(notifyInPill ? "1" : "0", for: .notifyInPill)
         saved = true
     }
 }
