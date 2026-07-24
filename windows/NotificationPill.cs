@@ -178,11 +178,13 @@ public sealed class NotificationPill : Form
             g.Clip = clip;
         }
 
-        // Straight, flush, full-width remaining-time bar at the very bottom edge (ignores
-        // the capsule's rounded corners — drawn after the capsule, unclipped).
+        // Full-width remaining-time bar at the very bottom, MASKED to the capsule so it
+        // never overflows the rounded corners.
         var barW = (float)(w * _dwellFrac);
         using var barBrush = new SolidBrush(Color.FromArgb(242, 90, 160, 255));
+        var barClip = g.Clip; g.SetClip(path);
         g.FillRectangle(barBrush, ox, oy + h - 6, Math.Max(0, barW), 6);
+        g.Clip = barClip;
     }
 
     private static GraphicsPath Capsule(RectangleF r)

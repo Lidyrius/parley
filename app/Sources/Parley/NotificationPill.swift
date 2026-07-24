@@ -126,8 +126,8 @@ private struct NotificationPillView: View {
             .frame(width: W, height: H, alignment: .leading)
             .background(capsule)
             .overlay(sweep)
-            .clipShape(Capsule(style: .continuous))      // rounds bg + sweep
-            .overlay(alignment: .bottom) { dwellBar }    // straight full-width bar, not clipped
+            .overlay(alignment: .bottom) { dwellBar }    // inside → masked to the capsule
+            .clipShape(Capsule(style: .continuous))      // clips bg + sweep + bar to the pill
             .opacity(min(1, a * 2.0))                    // quick fade; the panel slides in/out
             .frame(width: 400, height: 100)              // panel padding for shadow
     }
