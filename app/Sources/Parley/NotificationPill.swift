@@ -126,8 +126,8 @@ private struct NotificationPillView: View {
             .frame(width: W, height: H, alignment: .leading)
             .background(capsule)
             .overlay(sweep)
-            .overlay(alignment: .bottom) { dwellBar }
-            .clipShape(Capsule(style: .continuous))
+            .clipShape(Capsule(style: .continuous))      // rounds bg + sweep
+            .overlay(alignment: .bottom) { dwellBar }    // straight full-width bar, not clipped
             .opacity(min(1, a * 2.0))                    // quick fade; the panel slides in/out
             .frame(width: 400, height: 100)              // panel padding for shadow
     }
@@ -164,7 +164,7 @@ private struct NotificationPillView: View {
         GeometryReader { geo in
             let p = min(1, model.elapsed / sweepDuration)      // 0→1 over ~1.4s
             let x = (p * 1.5 - 0.3) * geo.size.width
-            LinearGradient(colors: [.clear, .white.opacity(0.30), .clear],
+            LinearGradient(colors: [.clear, .white.opacity(0.16), .clear],
                            startPoint: .leading, endPoint: .trailing)
                 .frame(width: geo.size.width * 0.4)
                 .offset(x: x)
@@ -174,15 +174,15 @@ private struct NotificationPillView: View {
         .allowsHitTesting(false)
     }
 
+    // Straight, flush, full-width remaining-time bar at the very bottom edge — ignores the
+    // capsule's rounded corners (extends past them for a clean edge-to-edge look).
     private var dwellBar: some View {
         GeometryReader { geo in
-            Capsule().fill(.blue.opacity(0.9))
-                .frame(width: geo.size.width * CGFloat(max(0, model.dwell)), height: 3)
+            Rectangle().fill(.blue.opacity(0.95))
+                .frame(width: geo.size.width * CGFloat(max(0, model.dwell)), height: 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(height: 3)
-        .padding(.horizontal, 22)
-        .padding(.bottom, 5)
+        .frame(width: W, height: 6)
     }
 
     private var messageReveal: Double { smooth(min(1, max(0, (model.appear - 0.45) / 0.55))) }

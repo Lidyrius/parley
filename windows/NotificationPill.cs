@@ -171,17 +171,18 @@ public sealed class NotificationPill : Form
             var band = w * 0.4f;
             using var sweepBrush = new LinearGradientBrush(
                 new RectangleF(sx, oy, band, h),
-                Color.FromArgb(0, 255, 255, 255), Color.FromArgb(70, 255, 255, 255), LinearGradientMode.Horizontal);
+                Color.FromArgb(0, 255, 255, 255), Color.FromArgb(42, 255, 255, 255), LinearGradientMode.Horizontal);
             sweepBrush.SetBlendTriangularShape(0.5f);
             var clip = g.Clip; g.SetClip(path);
             g.FillRectangle(sweepBrush, sx, oy, band, h);
             g.Clip = clip;
         }
 
-        // Dwell bar along the bottom.
-        var barW = (float)((w - 44) * _dwellFrac);
-        using var barBrush = new SolidBrush(Color.FromArgb(230, 90, 160, 255));
-        g.FillRectangle(barBrush, ox + 22, oy + h - 8, Math.Max(0, barW), 3);
+        // Straight, flush, full-width remaining-time bar at the very bottom edge (ignores
+        // the capsule's rounded corners — drawn after the capsule, unclipped).
+        var barW = (float)(w * _dwellFrac);
+        using var barBrush = new SolidBrush(Color.FromArgb(242, 90, 160, 255));
+        g.FillRectangle(barBrush, ox, oy + h - 6, Math.Max(0, barW), 6);
     }
 
     private static GraphicsPath Capsule(RectangleF r)
