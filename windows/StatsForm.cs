@@ -79,7 +79,7 @@ public sealed class StatsForm : Form
         int x = 20, w = ClientSize.Width - 40, y = 12;
 
         // Hero — time saved
-        y = Card(g, x, y, w, 92, () => { });
+        y = DrawCard(g, x, y, w, 92);
         DrawCenter(g, "Zeit gespart", new Font("Segoe UI", 9), Muted, x, 20, w);
         DrawCenter(g, Duration(d.TimeSavedSeconds), new Font("Segoe UI", 30, FontStyle.Bold), Accent, x, 34, w);
         DrawCenter(g, "gegenüber Tippen (⌀ 40 WPM)", new Font("Segoe UI", 7.5f), Color.FromArgb(120, 122, 130), x, 78, w);
@@ -89,7 +89,7 @@ public sealed class StatsForm : Form
         var items = IntentOrder.Select(k => (k, n: d.Intents.GetValueOrDefault(k))).ToArray();
         var sum = Math.Max(1, items.Sum(i => i.n));
         var top = y;
-        y = Card(g, x, y, w, 92, () => { });
+        y = DrawCard(g, x, y, w, 92);
         using (var lf = new Font("Segoe UI", 9)) g.DrawString("Was du gesagt hast", lf, new SolidBrush(Muted), x + 16, top + 12);
         var barY = top + 36; var barX = x + 16; var barW = w - 32;
         var cx = (float)barX;
@@ -144,7 +144,7 @@ public sealed class StatsForm : Form
             var maxN = Math.Max(1, projects[0].Value);
             var ptop = y;
             var ph = 28 + projects.Length * 22;
-            y = Card(g, x, y, w, ph, () => { });
+            y = DrawCard(g, x, y, w, ph);
             using (var lf = new Font("Segoe UI", 9)) g.DrawString("Top-Projekte", lf, new SolidBrush(Muted), x + 16, ptop + 10);
             var ry = ptop + 32;
             using var nf = new Font("Segoe UI", 9);
@@ -163,7 +163,7 @@ public sealed class StatsForm : Form
 
         // Cost card
         var ctop = y;
-        Card(g, x, y, w, 60, () => { });
+        DrawCard(g, x, y, w, 60);
         using (var lf = new Font("Segoe UI", 9)) g.DrawString("Google TTS diesen Monat", lf, new SolidBrush(Muted), x + 16, ctop + 12);
         using (var vf = new Font("Segoe UI", 10, FontStyle.Bold))
             g.DrawString($"{Int(total.CharsThisMonth)} / {Int(StatsData.FreeCharsPerMonth)} Zeichen frei", vf, Brushes.White, x + 16, ctop + 32);
@@ -176,7 +176,7 @@ public sealed class StatsForm : Form
     }
 
     // Draws a rounded card background at (x,y,w,h); returns y+h for the cursor.
-    private static int Card(Graphics g, int x, int y, int w, int h, Action _)
+    private static int DrawCard(Graphics g, int x, int y, int w, int h)
     {
         using var p = Round(new Rectangle(x, y, w, h), 14);
         using var b = new SolidBrush(Card);
