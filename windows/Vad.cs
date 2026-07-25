@@ -1,11 +1,15 @@
 namespace Parley;
 
-// Silence-timer VAD — direct port of the macOS SilenceVAD (same thresholds).
+// ADAPTIVE silence VAD — port of the macOS SilenceVAD. Tracks a running average of the
+// user's own speaking loudness and only ends when the level drops FAR below that average
+// (a big relative drop) and stays there for TrailingSilence — no mid-sentence cutoff.
 public sealed class Vad
 {
-    public float SpeechThresholdDb { get; init; } = -50f;
-    public double TrailingSilence { get; init; } = 0.9;
+    public double TrailingSilence { get; init; } = 1.8;
+    public float DropDb { get; init; } = 22f;
 
+    private float _speechAvgDb = -32f;
+    private bool _hasAvg;
     public bool Started { get; private set; }
     private double _silenceElapsed;
 
@@ -13,10 +17,16 @@ public sealed class Vad
 
     public Decision Process(float rmsDb, double duration)
     {
-        if (rmsDb >= SpeechThresholdDb)
+        var threshold = Math.Min(-45f, Math.Max(-70f, _speechAvgDb - DropDb));
+        if (rmsDb >= threshold)
         {
             Started = true;
             _silenceElapsed = 0;
+            if (rmsDb > -50f)   // only real speech feeds the average
+            {
+                if (_hasAvg) _speechAvgDb = _speechAvgDb * 0.95f + rmsDb * 0.05f;
+                else { _speechAvgDb = rmsDb; _hasAvg = true; }
+            }
             return Decision.Speaking;
         }
         if (!Started) return Decision.Waiting;
@@ -28,6 +38,8 @@ public sealed class Vad
     {
         Started = false;
         _silenceElapsed = 0;
+        _speechAvgDb = -32f;
+        _hasAvg = false;
     }
 
     public static float Rms(ReadOnlySpan<float> samples)

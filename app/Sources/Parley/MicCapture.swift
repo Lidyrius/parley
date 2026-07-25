@@ -12,7 +12,7 @@ final class MicCapture: @unchecked Sendable {
     // Attempt 1 uses it; the AVAudioEngine path remains the fallback (attempts 2+).
     private let auhal = AUHALInput()
     private var usingAUHAL = false
-    private var vad = SilenceVAD(speechThresholdDB: -50, trailingSilence: 0.9)
+    private var vad = SilenceVAD(trailingSilence: 1.8)
     private var samples: [Int16] = []
     private let targetRate = 16000.0
     private var onFinished: ((Data) -> Void)?
