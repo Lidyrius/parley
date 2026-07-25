@@ -30,7 +30,9 @@ actor ProjectClips {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == "pcm" } ?? []
         if let f = files.randomElement() { return try? Data(contentsOf: f) }
-        await render(label: label, slug: s, language: language, config: config)
+        // Not cached → render in the BACKGROUND (never block the turn); the announcement
+        // is skipped until ready. render() self-guards against concurrent renders.
+        Task { [weak self] in await self?.render(label: label, slug: s, language: language, config: config) }
         return nil
     }
 
