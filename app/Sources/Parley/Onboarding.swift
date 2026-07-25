@@ -20,19 +20,46 @@ private func langCode(_ l: String) -> String {
 final class OnboardingModel: ObservableObject {
     enum Step: Int, CaseIterable { case welcome, keys, voice, notify, mic, done }
     @Published var step: Step = .welcome
-    @Published var googleKey = Keychain.get(.googleAPIKey) ?? ""
-    @Published var groqKey = Keychain.get(.groqAPIKey) ?? ""
+    @Published var googleKey = Keychain.get(.googleAPIKey) ?? "" { didSet { googleCheck = .idle } }
+    @Published var groqKey = Keychain.get(.groqAPIKey) ?? "" { didSet { groqCheck = .idle } }
     @Published var language = Keychain.get(.language) ?? "Deutsch"
     @Published var voiceName = "Alnilam"        // Chirp3 HD star name
     @Published var notifyMode = AppConfig.load().notifyMode
     @Published var micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published var voices: [String] = ["Alnilam", "Aoede", "Charon", "Kore", "Puck", "Fenrir"]
 
+    enum Check: Equatable { case idle, checking, ok, fail(String) }
+    @Published var googleCheck: Check = .idle
+    @Published var groqCheck: Check = .idle
+
     var totalSteps: Int { Step.allCases.count }
     var canContinue: Bool {
         switch step {
-        case .keys: return !googleKey.isEmpty && !groqKey.isEmpty
+        case .keys: return googleCheck == .ok && groqCheck == .ok   // must verify to proceed
         default: return true
+        }
+    }
+
+    func openGoogleConsole() {
+        NSWorkspace.shared.open(URL(string: "https://console.cloud.google.com/apis/library/texttospeech.googleapis.com")!)
+    }
+    func openGroqConsole() {
+        NSWorkspace.shared.open(URL(string: "https://console.groq.com/keys")!)
+    }
+
+    /// Verify both keys with a tiny live request; updates the per-key status.
+    func checkKeys() {
+        googleCheck = googleKey.isEmpty ? .fail("kein Schlüssel") : .checking
+        groqCheck = groqKey.isEmpty ? .fail("kein Schlüssel") : .checking
+        let voice = "\(langCode(language))-Chirp3-HD-\(voiceName)"
+        Task { [googleKey, groqKey] in
+            async let g = Validation.google(googleKey, voice: voice)
+            async let q = Validation.groq(groqKey)
+            let (gc, qc) = await (g, q)
+            await MainActor.run {
+                self.googleCheck = gc; self.groqCheck = qc
+                if gc == .ok { self.loadVoices() }
+            }
         }
     }
 
@@ -111,13 +138,16 @@ struct OnboardingView: View {
             hero("waveform", "Willkommen bei Parley",
                  "Deine Sprachschicht für Claude Code. Am Ende jeder Antwort spricht Parley die Zusammenfassung, hört deine Antwort und speist sie zurück — freihändig, im Charakter eines ruhigen Butlers.")
         case .keys:
-            VStack(spacing: 20) {
-                hero("key.fill", "API-Schlüssel", "Beide sind praktisch kostenlos.")
-                VStack(alignment: .leading, spacing: 14) {
-                    field("Google Cloud TTS", "console.cloud.google.com → Cloud Text-to-Speech aktivieren → API-Key. 1 Mio Zeichen/Monat gratis.",
-                          text: $m.googleKey, onCommit: m.loadVoices)
-                    field("Groq", "console.groq.com → API Keys → Create. Kostenloser Developer-Key.", text: $m.groqKey)
+            VStack(spacing: 18) {
+                hero("key.fill", "API-Schlüssel", "Beide sind praktisch kostenlos. Öffne die Konsole, erstelle den Schlüssel, füge ihn ein — und prüfe.")
+                VStack(alignment: .leading, spacing: 16) {
+                    keyField("Google Cloud TTS", "1 Mio Zeichen/Monat gratis", text: $m.googleKey,
+                             check: m.googleCheck, open: m.openGoogleConsole)
+                    keyField("Groq", "kostenloser Developer-Key", text: $m.groqKey,
+                             check: m.groqCheck, open: m.openGroqConsole)
                 }
+                Button(checking ? "Prüfe…" : "Schlüssel prüfen") { m.checkKeys() }
+                    .buttonStyle(SecondaryButton()).disabled(checking)
             }
         case .voice:
             VStack(spacing: 20) {
@@ -178,11 +208,28 @@ struct OnboardingView: View {
         }
     }
 
-    private func field(_ label: String, _ hint: String, text: Binding<String>, onCommit: @escaping () -> Void = {}) -> some View {
+    private var checking: Bool { m.googleCheck == .checking || m.groqCheck == .checking }
+
+    private func keyField(_ label: String, _ hint: String, text: Binding<String>,
+                          check: OnboardingModel.Check, open: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(label).font(.system(size: 13, weight: .semibold))
-            SecureField("", text: text).textFieldStyle(.roundedBorder).onSubmit(onCommit)
-            Text(hint).font(.system(size: 11)).foregroundStyle(.tertiary)
+            HStack {
+                Text(label).font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Button(action: open) {
+                    Label("Konsole öffnen", systemImage: "arrow.up.right.square")
+                        .font(.system(size: 11))
+                }.buttonStyle(.link)
+            }
+            SecureField("", text: text).textFieldStyle(.roundedBorder).onSubmit { m.checkKeys() }
+            HStack(spacing: 5) {
+                switch check {
+                case .idle: Text(hint).font(.system(size: 11)).foregroundStyle(.tertiary)
+                case .checking: ProgressView().controlSize(.small); Text("prüfe…").font(.system(size: 11)).foregroundStyle(.secondary)
+                case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green); Text("gültig").font(.system(size: 11)).foregroundStyle(.green)
+                case .fail(let why): Image(systemName: "xmark.circle.fill").foregroundStyle(.red); Text(why).font(.system(size: 11)).foregroundStyle(.red)
+                }
+            }
         }
     }
 
@@ -268,5 +315,34 @@ final class OnboardingPresenter {
         window = w
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+// Live key verification for onboarding — a tiny request each; maps to OnboardingModel.Check.
+enum Validation {
+    static func google(_ key: String, voice: String) async -> OnboardingModel.Check {
+        guard !key.isEmpty else { return .fail("kein Schlüssel") }
+        let req = GoogleTTS.request(text: "Hallo", apiKey: key, voice: voice)
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            let c = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            if c == 200 { return .ok }
+            if c == 403 { return .fail("HTTP 403 — API aktiviert?") }
+            if c == 400 { return .fail("HTTP 400 — Schlüssel/Stimme?") }
+            return .fail("HTTP \(c)")
+        } catch { return .fail("Netzwerkfehler") }
+    }
+
+    static func groq(_ key: String) async -> OnboardingModel.Check {
+        guard !key.isEmpty else { return .fail("kein Schlüssel") }
+        var req = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/models")!)
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            let c = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            if c == 200 { return .ok }
+            if c == 401 { return .fail("HTTP 401 — Schlüssel ungültig") }
+            return .fail("HTTP \(c)")
+        } catch { return .fail("Netzwerkfehler") }
     }
 }

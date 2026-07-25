@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Text.Json;
 
@@ -40,6 +41,10 @@ public sealed class OnboardingForm : Form
     private readonly ComboBox _lang = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat };
     private readonly ComboBox _voice = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat };
     private string _notifyMode = "pill";
+    private readonly Label _googleStatus = new() { AutoSize = true, BackColor = Bg, Font = new Font("Segoe UI", 8.5f) };
+    private readonly Label _groqStatus = new() { AutoSize = true, BackColor = Bg, Font = new Font("Segoe UI", 8.5f) };
+    private readonly RoundButton _check = new() { Text = "Schlüssel prüfen", Fill = Color.FromArgb(52, 52, 58), Width = 180, Height = 34 };
+    private bool _googleOk, _groqOk;
 
     public OnboardingForm()
     {
@@ -69,6 +74,9 @@ public sealed class OnboardingForm : Form
         _back.Location = new Point(40, ClientSize.Height - 58);
         _next.Location = new Point(ClientSize.Width - 40 - _next.Width, ClientSize.Height - 58);
 
+        _check.Click += async (_, _) => await CheckKeysAsync();
+        _google.TextChanged += (_, _) => { _googleOk = false; _next.Enabled = false; };
+        _groq.TextChanged += (_, _) => { _groqOk = false; _next.Enabled = false; };
         _back.Click += (_, _) => { if (_step > 0) { _step--; Render(); } };
         _next.Click += (_, _) =>
         {
@@ -112,15 +120,19 @@ public sealed class OnboardingForm : Form
         _sub.Text = Steps[_step].sub;
         _back.Visible = _step > 0;
         _next.Text = _step == Steps.Length - 1 ? "Los geht's" : "Weiter";
-        _next.Enabled = !(_step == 1 && (_google.Text.Trim().Length == 0 || _groq.Text.Trim().Length == 0));
+        _next.Enabled = _step != 1 || (_googleOk && _groqOk);   // step 1 requires verified keys
         Invalidate();
 
         _content.Controls.Clear();
         switch (_step)
         {
             case 1:
-                AddField(0, "Google Cloud TTS API-Key", "console.cloud.google.com · 1 Mio Zeichen/Monat gratis", _google);
-                AddField(74, "Groq API-Key", "console.groq.com · kostenloser Developer-Key", _groq);
+                AddKeyField(0, "Google Cloud TTS API-Key", "1 Mio Zeichen/Monat gratis", _google, _googleStatus,
+                    "https://console.cloud.google.com/apis/library/texttospeech.googleapis.com");
+                AddKeyField(96, "Groq API-Key", "kostenloser Developer-Key", _groq, _groqStatus,
+                    "https://console.groq.com/keys");
+                _check.Left = (_content.Width - _check.Width) / 2; _check.Top = 196;
+                _content.Controls.Add(_check);
                 break;
             case 2:
                 AddInput(10, "Sprache", _lang);
@@ -134,12 +146,35 @@ public sealed class OnboardingForm : Form
         }
     }
 
-    private void AddField(int y, string label, string hint, Control input)
+    private void AddKeyField(int y, string label, string hint, Control input, Label status, string consoleUrl)
     {
-        input.Left = (_content.Width - input.Width) / 2; input.Top = y + 22;
-        _content.Controls.Add(new Label { Text = label, ForeColor = Color.White, BackColor = Bg, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), AutoSize = true, Left = input.Left, Top = y });
+        var x = (_content.Width - input.Width) / 2;
+        input.Left = x; input.Top = y + 22;
+        _content.Controls.Add(new Label { Text = label, ForeColor = Color.White, BackColor = Bg, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), AutoSize = true, Left = x, Top = y });
+        var link = new LinkLabel { Text = "Konsole öffnen ↗", AutoSize = true, BackColor = Bg, LinkColor = Color.FromArgb(90, 160, 255), Font = new Font("Segoe UI", 8.5f), Top = y + 1 };
+        link.Left = x + input.Width - 110;
+        link.LinkClicked += (_, _) => { try { Process.Start(new ProcessStartInfo(consoleUrl) { UseShellExecute = true }); } catch { } };
+        _content.Controls.Add(link);
         _content.Controls.Add(input);
-        _content.Controls.Add(new Label { Text = hint, ForeColor = Muted, BackColor = Bg, Font = new Font("Segoe UI", 8.5f), AutoSize = true, Left = input.Left, Top = y + 48 });
+        status.Left = x; status.Top = y + 48; status.Text = hint; status.ForeColor = Muted;
+        _content.Controls.Add(status);
+    }
+
+    private async Task CheckKeysAsync()
+    {
+        _check.Enabled = false; _check.Text = "Prüfe…";
+        _googleStatus.Text = "prüfe…"; _googleStatus.ForeColor = Muted;
+        _groqStatus.Text = "prüfe…"; _groqStatus.ForeColor = Muted;
+        var lang = _lang.SelectedItem?.ToString() ?? "Deutsch";
+        var code = lang switch { "English" => "en-US", "Français" => "fr-FR", "Español" => "es-ES", "Italiano" => "it-IT", "Nederlands" => "nl-NL", _ => "de-DE" };
+        var voice = $"{code}-Chirp3-HD-{_voice.SelectedItem ?? "Alnilam"}";
+        var g = await KeyCheck.Google(_google.Text.Trim(), voice);
+        var q = await KeyCheck.Groq(_groq.Text.Trim());
+        _googleOk = g.ok; _groqOk = q.ok;
+        _googleStatus.Text = g.msg; _googleStatus.ForeColor = g.ok ? Color.FromArgb(70, 200, 120) : Color.FromArgb(230, 90, 90);
+        _groqStatus.Text = q.msg; _groqStatus.ForeColor = q.ok ? Color.FromArgb(70, 200, 120) : Color.FromArgb(230, 90, 90);
+        _check.Enabled = true; _check.Text = "Schlüssel prüfen";
+        _next.Enabled = _googleOk && _groqOk;
     }
 
     private void AddInput(int y, string label, Control input)
