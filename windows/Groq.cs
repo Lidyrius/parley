@@ -92,4 +92,53 @@ public static class Groq
         }
         catch { return Intent.Other; }
     }
+
+    public readonly record struct ControlResult(bool Resume, string Target, string Instruction);
+
+    // Detects whether a spoken reply is a Parley CONTROL command (resume a paused project
+    // by voice) rather than a normal reply. Only called when paused sessions exist.
+    public static async Task<ControlResult?> DetectControlCommand(string text, IReadOnlyList<string> labels, Config config)
+    {
+        if (!config.SttReady || text.Length == 0 || labels.Count == 0) return null;
+        var sys =
+            "You route a spoken utterance in a voice coding assistant. Some projects are PAUSED " +
+            "and can be resumed by voice. Paused projects: " + string.Join(", ", labels) + ". " +
+            "If the user asks to RESUME / continue / wake / pick up one of these PAUSED projects, " +
+            "reply with JSON {\"resume\":true,\"target\":\"<exact paused project name from the list>\"," +
+            "\"instruction\":\"<what they want that project to do next, or empty string>\"}. The target " +
+            "MUST be one of the paused project names. If the utterance is just a normal reply to the " +
+            "CURRENT session and not about resuming a paused project, reply " +
+            "{\"resume\":false,\"target\":\"\",\"instruction\":\"\"}. Output ONLY the JSON object.";
+        try
+        {
+            var payload = new
+            {
+                model = "llama-3.3-70b-versatile",
+                temperature = 0,
+                max_tokens = 160,
+                response_format = new { type = "json_object" },
+                messages = new object[]
+                {
+                    new { role = "system", content = sys },
+                    new { role = "user", content = text },
+                },
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post,
+                "https://api.groq.com/openai/v1/chat/completions");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.GroqKey);
+            req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            using var resp = await Http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return null;
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var content = doc.RootElement.GetProperty("choices")[0]
+                .GetProperty("message").GetProperty("content").GetString() ?? "";
+            using var inner = JsonDocument.Parse(content);
+            var root = inner.RootElement;
+            return new ControlResult(
+                root.TryGetProperty("resume", out var r) && r.ValueKind == JsonValueKind.True,
+                root.TryGetProperty("target", out var t) ? t.GetString() ?? "" : "",
+                root.TryGetProperty("instruction", out var i) ? i.GetString() ?? "" : "");
+        }
+        catch { return null; }
+    }
 }

@@ -29,6 +29,20 @@ struct MenuBarView: View {
                     }
                 }
 
+                if !controller.parked.isEmpty {
+                    Divider()
+                    Text("Pausiert — zum Fortsetzen").font(.caption).foregroundStyle(.secondary)
+                    ForEach(controller.parked) { p in
+                        HStack {
+                            Circle().fill(.purple).frame(width: 8, height: 8)
+                            Text(p.label).font(.callout)
+                            Spacer()
+                            Button("Fortsetzen") { controller.resume(p.id) }
+                                .controlSize(.small)
+                        }
+                    }
+                }
+
                 if let err = controller.lastError {
                     Text(err).font(.caption2).foregroundStyle(.red).lineLimit(2)
                 }
@@ -74,6 +88,7 @@ struct MenuBarView: View {
         case "transcribing": return .orange
         case "ready": return .teal
         case "queued": return .yellow
+        case "paused": return .purple
         case "muted": return .gray
         default: return .secondary
         }

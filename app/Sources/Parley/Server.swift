@@ -21,14 +21,23 @@ final class ControlServer: @unchecked Sendable {
     var onTurn: ((TurnPayload) -> Void)?
     var onReady: ((ReadyPayload) -> Void)?
     var onQueued: ((TurnPayload) -> Void)?   // a turn parked behind the active one
+    var onParked: (([ParkedInfo]) -> Void)?  // list of resumable (paused) sessions changed
     // The pipeline: speak + record + transcribe, then call the completion with the
-    // transcribed reply ("" ends the conversation). If nil, /turn answers empty.
-    var replyProvider: ((TurnPayload, @escaping (String) -> Void) -> Void)?
+    // transcribed reply. `park` keeps the session alive & resumable (see /wake). If nil,
+    // /turn answers empty.
+    var replyProvider: ((TurnPayload, @escaping (TurnReply) -> Void) -> Void)?
 
     // Serialize turns: only one is spoken/recorded at a time. Others wait (their hook
     // connections stay open) and drain FIFO.
-    private var replyQueue: [(TurnPayload, (String) -> Void)] = []
+    private var replyQueue: [(TurnPayload, (TurnReply) -> Void)] = []
     private var replyActive = false
+
+    // Parked (paused-but-resumable) sessions. Their Stop hook short-polls /wake; we hand
+    // back a pending instruction to wake them — no keystrokes needed. Keyed by route key.
+    private struct Parked { var label: String; var project: String; var cwd: String; var pending: String?; var lastSeen: Date }
+    private var parked: [String: Parked] = [:]
+
+    static func routeKey(pane: String, session: String) -> String { pane.isEmpty ? session : pane }
 
     init(port: UInt16 = 8787) {
         self.port = NWEndpoint.Port(rawValue: port)!
@@ -76,14 +85,64 @@ final class ControlServer: @unchecked Sendable {
                 send(400, #"{"ok":false,"error":"bad turn payload"}"#, on: conn)
                 return
             }
-            enqueueReply(turn) { [weak self] transcript in
-                self?.send(200, Self.transcriptJSON(transcript), on: conn)
+            enqueueReply(turn) { [weak self] reply in
+                self?.send(200, Self.turnJSON(reply), on: conn)
             }
+            return
+        }
+        // /wake — a parked session's Stop hook short-polls this. Answer immediately with
+        // any pending resume instruction (consuming it), else empty; either way (re)register
+        // so the session stays listed as resumable.
+        if req.method == "POST", req.path == "/wake" {
+            let turn = Contract.decodeTurn(req.body)
+            let key = Self.routeKey(pane: turn?.tmux_pane ?? "", session: turn?.session_id ?? "")
+            var p = parked[key] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date())
+            p.label = turn?.spokenLabel ?? p.label
+            p.project = turn?.project ?? p.project
+            p.cwd = turn?.cwd ?? p.cwd
+            p.lastSeen = Date()
+            let pending = p.pending
+            p.pending = nil
+            parked[key] = p
+            pruneParked()
+            notifyParked()
+            send(200, Self.turnJSON(TurnReply(transcript: pending ?? "", park: false)), on: conn)
             return
         }
         let (status, json) = handle(req)
         send(status, json, on: conn)
     }
+
+    // MARK: - parked-session control (called from AppController)
+
+    // Queue an instruction for a parked session; its next /wake poll (≤3s) picks it up and
+    // injects it as the next turn, resuming the session. No-op if the id is unknown.
+    func wake(id: String, instruction: String) {
+        queue.async {
+            guard var p = self.parked[id] else { return }
+            p.pending = instruction
+            p.lastSeen = Date()
+            self.parked[id] = p
+        }
+    }
+
+    func parkedList() -> [ParkedInfo] {
+        queue.sync { livingParked() }
+    }
+
+    private func livingParked() -> [ParkedInfo] {
+        let cutoff = Date().addingTimeInterval(-90)
+        return parked.filter { $0.value.lastSeen > cutoff }
+            .map { ParkedInfo(id: $0.key, label: $0.value.label, project: $0.value.project) }
+            .sorted { $0.label < $1.label }
+    }
+
+    private func pruneParked() {
+        let cutoff = Date().addingTimeInterval(-90)
+        parked = parked.filter { $0.value.lastSeen > cutoff }
+    }
+
+    private func notifyParked() { onParked?(livingParked()) }
 
     private func send(_ status: Int, _ json: String, on conn: NWConnection) {
         let data = HTTPParse.response(status: status, json: json)
@@ -92,7 +151,7 @@ final class ControlServer: @unchecked Sendable {
 
     // MARK: - turn serialization
 
-    private func enqueueReply(_ turn: TurnPayload, _ respond: @escaping (String) -> Void) {
+    private func enqueueReply(_ turn: TurnPayload, _ respond: @escaping (TurnReply) -> Void) {
         replyQueue.append((turn, respond))
         if replyActive { onQueued?(turn) }   // parked behind an in-flight turn → show as waiting
         pumpReplies()
@@ -103,25 +162,30 @@ final class ControlServer: @unchecked Sendable {
         guard let provider = replyProvider else {
             // No pipeline wired — answer everything empty so hooks don't hang.
             let waiting = replyQueue; replyQueue.removeAll()
-            for (_, respond) in waiting { respond("") }
+            for (_, respond) in waiting { respond(TurnReply(transcript: "", park: false)) }
             return
         }
         replyActive = true
         let (turn, respond) = replyQueue.removeFirst()
         onTurn?(turn)
-        provider(turn) { [weak self] transcript in
+        provider(turn) { [weak self] reply in
             guard let self else { return }
             self.queue.async {
-                respond(transcript)
+                respond(reply)
                 self.replyActive = false
                 self.pumpReplies()
             }
         }
     }
 
-    private static func transcriptJSON(_ text: String) -> String {
-        let data = try? JSONEncoder().encode(["transcript": text])
-        return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"transcript":""}"#
+    private static func turnJSON(_ reply: TurnReply) -> String {
+        let esc = reply.transcript
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        struct Wire: Encodable { let transcript: String; let park: Bool }
+        let data = try? JSONEncoder().encode(Wire(transcript: reply.transcript, park: reply.park))
+        return data.flatMap { String(data: $0, encoding: .utf8) }
+            ?? #"{"transcript":"\#(esc)","park":\#(reply.park)}"#
     }
 
     // MARK: - synchronous routes (also unit-tested directly)

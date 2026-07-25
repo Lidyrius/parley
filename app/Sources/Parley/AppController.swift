@@ -17,6 +17,7 @@ struct SessionInfo: Identifiable, Equatable {
 @MainActor
 final class AppController: ObservableObject {
     @Published var sessions: [SessionInfo] = []
+    @Published var parked: [ParkedInfo] = []   // paused-but-resumable sessions (see /wake)
     @Published var lastError: String?
     @Published var muted = false   // manual mute toggle (menu)
 
@@ -56,12 +57,14 @@ final class AppController: ObservableObject {
                 Notifier.notify(title: "Parley", body: "Projekt \(turn.spokenLabel) wartet auf Antwort")
             }
         }
+        server.onParked = { [weak self] list in
+            Task { @MainActor in self?.parked = list }
+        }
         // The long-poll pipeline: speak → record → transcribe → return the reply text,
         // which the hook feeds back into the Claude session (terminal-agnostic).
         server.replyProvider = { [weak self] turn, done in
             Task { @MainActor in
-                let transcript = await self?.runTurn(turn) ?? ""
-                done(transcript)
+                done(await self?.runTurn(turn) ?? TurnReply(transcript: "", park: false))
             }
         }
         server.start()
@@ -84,7 +87,7 @@ final class AppController: ObservableObject {
     // Returns the transcribed voice reply ("" = user said nothing → end conversation).
     // The server hands this back to the blocking Stop hook, which injects it into the
     // Claude session. No terminal/tmux coupling.
-    private func runTurn(_ turn: TurnPayload) async -> String {
+    private func runTurn(_ turn: TurnPayload) async -> TurnReply {
         let key = routeKey(turn.tmux_pane, turn.session_id)
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
         let config = AppConfig.load()
@@ -99,7 +102,7 @@ final class AppController: ObservableObject {
             // Stumm: nicht sprechen, aber die Zusammenfassung als Notification zeigen, damit
             // du mitbekommst, dass der Turn fertig ist — auch ohne dass ich rede.
             Notifier.notify(title: "Parley · \(turn.spokenLabel)", body: turn.speak)
-            return ""
+            return TurnReply(transcript: "", park: false)
         }
 
         // Kick off Google TTS synthesis IMMEDIATELY — it runs in parallel with everything
@@ -157,18 +160,35 @@ final class AppController: ObservableObject {
             // dich, falls du weg bist und die Ansage verpasst.
             Notifier.notify(title: "Parley · \(turn.spokenLabel)", body: turn.speak)
             Log.write("turn end (speak-only)")
-            return ""
+            return TurnReply(transcript: "", park: false)
         }
 
-        setStatus(key, "listening")
-        Log.write("record start")
-        let wav = await record()
-        Log.write("record done bytes=\(wav.count)")
+        // Record → transcribe. If the reply is actually a CONTROL command (resume a paused
+        // project by voice) it's handled here and we re-record for THIS session's real
+        // answer — the current question still stands. Capped so it can't loop forever.
+        var wav = Data()
+        var text = ""
+        for hop in 0..<4 {
+            setStatus(key, "listening")
+            Log.write("record start")
+            wav = await record()
+            Log.write("record done bytes=\(wav.count)")
 
-        setStatus(key, "transcribing")
-        Log.write("transcribe start")
-        let text = await transcribe(wav, config: config)
-        Log.write("transcribe done chars=\(text.count)")
+            setStatus(key, "transcribing")
+            text = await transcribe(wav, config: config)
+            Log.write("transcribe done chars=\(text.count)")
+
+            guard !text.isEmpty, !parked.isEmpty, hop < 3,
+                  let cmd = await ControlCommand.detect(text, labels: parked.map { $0.label }, config: config),
+                  cmd.resume, let target = matchParked(cmd.target) else { break }
+
+            let instruction = cmd.instruction.isEmpty ? "Wir machen weiter." : cmd.instruction
+            server.wake(id: target.id, instruction: instruction)
+            Log.write("control: resume \(target.label) → \"\(instruction)\"")
+            await speakAndBeep("Verstanden, Sir — ich nehme \(target.label) wieder auf. Und für dieses Projekt?",
+                               config: config, beep: true)
+            // loop: listen again for the current session's actual reply
+        }
 
         // Classify (fast, ~0.3 s) — needed for the ack clip, stats and the STOP decision.
         let intent = text.isEmpty ? .other : await classify(text, config: config)
@@ -191,14 +211,34 @@ final class AppController: ObservableObject {
 
         // "Stop heißt Stop": a STOP reply is NOT fed back. The STOP ack clip still plays
         // (background) as the sign-off; returning "" makes the hook exit cleanly.
+        // "Stop heißt Stop" — the reply isn't fed back. But the session PARKS instead of
+        // ending, so it stays resumable by voice/menu. Likewise a silent turn parks.
         if intent == .stop {
-            setStatus(key, "idle")
-            Log.write("turn end (stop → conversation ends)")
-            return ""
+            setStatus(key, "paused")
+            Log.write("turn end (stop → parked, resumable)")
+            return TurnReply(transcript: "", park: true)
         }
-        setStatus(key, text.isEmpty ? "idle" : "sent")
+        if text.isEmpty {
+            setStatus(key, "paused")
+            Log.write("turn end (silence → parked, resumable)")
+            return TurnReply(transcript: "", park: true)
+        }
+        setStatus(key, "sent")
         Log.write("turn end")
-        return text
+        return TurnReply(transcript: text, park: false)
+    }
+
+    // Resume a parked session from the menu (mouse fallback for the voice command).
+    func resume(_ id: String) { server.wake(id: id, instruction: "Wir machen weiter.") }
+
+    // Fuzzy-match a spoken project name to a parked session (either contains the other).
+    private func matchParked(_ spoken: String) -> ParkedInfo? {
+        let t = spoken.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        return parked.first { p in
+            let l = p.label.lowercased()
+            return l == t || l.contains(t) || t.contains(l)
+        }
     }
 
     private var ackTask: Task<Void, Never>?

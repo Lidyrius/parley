@@ -27,11 +27,15 @@ internal sealed class TrayApp : ApplicationContext
         _ = _pill.Handle;   // create the handle on the UI thread so BeginInvoke works
 
         Server? serverRef = null;
-        _pipeline = new TurnPipeline(() => serverRef?.QueuedTurns ?? 0, _pill);
+        _pipeline = new TurnPipeline(() => serverRef?.QueuedTurns ?? 0, _pill,
+            () => serverRef?.ParkedList() ?? new List<Server.ParkedInfo>(),
+            (id, instr) => serverRef?.Wake(id, instr));
         _server = new Server(turn => _pipeline.Run(turn), () => StatsStore.StartSession());
         serverRef = _server;
 
         var menu = new ContextMenuStrip();
+        // Parked (paused-but-resumable) sessions are inserted at the top on open.
+        menu.Opening += (_, _) => RefreshParkedMenu(menu);
         var mute = new ToolStripMenuItem("Stumm schalten") { CheckOnClick = true };
         mute.CheckedChanged += (_, _) =>
         {
@@ -87,6 +91,24 @@ internal sealed class TrayApp : ApplicationContext
             Log.Write($"server start failed: {e.Message}");
             MessageBox.Show($"Parley konnte Port 8787 nicht öffnen: {e.Message}", "Parley");
         }
+    }
+
+    // Rebuild the dynamic "▶ <project> fortsetzen" items (mouse fallback for the voice
+    // resume command) at the top of the tray menu each time it opens.
+    private void RefreshParkedMenu(ContextMenuStrip menu)
+    {
+        for (var i = menu.Items.Count - 1; i >= 0; i--)
+            if (menu.Items[i].Tag as string == "parked") menu.Items.RemoveAt(i);
+        var list = _server.ParkedList();
+        var idx = 0;
+        foreach (var p in list)
+        {
+            var item = new ToolStripMenuItem($"▶ {p.Label} fortsetzen") { Tag = "parked" };
+            var id = p.Id;
+            item.Click += (_, _) => _server.Wake(id, "Wir machen weiter.");
+            menu.Items.Insert(idx++, item);
+        }
+        if (list.Count > 0) menu.Items.Insert(idx, new ToolStripSeparator { Tag = "parked" });
     }
 
     private void TestRecordingPill()

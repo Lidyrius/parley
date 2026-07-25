@@ -83,11 +83,34 @@ resp="$(curl -sS --max-time 3600 -X POST "http://${HOST}:${PORT}/turn" \
 
 transcript="$(printf '%s' "$resp" | jq -r '.transcript // ""' 2>/dev/null || true)"
 transcript="$(printf '%s' "$transcript" | perl -0777 -pe 's/^\s+|\s+$//g')"
+park="$(printf '%s' "$resp" | jq -r '.park // false' 2>/dev/null || echo false)"
 
-# No reply -> let the session end.
-[ -z "$transcript" ] && exit 0
+# Feed a voice reply back into the session as the next user turn, then end this hook.
+inject() {
+  jq -n --arg r "$1" \
+    '{decision:"block", reason:$r, systemMessage:"🎙️ Parley: Sprachantwort eingespeist"}'
+  exit 0
+}
+[ -n "$transcript" ] && inject "$transcript"
 
-# Feed the voice reply back into the session as the next user turn.
-jq -n --arg r "$transcript" \
-  '{decision:"block", reason:$r, systemMessage:"🎙️ Parley: Sprachantwort eingespeist"}'
-exit 0
+# No reply. Unless the app asked to PARK this session, end normally.
+[ "$park" = "true" ] || exit 0
+
+# PARKED — the conversation is paused but stays resumable. Keep this Stop hook alive by
+# short-polling /wake: because the hook never returns, Claude Code treats the turn as
+# unfinished and the session stays live with NO keystrokes. When the user resumes it
+# (by voice from another session, or the tray/menu), /wake hands back the next
+# instruction, which we inject as the next turn. A curl failure means the app is gone ->
+# end. hooks.json timeout caps the total park window.
+wpayload="$(jq -n \
+  --arg session_id "$session_id" --arg cwd "$cwd" --arg project "$project" \
+  --arg tmux_pane "${TMUX_PANE:-}" --arg label "$label" \
+  '{session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, label:$label}')"
+while true; do
+  wresp="$(curl -fsS --max-time 20 -X POST "http://${HOST}:${PORT}/wake" \
+    -H 'Content-Type: application/json' -d "$wpayload" 2>/dev/null)" || exit 0
+  wtext="$(printf '%s' "$wresp" | jq -r '.transcript // ""' 2>/dev/null || true)"
+  wtext="$(printf '%s' "$wtext" | perl -0777 -pe 's/^\s+|\s+$//g')"
+  [ -n "$wtext" ] && inject "$wtext"
+  sleep 3
+done

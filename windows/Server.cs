@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Parley;
 
@@ -12,13 +14,23 @@ public sealed class Server
 {
     private readonly HttpListener _listener = new();
     private readonly SemaphoreSlim _turnGate = new(1, 1);   // serializes the pipeline
-    private readonly Func<TurnPayload, Task<string>> _runTurn;
+    private readonly Func<TurnPayload, Task<(string transcript, bool park)>> _runTurn;
     private readonly Action _onReady;
     private int _queued;
 
     public int QueuedTurns => Volatile.Read(ref _queued);
 
-    public Server(Func<TurnPayload, Task<string>> runTurn, Action onReady)
+    // Parked (paused-but-resumable) sessions. Their Stop hook short-polls /wake; we hand
+    // back a pending instruction to wake them — no keystrokes. Keyed by route key.
+    private sealed class Parked { public string Label = "", Project = ""; public string? Pending; public DateTime LastSeen; }
+    private readonly ConcurrentDictionary<string, Parked> _parked = new();
+    public event Action<List<ParkedInfo>>? OnParkedChanged;
+
+    public readonly record struct ParkedInfo(string Id, string Label, string Project);
+
+    private static string RouteKey(TurnPayload t) => string.IsNullOrEmpty(t.TmuxPane) ? t.SessionId : t.TmuxPane;
+
+    public Server(Func<TurnPayload, Task<(string, bool)>> runTurn, Action onReady)
     {
         _runTurn = runTurn;
         _onReady = onReady;
@@ -83,15 +95,36 @@ public sealed class Server
                 if (_turnGate.CurrentCount == 0)   // another turn is active → this one waits
                     Notifier.Notify("Parley", $"Projekt {turn.SpokenLabel} wartet auf Antwort");
                 await _turnGate.WaitAsync();   // FIFO-ish serialization; hook connection stays open
-                string transcript;
+                (string transcript, bool park) r;
                 try
                 {
                     Interlocked.Decrement(ref _queued);
-                    transcript = await _runTurn(turn);
+                    r = await _runTurn(turn);
                 }
                 finally { _turnGate.Release(); }
-                var json = JsonSerializer.Serialize(new Dictionary<string, string> { ["transcript"] = transcript });
-                await Respond(ctx, 200, json);
+                await Respond(ctx, 200, TurnJson(r.transcript, r.park));
+                return;
+            }
+
+            // /wake — a parked session's Stop hook short-polls this. Answer immediately with
+            // any pending resume instruction (consuming it), else empty; (re)register so the
+            // session stays listed as resumable.
+            if (req.HttpMethod == "POST" && path == "/wake")
+            {
+                var turn = TurnPayload.Decode(body);
+                var pending = "";
+                if (turn is not null)
+                {
+                    var key = RouteKey(turn);
+                    var p = _parked.GetOrAdd(key, _ => new Parked());
+                    p.Label = turn.SpokenLabel;
+                    p.Project = turn.Project;
+                    p.LastSeen = DateTime.UtcNow;
+                    pending = Interlocked.Exchange(ref p.Pending, null) ?? "";
+                    Prune();
+                    NotifyParked();
+                }
+                await Respond(ctx, 200, TurnJson(pending, false));
                 return;
             }
 
@@ -103,6 +136,37 @@ public sealed class Server
             try { ctx.Response.Abort(); } catch { }
         }
     }
+
+    // Queue an instruction for a parked session; its next /wake poll (≤3s) injects it as
+    // the next turn, resuming the session. No-op if the id is unknown.
+    public void Wake(string id, string instruction)
+    {
+        if (_parked.TryGetValue(id, out var p)) { p.Pending = instruction; p.LastSeen = DateTime.UtcNow; }
+    }
+
+    public List<ParkedInfo> ParkedList()
+    {
+        var cutoff = DateTime.UtcNow.AddSeconds(-90);
+        return _parked.Where(kv => kv.Value.LastSeen > cutoff)
+            .Select(kv => new ParkedInfo(kv.Key, kv.Value.Label, kv.Value.Project))
+            .OrderBy(p => p.Label).ToList();
+    }
+
+    private void Prune()
+    {
+        var cutoff = DateTime.UtcNow.AddSeconds(-90);
+        foreach (var kv in _parked.Where(kv => kv.Value.LastSeen <= cutoff).ToList())
+            _parked.TryRemove(kv.Key, out _);
+    }
+
+    private void NotifyParked() { try { OnParkedChanged?.Invoke(ParkedList()); } catch { } }
+
+    private static string TurnJson(string transcript, bool park) =>
+        JsonSerializer.Serialize(new WireReply(transcript, park));
+
+    private sealed record WireReply(
+        [property: JsonPropertyName("transcript")] string Transcript,
+        [property: JsonPropertyName("park")] bool Park);
 
     private static async Task Respond(HttpListenerContext ctx, int status, string json)
     {

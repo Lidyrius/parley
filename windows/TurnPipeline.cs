@@ -11,17 +11,22 @@ public sealed class TurnPipeline
     private readonly MicCapture _mic = new();
     private readonly Func<int> _queuedTurns;
     private readonly PillOverlay? _pill;
+    private readonly Func<List<Server.ParkedInfo>>? _parkedList;
+    private readonly Action<string, string>? _wake;
     private List<string> _pendingResume = new();
     private volatile int _resumeGen;   // bumped per turn; cancels a pending debounced resume
     private Task? _ackTask;
 
-    public TurnPipeline(Func<int> queuedTurns, PillOverlay? pill)
+    public TurnPipeline(Func<int> queuedTurns, PillOverlay? pill,
+        Func<List<Server.ParkedInfo>>? parkedList = null, Action<string, string>? wake = null)
     {
         _queuedTurns = queuedTurns;
         _pill = pill;
+        _parkedList = parkedList;
+        _wake = wake;
     }
 
-    public async Task<string> Run(TurnPayload turn)
+    public async Task<(string transcript, bool park)> Run(TurnPayload turn)
     {
         var config = Config.Load();
         SessionTracker.Touch(turn.Project);
@@ -33,7 +38,7 @@ public sealed class TurnPipeline
             Log.Write("muted → skipping turn");
             // Stumm: nicht sprechen, aber die Zusammenfassung als Notification zeigen.
             Notifier.Notify($"Parley · {turn.SpokenLabel}", turn.Speak);
-            return "";
+            return ("", false);
         }
 
         // Prefetch the sentence synthesis immediately; observed duration feeds TtsTiming.
@@ -84,24 +89,43 @@ public sealed class TurnPipeline
             // Ich melde mich selbst zurück — Notification fängt dich, falls du weg bist.
             Notifier.Notify($"Parley · {turn.SpokenLabel}", turn.Speak);
             Log.Write("turn end (speak-only)");
-            return "";
+            return ("", false);
         }
 
-        await AudioOut.PlayBeep();
-        await Task.Delay(100);
-
-        Log.Write("record start");
-        ShowPill(true);
-        _mic.OnLevel = level => _pill?.BeginInvoke(() => _pill.Push(level));
-        var wav = await _mic.Record();
-        _mic.OnLevel = null;
-        ShowPill(false);
-        Log.Write($"record done bytes={wav.Length}");
-
-        // Too little audio → skip Groq (it rejects near-empty files), end cleanly.
+        // Record → transcribe. A CONTROL command (resume a paused project by voice) is
+        // handled here and we re-record for THIS session's real answer. Capped to 4 hops.
         var minBytes = 44 + 16000 * 2 / 5;   // header + ~0.2s
-        var text = wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
-        Log.Write($"transcribe done chars={text.Length}");
+        byte[] wav = Array.Empty<byte>();
+        var text = "";
+        for (var hop = 0; hop < 4; hop++)
+        {
+            await AudioOut.PlayBeep();
+            await Task.Delay(100);
+
+            Log.Write("record start");
+            ShowPill(true);
+            _mic.OnLevel = level => _pill?.BeginInvoke(() => _pill.Push(level));
+            wav = await _mic.Record();
+            _mic.OnLevel = null;
+            ShowPill(false);
+            Log.Write($"record done bytes={wav.Length}");
+
+            text = wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
+            Log.Write($"transcribe done chars={text.Length}");
+
+            var parked = _parkedList?.Invoke() ?? new List<Server.ParkedInfo>();
+            if (text.Length == 0 || parked.Count == 0 || hop >= 3) break;
+            var cmd = await Groq.DetectControlCommand(text, parked.Select(p => p.Label).ToList(), config);
+            if (cmd is not { Resume: true }) break;
+            var target = MatchParked(cmd.Value.Target, parked);
+            if (target is null) break;
+
+            var instruction = string.IsNullOrWhiteSpace(cmd.Value.Instruction) ? "Wir machen weiter." : cmd.Value.Instruction;
+            _wake?.Invoke(target.Value.Id, instruction);
+            Log.Write($"control: resume {target.Value.Label} → \"{instruction}\"");
+            await SpeakLine($"Verstanden, Sir — ich nehme {target.Value.Label} wieder auf. Und für dieses Projekt?", config);
+            // loop: listen again for the current session's actual reply
+        }
 
         var intent = text.Length == 0 ? Groq.Intent.Other : await Groq.Classify(text, config);
         Log.Write($"classified: {intent}");
@@ -126,13 +150,40 @@ public sealed class TurnPipeline
             ScheduleResume();
         });
 
+        // "Stop heißt Stop" — reply isn't fed back, but the session PARKS (stays resumable
+        // by voice/tray) instead of ending. A silent turn parks too.
         if (intent == Groq.Intent.Stop)
         {
-            Log.Write("turn end (stop → conversation ends)");
-            return "";
+            Log.Write("turn end (stop → parked, resumable)");
+            return ("", true);
+        }
+        if (text.Length == 0)
+        {
+            Log.Write("turn end (silence → parked, resumable)");
+            return ("", true);
         }
         Log.Write("turn end");
-        return text;
+        return (text, false);
+    }
+
+    // Speak a short dynamic line (no mic) — used to confirm a resume before re-listening.
+    private static async Task SpeakLine(string text, Config config)
+    {
+        var pcm = await GoogleTts.Synthesize(text, config);
+        if (pcm is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate));
+    }
+
+    // Fuzzy-match a spoken project name to a parked session (either contains the other).
+    private static Server.ParkedInfo? MatchParked(string spoken, List<Server.ParkedInfo> parked)
+    {
+        var t = spoken.Trim().ToLowerInvariant();
+        if (t.Length == 0) return null;
+        foreach (var p in parked)
+        {
+            var l = p.Label.ToLowerInvariant();
+            if (l == t || l.Contains(t) || t.Contains(l)) return p;
+        }
+        return null;
     }
 
     private void ShowPill(bool show)
