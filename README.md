@@ -10,40 +10,25 @@ your shell.
 
 ## Install
 
-**Recommended — let Claude Code install it for you.** Paste this prompt into any Claude Code session; it guides you to the two API keys (both effectively **free**) and sets everything up:
-
-> Install Parley (github.com/Lidyrius/parley), a voice layer for Claude Code, on this Mac:
-> 1. First walk me through getting the two API keys — both are basically free:
->    - **Groq** (speech-to-text, free developer tier — no payment needed): guide me step by step: console.groq.com → sign in → API Keys → Create API Key.
->    - **Google Cloud Text-to-Speech** (the voice, first **1 million characters/month free**): guide me step by step: console.cloud.google.com → create or select a project → search "Cloud Text-to-Speech API" → Enable → APIs & Services → Credentials → Create credentials → API key.
-> 2. Ask me for both keys, my spoken language, and my preferred Chirp3-HD voice (default: Alnilam).
-> 3. Write them to `~/Library/Application Support/Parley/credentials.json` (chmod 600) as JSON with keys `googleAPIKey`, `groqAPIKey`, `language` (e.g. "Deutsch"), `googleVoice` (e.g. "de-DE-Chirp3-HD-Alnilam").
-> 4. Then run `curl -fsSL https://raw.githubusercontent.com/Lidyrius/parley/main/install.sh | bash` — it detects the credentials, skips the interactive onboarding, downloads the prebuilt app and renders my voice clips.
-> 5. Finally tell me to start a **new** Claude Code session and type `/parley:voice`.
-
-**Or by hand — one command** (a short terminal onboarding asks for the keys):
+**macOS — one command:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lidyrius/parley/main/install.sh | bash
 ```
 
-Re-running the same command later **updates** Parley in place — keys, settings and statistics are kept.
-
-**Windows** (beta — tray app, same voice loop; works with Claude Code in Git Bash and WSL):
+**Windows — one command** (PowerShell; tray app, works with Claude Code in Git Bash and WSL):
 
 ```powershell
 irm https://raw.githubusercontent.com/Lidyrius/parley/main/windows/install.ps1 | iex
 ```
 
-Or paste this prompt into Claude Code on Windows:
+On first launch Parley opens a **setup window** that guides you through the two API keys
+(both effectively **free** — Groq's dev tier and Google Cloud TTS's 1M chars/month), with
+a button to open each console and a live key check, then language, voice and notification
+style. When it's done, start a **new** Claude Code session and type `/parley:voice`.
 
-> Install Parley (github.com/Lidyrius/parley), a voice layer for Claude Code, on this Windows PC:
-> 1. Walk me through getting the two API keys (both basically free): **Groq** — console.groq.com → API Keys → Create (free developer tier). **Google Cloud Text-to-Speech** — console.cloud.google.com → enable "Cloud Text-to-Speech API" → Credentials → API key (first 1M chars/month free).
-> 2. Ask me for both keys and my spoken language.
-> 3. Write them to `%APPDATA%\Parley\credentials.json` as JSON with keys `googleAPIKey`, `groqAPIKey`, `language` (e.g. "Deutsch"), `googleVoice` (e.g. "de-DE-Chirp3-HD-Alnilam").
-> 4. Run in PowerShell: `irm https://raw.githubusercontent.com/Lidyrius/parley/main/windows/install.ps1 | iex` — it detects the credentials and skips its own onboarding.
-> 5. If I use Claude Code in WSL, also run the WSL setup line the installer prints.
-> 6. Tell me to start a **new** Claude Code session and type `/parley:voice`.
+Re-running the install command later **updates** Parley in place — keys, settings and
+statistics are kept.
 
 ---
 
@@ -97,11 +82,11 @@ On the first real turn, grant **Microphone**. No Accessibility needed (media pau
 3. Work as usual. When a turn finishes, Parley speaks the summary and listens.
 4. Reply by voice; stop talking and it's injected back automatically.
 
-Re-run onboarding anytime with `bash scripts/onboard-tui.sh`.
+Re-run setup anytime via **Setup…** in the menu-bar / tray app.
 
 ## Configuration
 
-Settings live in the menu-bar app (**Settings…**) and in onboarding:
+Settings live in the menu-bar / tray app (**Settings…**) and the first-run setup window:
 
 - **Language** of the spoken summaries
 - **Voice** (Google Chirp3 HD)

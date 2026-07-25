@@ -53,21 +53,8 @@ if (-not (Get-Command jq -ErrorAction SilentlyContinue) -and -not (Test-Path (Jo
         -OutFile (Join-Path $binDir 'jq.exe')
 }
 
-# 5. Credentials — ask only if not configured yet (re-run = update, everything kept).
-if (-not (Test-Path $Creds) -or -not ((Get-Content $Creds -Raw | ConvertFrom-Json).googleAPIKey)) {
-    Info 'Einrichtung: API-Keys (beide praktisch kostenlos)'
-    Write-Host '  Google Cloud TTS: console.cloud.google.com -> Cloud Text-to-Speech API aktivieren -> API-Key (1 Mio Zeichen/Monat gratis)'
-    Write-Host '  Groq: console.groq.com -> API Keys (kostenloser Developer-Key)'
-    $g = Read-Host 'Google TTS API-Key'
-    $q = Read-Host 'Groq API-Key'
-    $lang = Read-Host 'Sprache [Deutsch]'
-    if (-not $lang) { $lang = 'Deutsch' }
-    $code = @{ Deutsch='de-DE'; English='en-US'; 'Français'='fr-FR'; 'Español'='es-ES'; Italiano='it-IT'; Nederlands='nl-NL' }[$lang]
-    if (-not $code) { $code = 'de-DE' }
-    New-Item -ItemType Directory -Force -Path $CredDir | Out-Null
-    @{ googleAPIKey=$g; groqAPIKey=$q; language=$lang; googleVoice="$code-Chirp3-HD-Alnilam" } |
-        ConvertTo-Json | Set-Content -Path $Creds -Encoding UTF8
-}
+# 5. No CLI onboarding — the app opens its own onboarding window on first launch
+#    (keys, language, voice, notifications). Nothing to prompt here.
 
 # 6. Autostart + launch.
 Info 'Starte Parley'
@@ -80,7 +67,7 @@ Start-Process (Join-Path $AppDir 'Parley.exe')
 
 Write-Host ''
 Write-Host 'Parley installiert.' -ForegroundColor Green
-Write-Host 'Neue Claude-Code-Sitzung starten und /parley:voice tippen.'
+Write-Host 'Das Einrichtungsfenster oeffnet sich automatisch. Danach eine neue Claude-Code-Sitzung starten und /parley:voice tippen.'
 Write-Host ''
 Write-Host 'Nutzt du Claude Code in WSL? Dann dort einmalig ausfuehren:'
 Write-Host '  mkdir -p ~/.claude/skills && ln -sfn /mnt/c/Users/'$env:USERNAME'/.parley/src/plugin ~/.claude/skills/parley && sudo apt-get install -y jq'

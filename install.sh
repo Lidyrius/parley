@@ -72,23 +72,9 @@ info "Installiere Claude-Code-Plugin"
 mkdir -p "$HOME/.claude/skills"
 ln -sfn "$SRC/plugin" "$HOME/.claude/skills/parley"
 
-# 4. onboarding (TUI) — fresh install only; an update keeps the existing keys/voice.
-if [ "$UPDATE" = 0 ]; then
-  info "Starte Einrichtung"
-  bash "$SRC/scripts/onboard-tui.sh"
-fi
-
-# 5. render the voice clips (fresh install, or if they're missing after an update).
-GOOGLE_KEY="$(jq -r '.googleAPIKey // ""' "$CREDS" 2>/dev/null || echo "")"
-CLIPS_DIR="$HOME/Library/Application Support/Parley/clips"
-if [ -n "$GOOGLE_KEY" ] && { [ "$UPDATE" = 0 ] || ! ls "$CLIPS_DIR"/ready/*.pcm >/dev/null 2>&1; }; then
-  info "Rendere Sprach-Clips in deiner Sprache (Google Chirp3 HD)"
-  # Writes to Application Support/Parley/clips — the app reads these at runtime, so no
-  # app rebuild (and no Xcode) is needed to get clips in the chosen language + voice.
-  bash "$SRC/scripts/generate-clips-google.sh" || true
-fi
-
-# 6. (re)launch the menu-bar app — on update, restart so the new binary takes effect.
+# 4. (re)launch the app. On first install it opens the visual onboarding window itself
+#    (keys, language, voice, notifications, mic) — no CLI onboarding. Voice clips render
+#    lazily in-app afterwards. On update, restart so the new binary takes effect.
 [ "$UPDATE" = 1 ] && pkill -f 'MacOS/Parley' >/dev/null 2>&1 || true
 sleep 1
 open -a Parley >/dev/null 2>&1 || true
@@ -97,6 +83,6 @@ if [ "$UPDATE" = 1 ]; then
   printf '\n\033[1;32m✓ Parley aktualisiert.\033[0m Die App wurde neu gestartet.\n'
 else
   printf '\n\033[1;32m✓ Parley installiert.\033[0m\n'
-  printf 'Starte eine \033[1mneue\033[0m Claude-Code-Sitzung und tippe \033[1m/parley:voice\033[0m.\n'
-  printf 'Beim ersten echten Turn: Mikrofon erlauben.\n'
+  printf 'Das Einrichtungsfenster öffnet sich automatisch. Danach eine \033[1mneue\033[0m\n'
+  printf 'Claude-Code-Sitzung starten und \033[1m/parley:voice\033[0m tippen.\n'
 fi
