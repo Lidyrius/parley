@@ -1,57 +1,47 @@
-using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Text.Json;
 
 namespace Parley;
 
-// First-run onboarding wizard — styled to match the macOS OnboardingView 1:1: dark
-// background, a tinted rounded icon tile, a big bold title + muted subtitle, segmented
-// progress, notification choice cards, and rounded Back/Continue buttons. Writes the
-// shared credentials.json and marks onboarding complete.
+// First-run onboarding — a pixel-match of the macOS OnboardingView, fully owner-drawn:
+// dark background, segmented progress, a tinted rounded hero tile with a vector icon, a big
+// bold title + muted subtitle, card-style notification choices with live previews, and pill
+// Back/Continue buttons. Writes the shared credentials.json and marks onboarding complete.
 public sealed class OnboardingForm : Form
 {
-    private static readonly Color Bg = Color.FromArgb(28, 28, 32);
-    private static readonly Color Accent = Color.FromArgb(50, 120, 246);
-    private static readonly Color Muted = Color.FromArgb(150, 152, 160);
-
     private static readonly string[] Langs = { "Deutsch", "English", "Français", "Español", "Italiano", "Nederlands" };
     private static readonly string[] Voices = { "Alnilam", "Aoede", "Charon", "Kore", "Puck", "Fenrir" };
 
-    private static readonly (string icon, string title, string sub)[] Steps =
+    private static readonly Color Bg = Color.FromArgb(28, 28, 32);
+    private static readonly Color Accent = Color.FromArgb(56, 132, 255);
+    private static readonly Color TextMuted = Color.FromArgb(168, 168, 176);
+
+    private enum Step { Welcome, Keys, Voice, Notify, Mic, Done }
+    private static readonly (string title, string sub, string icon)[] Meta =
     {
-        ("🎙️", "Willkommen bei Parley", "Deine Sprachschicht für Claude Code. Am Ende jeder Antwort spreche ich die Zusammenfassung, höre deine Antwort und speise sie zurück — freihändig, im Charakter eines ruhigen Butlers."),
-        ("🔑", "API-Schlüssel", "Beide sind praktisch kostenlos."),
-        ("🌐", "Sprache & Stimme", "In welcher Sprache spreche ich, und mit welcher Stimme?"),
-        ("🔔", "Benachrichtigungen", "Wie soll ich dich informieren, z. B. wenn ein Projekt wartet?"),
-        ("🎤", "Mikrofon", "Parley braucht dein Mikrofon, um deine Antworten aufzunehmen."),
-        ("✅", "Fertig!", "Starte eine neue Claude-Code-Sitzung und tippe /parley:voice. Ich melde mich."),
+        ("Willkommen bei Parley", "Deine Sprachschicht für Claude Code. Am Ende jeder Antwort spreche ich die Zusammenfassung, höre deine Antwort und speise sie zurück — freihändig, im Charakter eines ruhigen Butlers.", "wave"),
+        ("API-Schlüssel", "Beide sind praktisch kostenlos.", "key"),
+        ("Sprache & Stimme", "In welcher Sprache spreche ich, und mit welcher Stimme?", "globe"),
+        ("Benachrichtigungen", "Wie soll ich dich informieren, z. B. wenn ein Projekt wartet?", "bell"),
+        ("Mikrofon", "Parley braucht dein Mikrofon, um deine Antworten aufzunehmen. Windows fragt beim ersten Sprechen automatisch.", "mic"),
+        ("Fertig!", "Starte eine neue Claude-Code-Sitzung und tippe /parley:voice. Ich melde mich.", "check"),
+    };
+    private static readonly (string title, string sub, string icon)[] NotifyCards =
+    {
+        ("In der Pill", "Elegante Einblendung unten mittig", "pill"),
+        ("System-Mitteilung", "Klassische Windows-Benachrichtigung", "toast"),
+        ("Keine", "Ganz ohne Benachrichtigungen", "off"),
     };
 
-    private int _step;
-    private readonly Panel _dots = new() { BackColor = Bg };
-    private readonly Label _iconTile = new() { Font = new Font("Segoe UI Emoji", 22), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White, BackColor = Color.Transparent };
-    private readonly Label _title = new() { Font = new Font("Segoe UI", 21, FontStyle.Bold), ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, AutoSize = false, BackColor = Bg };
-    private readonly Label _sub = new() { Font = new Font("Segoe UI", 10.5f), ForeColor = Muted, TextAlign = ContentAlignment.TopCenter, AutoSize = false, BackColor = Bg };
-    private readonly Panel _content = new() { BackColor = Bg };
-    private readonly RoundButton _back = new() { Text = "Zurück", Fill = Color.FromArgb(52, 52, 58), Width = 100, Height = 38 };
-    private readonly RoundButton _next = new() { Text = "Weiter", Fill = Accent, Width = 130, Height = 38 };
+    private Step _step;
+    private int _notifyIndex;
+    private readonly TextBox _google = MakeInput(true);
+    private readonly TextBox _groq = MakeInput(true);
+    private readonly ComboBox _lang = MakeCombo(Langs);
+    private readonly ComboBox _voice = MakeCombo(Voices);
 
-    private readonly TextBox _google = new() { Width = 380, UseSystemPasswordChar = true, BorderStyle = BorderStyle.FixedSingle };
-    private readonly TextBox _groq = new() { Width = 380, UseSystemPasswordChar = true, BorderStyle = BorderStyle.FixedSingle };
-    private readonly ComboBox _lang = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat };
-    private readonly ComboBox _voice = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat };
-    private string _notifyMode = "pill";
-    private readonly Label _googleStatus = new() { AutoSize = true, BackColor = Bg, Font = new Font("Segoe UI", 8.5f) };
-    private readonly Label _groqStatus = new() { AutoSize = true, BackColor = Bg, Font = new Font("Segoe UI", 8.5f) };
-    private readonly RoundButton _check = new() { Text = "Schlüssel prüfen", Fill = Color.FromArgb(52, 52, 58), Width = 180, Height = 34 };
-    private bool _googleOk, _groqOk;
-
-    // Step-transition animation: content slides in from the side (from the right going
-    // forward, from the left going back) with a light per-element stagger, easeOutCubic.
-    private readonly System.Windows.Forms.Timer _slideTimer = new() { Interval = 16 };
-    private double _t = 1;               // 0..1 animation progress
-    private int _dir = 1;                // +1 forward, -1 back
-    private int _iconBaseX, _titleBaseX, _subBaseX, _contentBaseX;
+    private Rectangle _nextRect, _backRect;
+    private readonly Rectangle[] _cardRects = new Rectangle[3];
 
     public OnboardingForm()
     {
@@ -63,174 +53,268 @@ public sealed class OnboardingForm : Form
         BackColor = Bg;
         DoubleBuffered = true;
 
-        _lang.Items.AddRange(Langs);
-        _voice.Items.AddRange(Voices);
         var c = Config.Load();
         _google.Text = c.GoogleKey; _groq.Text = c.GroqKey;
         _lang.SelectedItem = c.Language; if (_lang.SelectedIndex < 0) _lang.SelectedIndex = 0;
         _voice.SelectedIndex = 0;
-        _notifyMode = c.NotifyMode;
-        foreach (var tb in new[] { _google, _groq }) { tb.BackColor = Color.FromArgb(44, 44, 50); tb.ForeColor = Color.White; }
-        foreach (var cb in new[] { _lang, _voice }) { cb.BackColor = Color.FromArgb(44, 44, 50); cb.ForeColor = Color.White; }
+        _notifyIndex = c.NotifyMode switch { "system" => 1, "none" => 2, _ => 0 };
 
-        _dots.SetBounds(0, 20, ClientSize.Width, 12); _dots.Paint += PaintDots;
-        _iconTile.SetBounds(ClientSize.Width / 2 - 30, 58, 60, 60);
-        _title.SetBounds(60, 130, ClientSize.Width - 120, 38);
-        _sub.SetBounds(70, 172, ClientSize.Width - 140, 62);
-        _content.SetBounds(60, 244, ClientSize.Width - 120, 206);
-        _back.Location = new Point(40, ClientSize.Height - 58);
-        _next.Location = new Point(ClientSize.Width - 40 - _next.Width, ClientSize.Height - 58);
-        _iconBaseX = _iconTile.Left; _titleBaseX = _title.Left; _subBaseX = _sub.Left; _contentBaseX = _content.Left;
-        _slideTimer.Tick += (_, _) => SlideTick();
-
-        _check.Click += async (_, _) => await CheckKeysAsync();
-        _google.TextChanged += (_, _) => { _googleOk = false; _next.Enabled = false; };
-        _groq.TextChanged += (_, _) => { _groqOk = false; _next.Enabled = false; };
-        _back.Click += (_, _) => { if (_step > 0) { _step--; _dir = -1; Render(); StartSlide(); } };
-        _next.Click += (_, _) =>
+        foreach (Control ctl in new Control[] { _google, _groq, _lang, _voice })
         {
-            if (_step == Steps.Length - 1) { Finish(); Close(); return; }
-            if (_step == 1 && (_google.Text.Trim().Length == 0 || _groq.Text.Trim().Length == 0)) return;
-            _step++; _dir = 1; Render(); StartSlide();
-        };
-
-        Controls.AddRange(new Control[] { _dots, _iconTile, _title, _sub, _content, _back, _next });
-        Paint += PaintIconTile;
-        Render();
-        StartSlide();   // gentle entrance on first show
-    }
-
-    private void StartSlide() { _t = 0; ApplyOffset(); _slideTimer.Start(); }
-
-    private void SlideTick()
-    {
-        _t += 0.07;
-        if (_t >= 1) { _t = 1; _slideTimer.Stop(); }
-        ApplyOffset();
-    }
-
-    // easeOutCubic with a per-element start delay → light stagger.
-    private void ApplyOffset()
-    {
-        const double dist = 46;
-        int Off(double delay)
-        {
-            var x = Math.Max(0, (_t - delay) / (1 - delay));
-            var e = 1 - Math.Pow(1 - x, 3);
-            return (int)Math.Round((1 - e) * _dir * dist);
+            ctl.Visible = false;
+            Controls.Add(ctl);
         }
-        _iconTile.Left = _iconBaseX + Off(0);
-        _title.Left = _titleBaseX + Off(0.08);
-        _sub.Left = _subBaseX + Off(0.16);
-        _content.Left = _contentBaseX + Off(0.12);
-        Invalidate();   // repaint tinted icon-tile background at the new position
+        _google.TextChanged += (_, _) => Invalidate();
+        _groq.TextChanged += (_, _) => Invalidate();
+
+        MouseClick += OnClick;
+        Layout1();
     }
 
-    private void PaintDots(object? s, PaintEventArgs e)
+    // ----- layout / navigation --------------------------------------------------------
+
+    private void Layout1()
     {
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        int n = Steps.Length, gap = 6, active = 22, dot = 8;
-        int total = (n - 1) * (dot + gap) + active;
-        int x = (_dots.Width - total) / 2, y = 3;
-        for (var i = 0; i < n; i++)
-        {
-            var w = i == _step ? active : dot;
-            using var b = new SolidBrush(i <= _step ? Accent : Color.FromArgb(70, 70, 78));
-            e.Graphics.FillRoundedRect(new Rectangle(x, y, w, 6), 3, b);
-            x += w + gap;
-        }
+        var w = ClientSize.Width;
+        // Inputs (centered).
+        _google.SetBounds((w - 460) / 2, 300, 460, 26);
+        _groq.SetBounds((w - 460) / 2, 372, 460, 26);
+        _lang.SetBounds((w - 260) / 2, 300, 260, 26);
+        _voice.SetBounds((w - 260) / 2, 372, 260, 26);
+        for (var i = 0; i < 3; i++) _cardRects[i] = new Rectangle((w - 460) / 2, 268 + i * 74, 460, 62);
+        _nextRect = new Rectangle(w - 40 - 140, ClientSize.Height - 66, 140, 40);
+        _backRect = new Rectangle(40, ClientSize.Height - 66, 104, 40);
+        SetStepControls();
     }
 
-    private void PaintIconTile(object? s, PaintEventArgs e)
+    private void SetStepControls()
     {
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        var r = new Rectangle(_iconTile.Left, _iconTile.Top, 60, 60);
-        using var b = new SolidBrush(Color.FromArgb(38, Accent.R, Accent.G, Accent.B));
-        e.Graphics.FillRoundedRect(r, 17, b);
-    }
-
-    private void Render()
-    {
-        _iconTile.Text = Steps[_step].icon;
-        _title.Text = Steps[_step].title;
-        _sub.Text = Steps[_step].sub;
-        _back.Visible = _step > 0;
-        _next.Text = _step == Steps.Length - 1 ? "Los geht's" : "Weiter";
-        _next.Enabled = _step != 1 || (_googleOk && _groqOk);   // step 1 requires verified keys
+        _google.Visible = _groq.Visible = _step == Step.Keys;
+        _lang.Visible = _voice.Visible = _step == Step.Voice;
         Invalidate();
+    }
 
-        _content.Controls.Clear();
+    private bool CanContinue => _step != Step.Keys || (_google.Text.Trim().Length > 0 && _groq.Text.Trim().Length > 0);
+
+    private void OnClick(object? s, MouseEventArgs e)
+    {
+        if (_backRect.Contains(e.Location) && (int)_step > 0) { _step = (Step)((int)_step - 1); SetStepControls(); return; }
+        if (_nextRect.Contains(e.Location) && CanContinue)
+        {
+            if (_step == Step.Done) { Finish(); Close(); return; }
+            _step = (Step)((int)_step + 1); SetStepControls(); return;
+        }
+        if (_step == Step.Notify)
+            for (var i = 0; i < 3; i++)
+                if (_cardRects[i].Contains(e.Location))
+                {
+                    _notifyIndex = i;
+                    Notifier.Preview(i switch { 1 => "system", 2 => "none", _ => "pill" });
+                    Invalidate();
+                    return;
+                }
+    }
+
+    // ----- painting -------------------------------------------------------------------
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        var w = ClientSize.Width;
+        var m = Meta[(int)_step];
+
+        // progress dots
+        var total = Meta.Length;
+        var dotW = 8; var actW = 22; var gap = 6;
+        var totalW = (total - 1) * (dotW + gap) + actW;
+        var x = (w - totalW) / 2;
+        for (var i = 0; i < total; i++)
+        {
+            var ww = i == (int)_step ? actW : dotW;
+            using var b = new SolidBrush(i <= (int)_step ? Accent : Color.FromArgb(70, 70, 78));
+            FillRound(g, b, new Rectangle(x, 26, ww, 6), 3);
+            x += ww + gap;
+        }
+
+        // hero tile + icon
+        var tile = new Rectangle((w - 60) / 2, 84, 60, 60);
+        using (var tb = new SolidBrush(Color.FromArgb(36, Accent.R, Accent.G, Accent.B)))
+            FillRound(g, tb, tile, 17);
+        DrawIcon(g, m.icon, new Rectangle(tile.X + 17, tile.Y + 17, 26, 26), Accent);
+
+        // title + subtitle
+        using var titleFont = new Font("Segoe UI", 20, FontStyle.Bold);
+        using var subFont = new Font("Segoe UI", 10.5f);
+        using var white = new SolidBrush(Color.White);
+        using var muted = new SolidBrush(TextMuted);
+        var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
+        g.DrawString(m.title, titleFont, white, new RectangleF(40, 158, w - 80, 40), center);
+        g.DrawString(m.sub, subFont, muted, new RectangleF(70, 202, w - 140, 60), center);
+
+        // step content
+        using var lblFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
         switch (_step)
         {
-            case 1:
-                AddKeyField(0, "Google Cloud TTS API-Key", "1 Mio Zeichen/Monat gratis", _google, _googleStatus,
-                    "https://console.cloud.google.com/apis/library/texttospeech.googleapis.com");
-                AddKeyField(96, "Groq API-Key", "kostenloser Developer-Key", _groq, _groqStatus,
-                    "https://console.groq.com/keys");
-                _check.Left = (_content.Width - _check.Width) / 2; _check.Top = 196;
-                _content.Controls.Add(_check);
+            case Step.Keys:
+                g.DrawString("Google Cloud TTS  ·  1 Mio Zeichen/Monat gratis", lblFont, white, _google.Left, _google.Top - 20);
+                g.DrawString("Groq  ·  kostenloser Developer-Key", lblFont, white, _groq.Left, _groq.Top - 20);
                 break;
-            case 2:
-                AddInput(10, "Sprache", _lang);
-                AddInput(74, "Chirp3-HD-Stimme", _voice);
+            case Step.Voice:
+                g.DrawString("Sprache", lblFont, white, _lang.Left, _lang.Top - 20);
+                g.DrawString("Chirp3-HD-Stimme", lblFont, white, _voice.Left, _voice.Top - 20);
                 break;
-            case 3:
-                _content.Controls.Add(Card(0, "In der Pill", "Elegante Einblendung unten mittig", "🔔", "pill"));
-                _content.Controls.Add(Card(64, "System-Mitteilung", "Klassische Windows-Benachrichtigung", "🪟", "system"));
-                _content.Controls.Add(Card(128, "Keine", "Ganz ohne Benachrichtigungen", "🔕", "none"));
+            case Step.Notify:
+                for (var i = 0; i < 3; i++) DrawCard(g, i);
+                break;
+        }
+
+        // buttons
+        if ((int)_step > 0) DrawButton(g, _backRect, "Zurück", false);
+        DrawButton(g, _nextRect, _step == Step.Done ? "Los geht's" : "Weiter", true, enabled: CanContinue);
+    }
+
+    private void DrawCard(Graphics g, int i)
+    {
+        var r = _cardRects[i];
+        var on = _notifyIndex == i;
+        using (var fill = new SolidBrush(on ? Color.FromArgb(30, Accent.R, Accent.G, Accent.B) : Color.FromArgb(13, 255, 255, 255)))
+            FillRound(g, fill, r, 12);
+        using (var pen = new Pen(on ? Color.FromArgb(128, Accent.R, Accent.G, Accent.B) : Color.FromArgb(22, 255, 255, 255)))
+            DrawRound(g, pen, r, 12);
+        DrawIcon(g, NotifyCards[i].icon, new Rectangle(r.X + 16, r.Y + 20, 22, 22), on ? Accent : TextMuted);
+        using var tf = new Font("Segoe UI", 11, FontStyle.Bold);
+        using var sf = new Font("Segoe UI", 9);
+        using var white = new SolidBrush(Color.White);
+        using var muted = new SolidBrush(TextMuted);
+        g.DrawString(NotifyCards[i].title, tf, white, r.X + 52, r.Y + 12);
+        g.DrawString(NotifyCards[i].sub, sf, muted, r.X + 52, r.Y + 34);
+        var cc = new Rectangle(r.Right - 34, r.Y + r.Height / 2 - 9, 18, 18);
+        if (on) { using var b = new SolidBrush(Accent); g.FillEllipse(b, cc); using var wp = new Pen(Color.White, 2); DrawCheckPath(g, cc, wp); }
+        else { using var p = new Pen(Color.FromArgb(90, 255, 255, 255), 1.5f); g.DrawEllipse(p, cc); }
+    }
+
+    private void DrawButton(Graphics g, Rectangle r, string text, bool primary, bool enabled = true)
+    {
+        var fill = primary
+            ? (enabled ? Accent : Color.FromArgb(70, Accent.R, Accent.G, Accent.B))
+            : Color.FromArgb(16, 255, 255, 255);
+        using (var b = new SolidBrush(fill)) FillRound(g, b, r, r.Height / 2);
+        using var f = new Font("Segoe UI", 10.5f, FontStyle.Bold);
+        using var tb = new SolidBrush(primary ? Color.White : TextMuted);
+        var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        g.DrawString(text, f, tb, r, sf);
+    }
+
+    // ----- vector icons (match the SF-symbol tiles) -----------------------------------
+
+    private static void DrawIcon(Graphics g, string name, Rectangle r, Color c)
+    {
+        using var pen = new Pen(c, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        using var brush = new SolidBrush(c);
+        float x = r.X, y = r.Y, w = r.Width, h = r.Height, cx = x + w / 2, cy = y + h / 2;
+        switch (name)
+        {
+            case "wave":
+                for (var i = 0; i < 5; i++)
+                {
+                    var bx = x + 2 + i * (w - 4) / 4f;
+                    var bh = h * (i % 2 == 0 ? 0.5f : 0.95f);
+                    g.DrawLine(pen, bx, cy - bh / 2, bx, cy + bh / 2);
+                }
+                break;
+            case "key":
+                g.DrawEllipse(pen, x, y + 2, w * 0.5f, w * 0.5f);
+                g.DrawLine(pen, x + w * 0.45f, y + h * 0.45f, x + w, y + h);
+                g.DrawLine(pen, x + w * 0.75f, y + h * 0.7f, x + w * 0.9f, y + h * 0.55f);
+                break;
+            case "globe":
+                g.DrawEllipse(pen, x, y, w, h);
+                g.DrawEllipse(pen, x + w * 0.32f, y, w * 0.36f, h);
+                g.DrawLine(pen, x, cy, x + w, cy);
+                break;
+            case "bell":
+                g.DrawArc(pen, x + w * 0.15f, y + h * 0.1f, w * 0.7f, h * 0.7f, 180, 180);
+                g.DrawLine(pen, x + w * 0.15f, y + h * 0.45f, x + w * 0.15f, y + h * 0.7f);
+                g.DrawLine(pen, x + w * 0.85f, y + h * 0.45f, x + w * 0.85f, y + h * 0.7f);
+                g.DrawLine(pen, x + w * 0.08f, y + h * 0.7f, x + w * 0.92f, y + h * 0.7f);
+                g.FillEllipse(brush, cx - 2, y + h * 0.82f, 4, 4);
+                break;
+            case "mic":
+                g.DrawArc(pen, cx - 6, y + 1, 12, 16, 0, 360);
+                g.DrawArc(pen, cx - 9, cy - 2, 18, 14, 20, 140);
+                g.DrawLine(pen, cx, y + h - 3, cx, y + h);
+                break;
+            case "check":
+                DrawCheckPath(g, r, pen);
+                break;
+            case "pill":
+                using (var p2 = new Pen(c, 2f)) g.DrawArc(p2, x + 2, cy - 5, w - 4, 10, 0, 360);
+                break;
+            case "toast":
+                DrawRound(g, pen, new Rectangle((int)(x + 2), (int)(y + 4), (int)(w - 4), (int)(h - 8)), 4);
+                g.FillEllipse(brush, x + w - 7, y + 3, 6, 6);
+                break;
+            case "off":
+                g.DrawArc(pen, x + w * 0.15f, y + h * 0.1f, w * 0.7f, h * 0.7f, 180, 180);
+                g.DrawLine(pen, x, y + h, x + w, y);
                 break;
         }
     }
 
-    private void AddKeyField(int y, string label, string hint, Control input, Label status, string consoleUrl)
+    private static void DrawCheckPath(Graphics g, Rectangle r, Pen pen)
     {
-        var x = (_content.Width - input.Width) / 2;
-        input.Left = x; input.Top = y + 22;
-        _content.Controls.Add(new Label { Text = label, ForeColor = Color.White, BackColor = Bg, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), AutoSize = true, Left = x, Top = y });
-        var link = new LinkLabel { Text = "Konsole öffnen ↗", AutoSize = true, BackColor = Bg, LinkColor = Color.FromArgb(90, 160, 255), Font = new Font("Segoe UI", 8.5f), Top = y + 1 };
-        link.Left = x + input.Width - 110;
-        link.LinkClicked += (_, _) => { try { Process.Start(new ProcessStartInfo(consoleUrl) { UseShellExecute = true }); } catch { } };
-        _content.Controls.Add(link);
-        _content.Controls.Add(input);
-        status.Left = x; status.Top = y + 48; status.Text = hint; status.ForeColor = Muted;
-        _content.Controls.Add(status);
-    }
-
-    private async Task CheckKeysAsync()
-    {
-        _check.Enabled = false; _check.Text = "Prüfe…";
-        _googleStatus.Text = "prüfe…"; _googleStatus.ForeColor = Muted;
-        _groqStatus.Text = "prüfe…"; _groqStatus.ForeColor = Muted;
-        var lang = _lang.SelectedItem?.ToString() ?? "Deutsch";
-        var code = lang switch { "English" => "en-US", "Français" => "fr-FR", "Español" => "es-ES", "Italiano" => "it-IT", "Nederlands" => "nl-NL", _ => "de-DE" };
-        var voice = $"{code}-Chirp3-HD-{_voice.SelectedItem ?? "Alnilam"}";
-        var g = await KeyCheck.Google(_google.Text.Trim(), voice);
-        var q = await KeyCheck.Groq(_groq.Text.Trim());
-        _googleOk = g.ok; _groqOk = q.ok;
-        _googleStatus.Text = g.msg; _googleStatus.ForeColor = g.ok ? Color.FromArgb(70, 200, 120) : Color.FromArgb(230, 90, 90);
-        _groqStatus.Text = q.msg; _groqStatus.ForeColor = q.ok ? Color.FromArgb(70, 200, 120) : Color.FromArgb(230, 90, 90);
-        _check.Enabled = true; _check.Text = "Schlüssel prüfen";
-        _next.Enabled = _googleOk && _groqOk;
-    }
-
-    private void AddInput(int y, string label, Control input)
-    {
-        input.Left = (_content.Width - input.Width) / 2; input.Top = y + 22;
-        _content.Controls.Add(new Label { Text = label, ForeColor = Color.White, BackColor = Bg, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), AutoSize = true, Left = input.Left, Top = y });
-        _content.Controls.Add(input);
-    }
-
-    private ChoiceCard Card(int y, string title, string sub, string icon, string value)
-    {
-        var card = new ChoiceCard(title, sub, icon, value == _notifyMode) { Width = _content.Width, Height = 56, Top = y, Left = 0 };
-        card.Clicked += () =>
+        float x = r.X, y = r.Y, w = r.Width, h = r.Height;
+        g.DrawLines(pen, new[]
         {
-            _notifyMode = value;
-            foreach (Control ctl in _content.Controls) if (ctl is ChoiceCard cc) cc.SetSelected(cc.Value == value);
-            Notifier.Preview(value);   // live example on select
-        };
-        return card;
+            new PointF(x + w * 0.24f, y + h * 0.52f),
+            new PointF(x + w * 0.42f, y + h * 0.70f),
+            new PointF(x + w * 0.78f, y + h * 0.30f),
+        });
     }
+
+    // ----- helpers --------------------------------------------------------------------
+
+    private static void FillRound(Graphics g, Brush b, Rectangle r, int radius)
+    { using var p = Round(r, radius); g.FillPath(b, p); }
+    private static void DrawRound(Graphics g, Pen pen, Rectangle r, int radius)
+    { using var p = Round(r, radius); g.DrawPath(pen, p); }
+    private static GraphicsPath Round(Rectangle r, int radius)
+    {
+        var d = radius * 2;
+        var p = new GraphicsPath();
+        p.AddArc(r.X, r.Y, d, d, 180, 90);
+        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
+    }
+
+    private static TextBox MakeInput(bool secret) => new()
+    {
+        BorderStyle = BorderStyle.FixedSingle,
+        BackColor = Color.FromArgb(45, 45, 52),
+        ForeColor = Color.White,
+        Font = new Font("Segoe UI", 11),
+        UseSystemPasswordChar = secret,
+    };
+    private static ComboBox MakeCombo(string[] items)
+    {
+        var c = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(45, 45, 52),
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 10.5f),
+        };
+        c.Items.AddRange(items);
+        return c;
+    }
+
+    // ----- persistence ----------------------------------------------------------------
 
     private void Finish()
     {
@@ -248,7 +332,7 @@ public sealed class OnboardingForm : Form
         d["groqAPIKey"] = _groq.Text.Trim();
         d["language"] = lang;
         d["googleVoice"] = $"{code}-Chirp3-HD-{_voice.SelectedItem}";
-        d["notifyMode"] = _notifyMode;
+        d["notifyMode"] = _notifyIndex switch { 1 => "system", 2 => "none", _ => "pill" };
         d["onboarded"] = "1";
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
     }
@@ -261,96 +345,5 @@ public sealed class OnboardingForm : Form
             return d != null && d.TryGetValue("onboarded", out var v) && v.GetString() == "1";
         }
         catch { return false; }
-    }
-}
-
-// Rounded, flat, filled capsule button matching the macOS onboarding buttons.
-internal sealed class RoundButton : Button
-{
-    public Color Fill = Color.FromArgb(50, 120, 246);
-    public RoundButton()
-    {
-        FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0;
-        ForeColor = Color.White; Font = new Font("Segoe UI", 10, FontStyle.Bold);
-        BackColor = Color.FromArgb(28, 28, 32);
-    }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.Clear(Parent?.BackColor ?? BackColor);
-        var fill = Enabled ? Fill : Color.FromArgb(70, Fill.R, Fill.G, Fill.B);
-        using var b = new SolidBrush(fill);
-        e.Graphics.FillRoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), Height / 2, b);
-        TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle,
-            Enabled ? ForeColor : Color.Gainsboro,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-    }
-}
-
-// Selectable notification card matching the macOS onboarding choice rows.
-internal sealed class ChoiceCard : Panel
-{
-    public string Value { get; }
-    public event Action? Clicked;
-    private bool _selected;
-    private readonly string _title, _sub, _icon;
-    private static readonly Color Accent = Color.FromArgb(50, 120, 246);
-
-    public ChoiceCard(string title, string sub, string icon, bool selected)
-    {
-        _title = title; _sub = sub; _icon = icon; _selected = selected; Value = title;
-        BackColor = Color.FromArgb(28, 28, 32); Cursor = Cursors.Hand;
-        Click += (_, _) => Clicked?.Invoke();
-        DoubleBuffered = true;
-    }
-
-    public void SetSelected(bool on) { _selected = on; Invalidate(); }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.Clear(Parent?.BackColor ?? BackColor);
-        var r = new Rectangle(0, 0, Width - 1, Height - 1);
-        using var bg = new SolidBrush(_selected ? Color.FromArgb(34, Accent.R, Accent.G, Accent.B) : Color.FromArgb(14, 255, 255, 255));
-        g.FillRoundedRect(r, 12, bg);
-        using var pen = new Pen(_selected ? Accent : Color.FromArgb(24, 255, 255, 255));
-        g.DrawRoundedRect(r, 12, pen);
-
-        using var iconFont = new Font("Segoe UI Emoji", 15);
-        g.DrawString(_icon, iconFont, Brushes.White, 14, Height / 2 - 15);
-        using var tFont = new Font("Segoe UI", 10.5f, FontStyle.Bold);
-        using var sFont = new Font("Segoe UI", 8.5f);
-        g.DrawString(_title, tFont, Brushes.White, 52, 9);
-        using var sBrush = new SolidBrush(Color.FromArgb(160, 162, 170));
-        g.DrawString(_sub, sFont, sBrush, 52, 30);
-
-        var cy = Height / 2 - 9;
-        var cr = new Rectangle(Width - 34, cy, 18, 18);
-        if (_selected)
-        {
-            using var cb = new SolidBrush(Accent); g.FillEllipse(cb, cr);
-            using var cp = new Pen(Color.White, 2);
-            g.DrawLines(cp, new[] { new Point(Width - 30, cy + 9), new Point(Width - 27, cy + 12), new Point(Width - 21, cy + 5) });
-        }
-        else { using var cp = new Pen(Color.FromArgb(90, 255, 255, 255)); g.DrawEllipse(cp, cr); }
-    }
-}
-
-internal static class GraphicsRoundedExtensions
-{
-    public static void FillRoundedRect(this Graphics g, Rectangle r, int radius, Brush b)
-    { using var p = Path(r, radius); g.FillPath(b, p); }
-    public static void DrawRoundedRect(this Graphics g, Rectangle r, int radius, Pen pen)
-    { using var p = Path(r, radius); g.DrawPath(pen, p); }
-    private static GraphicsPath Path(Rectangle r, int radius)
-    {
-        int d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
-        var p = new GraphicsPath();
-        p.AddArc(r.X, r.Y, d, d, 180, 90);
-        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        p.CloseFigure();
-        return p;
     }
 }
