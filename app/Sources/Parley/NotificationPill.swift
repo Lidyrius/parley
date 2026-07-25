@@ -27,6 +27,8 @@ final class NotificationPill: ObservableObject {
     private var travel: CGFloat = 0  // how far below the rest the pill starts/leaves
 
     func present(title: String, message: String) {
+        // The recording pill has priority — never cover it with a notification.
+        if RecordingHUD.active { return }
         queue.append((title, message))
         if !busy { showNext() }
     }

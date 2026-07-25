@@ -44,8 +44,12 @@ public sealed class PillOverlay : Form
 
     public void Push(float level) => _level = Math.Clamp(level, 0f, 1f);
 
+    // True while the recording pill is visible; notifications suppress themselves.
+    public static bool Active;
+
     public void ShowPill()
     {
+        Active = true;
         Array.Clear(_bars);
         _level = 0;
         Show();
@@ -54,6 +58,7 @@ public sealed class PillOverlay : Form
 
     public void HidePill()
     {
+        Active = false;
         _timer.Stop();
         Hide();
     }

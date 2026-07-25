@@ -48,6 +48,7 @@ public sealed class NotificationPill : Form
     /// Thread-safe entry point — called from any thread.
     public static void Present(string title, string message)
     {
+        if (PillOverlay.Active) return;   // recording pill has priority
         lock (Gate) Queue.Enqueue((title, message));
         var inst = _instance;
         if (inst is null) return;

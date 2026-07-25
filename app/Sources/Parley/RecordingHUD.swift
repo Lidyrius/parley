@@ -24,8 +24,13 @@ final class RecordingHUD: ObservableObject {
     private var timer: DispatchSourceTimer?
     private var hideWork: DispatchWorkItem?
 
+    // True while the recording pill is on screen — notifications suppress themselves so
+    // they never cover the recording pill (which always has priority).
+    static var active = false
+
     func show() {
         hideWork?.cancel()
+        Self.active = true
         done = false
         latest = 0; vol = 0; orb = 0; phase = 0
         if panel == nil { panel = makePanel() }
@@ -40,6 +45,7 @@ final class RecordingHUD: ObservableObject {
 
     func finish() {
         done = true
+        Self.active = false
         let work = DispatchWorkItem { [weak self] in
             self?.panel?.orderOut(nil); self?.stopTimer()
         }
