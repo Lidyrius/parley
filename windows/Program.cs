@@ -48,6 +48,22 @@ internal sealed class TrayApp : ApplicationContext
         var setup = new ToolStripMenuItem("Setup…");
         setup.Click += (_, _) => new OnboardingForm().Show();
         menu.Items.Add(setup);
+        var dev = new ToolStripMenuItem("Entwickler");
+        var devReset = new ToolStripMenuItem("Zurücksetzen (Onboarding testen) — Statistiken bleiben");
+        devReset.Click += (_, _) => DevTools.ResetKeepingStats();
+        var devOnboard = new ToolStripMenuItem("Onboarding zeigen");
+        devOnboard.Click += (_, _) => DevTools.ShowOnboarding();
+        var devNotif = new ToolStripMenuItem("Test-Benachrichtigung");
+        devNotif.Click += (_, _) => DevTools.TestNotification();
+        var devPill = new ToolStripMenuItem("Aufnahme-Pill testen");
+        devPill.Click += (_, _) => TestRecordingPill();
+        var devClips = new ToolStripMenuItem("Clips neu rendern");
+        devClips.Click += (_, _) => DevTools.RerenderClips();
+        var devLog = new ToolStripMenuItem("Log anzeigen");
+        devLog.Click += (_, _) => DevTools.RevealLog();
+        dev.DropDownItems.AddRange(new ToolStripItem[] { devReset, devOnboard, new ToolStripSeparator(), devNotif, devPill, devClips, devLog });
+        menu.Items.Add(dev);
+
         menu.Items.Add(new ToolStripSeparator());
         var quit = new ToolStripMenuItem("Beenden");
         quit.Click += (_, _) => { _tray!.Visible = false; Application.Exit(); };
@@ -72,4 +88,17 @@ internal sealed class TrayApp : ApplicationContext
             MessageBox.Show($"Parley konnte Port 8787 nicht öffnen: {e.Message}", "Parley");
         }
     }
+
+    private void TestRecordingPill()
+    {
+        _pill.BeginInvoke(() =>
+        {
+            _pill.ShowPill();
+            var t = new System.Windows.Forms.Timer { Interval = 33 };
+            var n = 0;
+            t.Tick += (_, _) => { _pill.Push((float)(0.2 + new Random().NextDouble() * 0.7)); if (++n > 90) { t.Stop(); _pill.HidePill(); } };
+            t.Start();
+        });
+    }
 }
+

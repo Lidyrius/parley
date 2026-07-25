@@ -44,6 +44,15 @@ struct MenuBarView: View {
                 }
 
                 Divider()
+                Menu("Entwickler") {
+                    Button("Zurücksetzen (Onboarding testen) — Statistiken bleiben") { DevTools.resetKeepingStats() }
+                    Button("Onboarding zeigen") { DevTools.showOnboarding() }
+                    Divider()
+                    Button("Test-Benachrichtigung") { DevTools.testNotification() }
+                    Button("Aufnahme-Pill testen") { DevTools.testRecordingPill() }
+                    Button("Clips neu rendern") { DevTools.rerenderClips() }
+                    Button("Log anzeigen") { DevTools.revealLog() }
+                }
                 HStack {
                     Button("Statistiken…") { StatsPresenter.shared.show() }
                     SettingsLink { Text("Settings…") }
