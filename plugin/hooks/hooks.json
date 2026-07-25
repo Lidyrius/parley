@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/stop-hook.sh",
-            "timeout": 150
+            "timeout": 3600
           }
         ]
       }

@@ -74,9 +74,11 @@ payload="$(jq -n \
   --argjson listen "$listen" \
   '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label, listen:$listen}')"
 
-# Blocks while the app speaks + records + transcribes. Must exceed the app's max
-# recording cap (90 s) + speak + STT; the hook timeout (hooks.json) in turn exceeds this.
-resp="$(curl -sS --max-time 140 -X POST "http://${HOST}:${PORT}/turn" \
+# Blocks while the turn is queued + spoken + recorded + transcribed. With many parallel
+# projects a turn can wait long in the queue before it is its turn to
+# speak, so allow up to an hour — the user is expected to reply eventually. hooks.json
+# timeout must be >= this.
+resp="$(curl -sS --max-time 3600 -X POST "http://${HOST}:${PORT}/turn" \
   -H 'Content-Type: application/json' -d "$payload" 2>/dev/null || true)"
 
 transcript="$(printf '%s' "$resp" | jq -r '.transcript // ""' 2>/dev/null || true)"
