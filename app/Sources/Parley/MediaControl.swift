@@ -93,14 +93,31 @@ final class MediaControl: @unchecked Sendable {
     // MARK: - process helper
 
     @discardableResult
-    private func run(_ path: String, _ args: [String]) -> String {
+    // Bounded process run. A hung osascript/perl (e.g. a pending Automation prompt) must
+    // NEVER block a turn — if it exceeds `timeout`, kill it and return "". Media control is
+    // best-effort; speech always proceeds.
+    private func run(_ path: String, _ args: [String], timeout: TimeInterval = 3.0) -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
         let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
         do { try p.run() } catch { return "" }
+        // Drain stdout on a background thread — the adapter's now-playing JSON includes a
+        // large base64 artwork blob (>64 KB); reading only after exit deadlocks perl on a
+        // full pipe. Bound the whole thing with a timeout and kill on overrun.
+        let handle = out.fileHandleForReading
+        let box = OutBox()
+        let group = DispatchGroup(); group.enter()
+        DispatchQueue.global().async { box.data = handle.readDataToEndOfFile(); group.leave() }
+        if group.wait(timeout: .now() + timeout) != .success {
+            p.terminate(); usleep(100_000)
+            if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+            Log.write("media: process timed out, killed (\(path))")
+            return ""
+        }
         p.waitUntilExit()
-        let d = out.fileHandleForReading.readDataToEndOfFile()
-        return String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return String(data: box.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }
+
+private final class OutBox: @unchecked Sendable { var data = Data() }
