@@ -46,6 +46,13 @@ public sealed class OnboardingForm : Form
     private readonly RoundButton _check = new() { Text = "Schlüssel prüfen", Fill = Color.FromArgb(52, 52, 58), Width = 180, Height = 34 };
     private bool _googleOk, _groqOk;
 
+    // Step-transition animation: content slides in from the side (from the right going
+    // forward, from the left going back) with a light per-element stagger, easeOutCubic.
+    private readonly System.Windows.Forms.Timer _slideTimer = new() { Interval = 16 };
+    private double _t = 1;               // 0..1 animation progress
+    private int _dir = 1;                // +1 forward, -1 back
+    private int _iconBaseX, _titleBaseX, _subBaseX, _contentBaseX;
+
     public OnboardingForm()
     {
         Text = "Parley";
@@ -73,21 +80,50 @@ public sealed class OnboardingForm : Form
         _content.SetBounds(60, 244, ClientSize.Width - 120, 206);
         _back.Location = new Point(40, ClientSize.Height - 58);
         _next.Location = new Point(ClientSize.Width - 40 - _next.Width, ClientSize.Height - 58);
+        _iconBaseX = _iconTile.Left; _titleBaseX = _title.Left; _subBaseX = _sub.Left; _contentBaseX = _content.Left;
+        _slideTimer.Tick += (_, _) => SlideTick();
 
         _check.Click += async (_, _) => await CheckKeysAsync();
         _google.TextChanged += (_, _) => { _googleOk = false; _next.Enabled = false; };
         _groq.TextChanged += (_, _) => { _groqOk = false; _next.Enabled = false; };
-        _back.Click += (_, _) => { if (_step > 0) { _step--; Render(); } };
+        _back.Click += (_, _) => { if (_step > 0) { _step--; _dir = -1; Render(); StartSlide(); } };
         _next.Click += (_, _) =>
         {
             if (_step == Steps.Length - 1) { Finish(); Close(); return; }
             if (_step == 1 && (_google.Text.Trim().Length == 0 || _groq.Text.Trim().Length == 0)) return;
-            _step++; Render();
+            _step++; _dir = 1; Render(); StartSlide();
         };
 
         Controls.AddRange(new Control[] { _dots, _iconTile, _title, _sub, _content, _back, _next });
         Paint += PaintIconTile;
         Render();
+        StartSlide();   // gentle entrance on first show
+    }
+
+    private void StartSlide() { _t = 0; ApplyOffset(); _slideTimer.Start(); }
+
+    private void SlideTick()
+    {
+        _t += 0.07;
+        if (_t >= 1) { _t = 1; _slideTimer.Stop(); }
+        ApplyOffset();
+    }
+
+    // easeOutCubic with a per-element start delay → light stagger.
+    private void ApplyOffset()
+    {
+        const double dist = 46;
+        int Off(double delay)
+        {
+            var x = Math.Max(0, (_t - delay) / (1 - delay));
+            var e = 1 - Math.Pow(1 - x, 3);
+            return (int)Math.Round((1 - e) * _dir * dist);
+        }
+        _iconTile.Left = _iconBaseX + Off(0);
+        _title.Left = _titleBaseX + Off(0.08);
+        _sub.Left = _subBaseX + Off(0.16);
+        _content.Left = _contentBaseX + Off(0.12);
+        Invalidate();   // repaint tinted icon-tile background at the new position
     }
 
     private void PaintDots(object? s, PaintEventArgs e)

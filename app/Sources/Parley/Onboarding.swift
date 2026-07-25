@@ -63,11 +63,17 @@ final class OnboardingModel: ObservableObject {
         }
     }
 
+    @Published var forward = true   // step direction — drives the slide transition
+
     func next() {
-        if let s = Step(rawValue: step.rawValue + 1) { withAnimation(.easeInOut(duration: 0.25)) { step = s } }
+        guard let s = Step(rawValue: step.rawValue + 1) else { return }
+        forward = true
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { step = s }
     }
     func back() {
-        if let s = Step(rawValue: step.rawValue - 1) { withAnimation(.easeInOut(duration: 0.25)) { step = s } }
+        guard let s = Step(rawValue: step.rawValue - 1) else { return }
+        forward = false
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { step = s }
     }
 
     func requestMic() {
@@ -113,10 +119,16 @@ struct OnboardingView: View {
             VStack(spacing: 0) {
                 progress.padding(.top, 22)
                 Spacer(minLength: 0)
-                content.frame(maxWidth: 520).padding(.horizontal, 48)
+                content
+                    .frame(maxWidth: 520).padding(.horizontal, 48)
+                    .id(m.step)                                   // recreate per step → entrance re-fires
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(x: m.forward ? 34 : -34)),
+                        removal:   .opacity.combined(with: .offset(x: m.forward ? -34 : 34))))
                 Spacer(minLength: 0)
                 bottomBar.padding(.horizontal, 40).padding(.bottom, 26)
             }
+            .clipped()
         }
         .frame(width: 640, height: 560)
         .onAppear { m.loadVoices() }
@@ -145,9 +157,9 @@ struct OnboardingView: View {
                              check: m.googleCheck, open: m.openGoogleConsole)
                     keyField("Groq", "kostenloser Developer-Key", text: $m.groqKey,
                              check: m.groqCheck, open: m.openGroqConsole)
-                }
+                }.entrance(3)
                 Button(checking ? "Prüfe…" : "Schlüssel prüfen") { m.checkKeys() }
-                    .buttonStyle(SecondaryButton()).disabled(checking)
+                    .buttonStyle(SecondaryButton()).disabled(checking).entrance(4)
             }
         case .voice:
             VStack(spacing: 20) {
@@ -156,15 +168,15 @@ struct OnboardingView: View {
                     labeledPicker("Sprache", selection: $m.language, options: onboardKeyLangs)
                         .onChange(of: m.language) { _, _ in m.loadVoices() }
                     labeledPicker("Chirp3-HD-Stimme", selection: $m.voiceName, options: m.voices)
-                }
+                }.entrance(3)
             }
         case .notify:
             VStack(spacing: 20) {
                 hero("bell.badge", "Benachrichtigungen", "Wie soll ich dich informieren, z. B. wenn ein Projekt wartet?")
                 VStack(spacing: 10) {
-                    choice("In der Pill", "Elegante Einblendung unten mittig", "rectangle.bottomthird.inset.filled", "pill")
-                    choice("System-Mitteilung", "Klassische macOS-Benachrichtigung", "app.badge", "system")
-                    choice("Keine", "Ganz ohne Benachrichtigungen", "bell.slash", "none")
+                    choice("In der Pill", "Elegante Einblendung unten mittig", "rectangle.bottomthird.inset.filled", "pill").entrance(3)
+                    choice("System-Mitteilung", "Klassische macOS-Benachrichtigung", "app.badge", "system").entrance(4)
+                    choice("Keine", "Ganz ohne Benachrichtigungen", "bell.slash", "none").entrance(5)
                 }
             }
         case .mic:
@@ -173,6 +185,7 @@ struct OnboardingView: View {
                 Button(m.micGranted ? "Mikrofon erlaubt ✓" : "Mikrofon erlauben") { m.requestMic() }
                     .buttonStyle(PrimaryButton())
                     .disabled(m.micGranted)
+                    .entrance(3)
             }
         case .done:
             hero("checkmark.seal.fill", "Fertig!",
@@ -202,9 +215,12 @@ struct OnboardingView: View {
                 .font(.system(size: 26, weight: .semibold)).foregroundStyle(.tint)
                 .frame(width: 60, height: 60)
                 .background(RoundedRectangle(cornerRadius: 17, style: .continuous).fill(.tint.opacity(0.14)))
+                .entrance(0)
             Text(title).font(.system(size: 28, weight: .bold)).multilineTextAlignment(.center)
+                .entrance(1)
             Text(subtitle).font(.system(size: 14)).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                .entrance(2)
         }
     }
 
@@ -346,3 +362,20 @@ enum Validation {
         } catch { return .fail("Netzwerkfehler") }
     }
 }
+
+// Staggered entrance: fade + gentle rise + scale, ordered. Re-fires each step because the
+// content carries .id(step). Mirrors VoiceInk's subtle onboarding reveals.
+private struct Entrance: ViewModifier {
+    let order: Int
+    @State private var on = false
+    func body(content: Content) -> some View {
+        content
+            .opacity(on ? 1 : 0)
+            .scaleEffect(on ? 1 : 0.98, anchor: .center)
+            .offset(y: on ? 0 : 12)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.34).delay(0.04 + Double(order) * 0.07)) { on = true }
+            }
+    }
+}
+private extension View { func entrance(_ order: Int = 0) -> some View { modifier(Entrance(order: order)) } }
