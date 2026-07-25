@@ -88,6 +88,7 @@ final class AppController: ObservableObject {
         let key = routeKey(turn.tmux_pane, turn.session_id)
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
         let config = AppConfig.load()
+        resumeGen += 1   // a new turn began → cancel any pending debounced media resume
         Log.write("turn start project=\(turn.project) ttsReady=\(config.ttsReady) sttReady=\(config.sttReady)")
 
         // Muted (manual toggle or macOS Do-Not-Disturb) → stay silent: no TTS, no mic, no
@@ -150,7 +151,7 @@ final class AppController: ObservableObject {
         // speak-only turn (<speak-end>): no mic, no pill. Resume media (queue permitting),
         // end cleanly so the hook exits — Claude reports back on its own.
         if !turn.wantsListen {
-            await maybeResumeMedia()
+            scheduleResume()
             setStatus(key, "idle")
             // Ich melde mich selbst zurück (Background-Arbeit fertig) — Notification fängt
             // dich, falls du weg bist und die Ansage verpasst.
@@ -185,7 +186,7 @@ final class AppController: ObservableObject {
         // video never plays over the acknowledgment.
         ackTask = Task { [weak self] in
             await self?.playAck(intent: intent, hasText: !text.isEmpty, config: config)
-            await self?.maybeResumeMedia()
+            self?.scheduleResume()   // debounced; resumes only after the whole cue is idle
         }
 
         // "Stop heißt Stop": a STOP reply is NOT fed back. The STOP ack clip still plays
@@ -216,15 +217,27 @@ final class AppController: ObservableObject {
     // further turn is waiting (a queued turn would immediately re-pause it anyway).
     private var pendingMediaResume: [String] = []
     private var hasQueuedTurn: Bool { sessions.contains { $0.status == "queued" } }
+    // Bumped whenever a new turn begins; a pending debounced resume checks it and bails if
+    // the burst continued — so media only resumes after the WHOLE audio cue is done.
+    private var resumeGen = 0
 
-    private func maybeResumeMedia() async {
+    // Debounced, fire-and-forget: waits out a short grace so a following turn (queued now
+    // or arriving within the window) can pre-empt the resume. Only resumes once nothing is
+    // queued and no newer turn started. Never awaited by the pipeline (no added latency).
+    private func scheduleResume() {
         guard !pendingMediaResume.isEmpty else { return }
-        guard !hasQueuedTurn else { Log.write("media resume deferred (turns queued)"); return }
-        let tokens = pendingMediaResume
-        pendingMediaResume = []
-        await waitForHiFiOutput()
-        await Task.detached { MediaControl.shared.resume(tokens) }.value
-        Log.write("resumed media: \(tokens.joined(separator: ","))")
+        let gen = resumeGen
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)   // grace: let the next clip/turn pre-empt
+            guard gen == self.resumeGen, !self.hasQueuedTurn, !self.pendingMediaResume.isEmpty else {
+                Log.write("media resume skipped (cue continued)"); return
+            }
+            let tokens = self.pendingMediaResume
+            self.pendingMediaResume = []
+            await self.waitForHiFiOutput()
+            await Task.detached { MediaControl.shared.resume(tokens) }.value
+            Log.write("resumed media: \(tokens.joined(separator: ","))")
+        }
     }
 
     // AirPods: releasing the mic makes Bluetooth renegotiate from HFP (16/24 kHz) back to

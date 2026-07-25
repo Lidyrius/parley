@@ -12,6 +12,7 @@ public sealed class TurnPipeline
     private readonly Func<int> _queuedTurns;
     private readonly PillOverlay? _pill;
     private List<string> _pendingResume = new();
+    private volatile int _resumeGen;   // bumped per turn; cancels a pending debounced resume
     private Task? _ackTask;
 
     public TurnPipeline(Func<int> queuedTurns, PillOverlay? pill)
@@ -25,6 +26,7 @@ public sealed class TurnPipeline
         var config = Config.Load();
         SessionTracker.Touch(turn.Project);
         Log.Write($"turn start project={turn.Project} listen={turn.WantsListen}");
+        _resumeGen++;
 
         if (Muted)
         {
@@ -78,7 +80,7 @@ public sealed class TurnPipeline
 
         if (!turn.WantsListen)
         {
-            await MaybeResumeMedia();
+            ScheduleResume();
             // Ich melde mich selbst zurück — Notification fängt dich, falls du weg bist.
             Notifier.Notify($"Parley · {turn.SpokenLabel}", turn.Speak);
             Log.Write("turn end (speak-only)");
@@ -121,7 +123,7 @@ public sealed class TurnPipeline
                 if (clip is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(clip, config.SpeakingRate));
                 else await AudioOut.PlayChime();
             }
-            await MaybeResumeMedia();
+            ScheduleResume();
         });
 
         if (intent == Groq.Intent.Stop)
@@ -149,18 +151,26 @@ public sealed class TurnPipeline
         await Task.Delay(400);
     }
 
-    private async Task MaybeResumeMedia()
+    // Debounced, fire-and-forget: waits a short grace so a following clip/turn can pre-empt
+    // the resume, then resumes only if the whole audio cue is idle (nothing queued and no
+    // newer turn started). _resumeGen is bumped at each turn start to cancel a stale resume.
+    private void ScheduleResume()
     {
         if (_pendingResume.Count == 0) return;
-        if (_queuedTurns() > 0)
+        var gen = _resumeGen;
+        _ = Task.Run(async () =>
         {
-            Log.Write("media resume deferred (turns queued)");
-            return;
-        }
-        var ids = _pendingResume;
-        _pendingResume = new List<string>();
-        await AudioOut.WaitForHiFiOutput();
-        await MediaControl.Resume(ids);
-        Log.Write($"resumed media: {string.Join(",", ids)}");
+            await Task.Delay(1500);
+            if (gen != _resumeGen || _queuedTurns() > 0 || _pendingResume.Count == 0)
+            {
+                Log.Write("media resume skipped (cue continued)");
+                return;
+            }
+            var ids = _pendingResume;
+            _pendingResume = new List<string>();
+            await AudioOut.WaitForHiFiOutput();
+            await MediaControl.Resume(ids);
+            Log.Write($"resumed media: {string.Join(",", ids)}");
+        });
     }
 }
