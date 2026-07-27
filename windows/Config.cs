@@ -8,7 +8,7 @@ namespace Parley;
 public sealed class Config
 {
     public string GoogleKey { get; init; } = "";
-    public string GoogleVoice { get; init; } = "de-DE-Chirp3-HD-Alnilam";
+    public string GoogleVoice { get; set; } = "de-DE-Chirp3-HD-Alnilam";
     public string GroqKey { get; init; } = "";
     public string Language { get; init; } = "Deutsch";
     public double SpeakingRate { get; init; } = 1.0;

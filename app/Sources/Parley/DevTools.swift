@@ -17,8 +17,9 @@ enum DevTools {
         try? fm.removeItem(at: dir.appendingPathComponent("credentials.json"))
         try? fm.removeItem(at: dir.appendingPathComponent("clips"))
         try? fm.removeItem(at: dir.appendingPathComponent("projects"))   // legacy path, if any
+        try? fm.removeItem(at: dir.appendingPathComponent("tutorial"))
         Log.write("devtools: reset (kept stats), reopening onboarding")
-        OnboardingPresenter.shared.show()
+        OnboardingPresenter.shared.restart()   // discard any open window → fresh from welcome
     }
 
     static func showOnboarding() { OnboardingPresenter.shared.show() }

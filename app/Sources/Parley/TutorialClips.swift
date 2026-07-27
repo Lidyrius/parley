@@ -34,32 +34,39 @@ enum TutorialStep: Int, CaseIterable {
         }
     }
 
-    /// The spoken (and displayed) line.
+    /// The spoken line — contains the phonetic "Clode" so TTS says "Claude" correctly.
     func line(_ lang: String) -> String {
         lang == "English" ? Self.en[rawValue] : Self.de[rawValue]
     }
 
+    /// Same line for on-screen display: spelled "Claude", not the phonetic "Clode".
+    func displayLine(_ lang: String) -> String {
+        line(lang).replacingOccurrences(of: "Clode", with: "Claude")
+    }
+
+    // Written to be HEARD as a flowing, friendly conversation (du-form). "Clode Code" is
+    // the phonetic spelling of "Claude Code" so the voice says it correctly.
     private static let de = [
-        "Willkommen, Sir. Am Ende jeder Antwort spreche ich die Zusammenfassung — Sie antworten einfach per Stimme.",
-        "Sagen Sie „Stopp“, höre ich sofort auf und die Sitzung pausiert. Probieren Sie es: sagen Sie jetzt „Stopp“.",
-        "Sagen Sie zum Beispiel „warte zehn Minuten“ — ich pausiere und melde mich von selbst zurück. Probieren Sie es.",
-        "Läuft ein weiteres Projekt parallel, sagen Sie von hier aus einfach: „nimm das Projekt Soundso wieder auf“.",
-        "Und wenn Sie etwas wissen möchten, stellen Sie einfach eine Frage — ich antworte sofort.",
-        "Fertig, Sir. Starten Sie jetzt eine neue Claude-Code-Sitzung und tippen Sie Parley Voice — dann bin ich für Sie da.",
+        "Willkommen bei Parley. Am Ende jeder Antwort spreche ich dir die Zusammenfassung vor, und du antwortest einfach mit deiner Stimme — ganz freihändig.",
+        "Sag einfach Stopp, dann halte ich sofort an und die Sitzung pausiert. Probier es gleich — sag jetzt Stopp.",
+        "Du kannst mir auch sagen: warte zehn Minuten. Dann lege ich eine Pause ein und melde mich von selbst wieder. Probier es ruhig aus.",
+        "Läuft nebenbei ein anderes Projekt, sag mir einfach von hier aus: nimm das Projekt Soundso wieder auf. Das klappt aus jeder Sitzung.",
+        "Und wenn du etwas wissen willst, frag einfach — ich antworte dir sofort.",
+        "Das war's. Starte jetzt eine neue Clode-Code-Sitzung und tippe Parley Voice, dann bin ich für dich da.",
     ]
     private static let en = [
-        "Welcome, Sir. At the end of every turn I speak the summary — you just reply by voice.",
-        "Say “Stop” and I halt at once and the session pauses. Try it: say “Stop” now.",
-        "Say, for example, “wait ten minutes” — I pause and report back on my own. Give it a try.",
-        "If another project runs in parallel, just say from here: “resume the such-and-such project”.",
-        "And whenever you want to know something, simply ask — I answer right away.",
-        "All set, Sir. Now start a new Claude Code session and type Parley Voice — then I'm at your service.",
+        "Welcome to Parley. At the end of every turn I speak you the summary, and you just reply with your voice — completely hands-free.",
+        "Just say Stop and I halt at once and the session pauses. Try it now — say Stop.",
+        "You can also tell me: wait ten minutes. Then I take a break and report back on my own. Give it a try.",
+        "If another project is running, just tell me from here: resume the such-and-such project. It works from any session.",
+        "And whenever you want to know something, just ask — I answer right away.",
+        "That's it. Now start a new Clode Code session and type Parley Voice, and I'm here for you.",
     ]
 }
 
 actor TutorialClips {
     static let shared = TutorialClips()
-    static let version = 1        // bump when the tutorial changes → shown again
+    static let version = 2        // bump when the tutorial changes → shown again
 
     private var rendering = false
 
@@ -69,23 +76,25 @@ actor TutorialClips {
     }
 
     /// Cached PCM for a step, rendering all steps first if needed (returns nil if not ready).
-    func clip(_ step: TutorialStep, lang: String, config: AppConfig) async -> Data? {
-        let file = Self.dir(lang).appendingPathComponent("step_\(step.rawValue).pcm")
+    /// Keyed by voice so a voice change re-renders. key/voice come from the onboarding
+    /// selection (not yet-saved config).
+    func clip(_ step: TutorialStep, lang: String, key: String, voice: String) async -> Data? {
+        let file = Self.dir(voice).appendingPathComponent("step_\(step.rawValue).pcm")
         if let d = try? Data(contentsOf: file) { return d }
-        await render(lang: lang, config: config)
+        await render(lang: lang, key: key, voice: voice)
         return try? Data(contentsOf: file)
     }
 
-    func render(lang: String, config: AppConfig) async {
-        guard config.useGoogle, !rendering else { return }
+    func render(lang: String, key: String, voice: String) async {
+        guard !key.isEmpty, !rendering else { return }
         rendering = true
         defer { rendering = false }
-        let d = Self.dir(lang)
+        let d = Self.dir(voice)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         for step in TutorialStep.allCases {
             let file = d.appendingPathComponent("step_\(step.rawValue).pcm")
             if FileManager.default.fileExists(atPath: file.path) { continue }
-            let req = GoogleTTS.request(text: step.line(lang), apiKey: config.googleKey, voice: config.googleVoice)
+            let req = GoogleTTS.request(text: step.line(lang), apiKey: key, voice: voice)
             guard let (data, resp) = try? await URLSession.shared.data(for: req),
                   (resp as? HTTPURLResponse)?.statusCode == 200, let pcm = GoogleTTS.pcm(from: data) else { continue }
             try? pcm.write(to: file)

@@ -32,7 +32,8 @@ final class OnboardingModel: ObservableObject {
     @Published var googleKey = Keychain.get(.googleAPIKey) ?? "" { didSet { googleCheck = .idle } }
     @Published var groqKey = Keychain.get(.groqAPIKey) ?? "" { didSet { groqCheck = .idle } }
     @Published var language = Keychain.get(.language) ?? "Deutsch"
-    @Published var voiceName = "Alnilam"        // Chirp3 HD star name
+    // Star name; seed from the saved voice so a tutorial-only re-show uses the real voice.
+    @Published var voiceName = String(Keychain.get(.googleVoice)?.split(separator: "-").last ?? "Alnilam")
     @Published var notifyMode = AppConfig.load().notifyMode
     @Published var micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published var voices: [String] = ["Alnilam", "Aoede", "Charon", "Kore", "Puck", "Fenrir"]
@@ -76,6 +77,8 @@ final class OnboardingModel: ObservableObject {
 
     func next() {
         guard let s = Step(rawValue: step.rawValue + 1) else { return }
+        // Voice just chosen → render the tutorial in that voice, before other cache clips.
+        if step == .voice { prepareTutorial() }
         forward = true
         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { step = s }
     }
@@ -93,18 +96,22 @@ final class OnboardingModel: ObservableObject {
 
     // MARK: - tutorial
 
-    /// Render the tutorial audio ahead of time (called when onboarding opens).
+    /// The Chirp3-HD voice the user picked in onboarding (not yet saved to config).
+    var selectedVoice: String { "\(langCode(language))-Chirp3-HD-\(voiceName)" }
+
+    /// Render the tutorial audio in the CHOSEN voice — called right after the voice step,
+    /// so tutorial phrases are ready before any other (lazy) cache sentences.
     func prepareTutorial() {
-        let cfg = AppConfig.load()
-        Task { await TutorialClips.shared.render(lang: language, config: cfg) }
+        let lang = language, key = googleKey, voice = selectedVoice
+        Task { await TutorialClips.shared.render(lang: lang, key: key, voice: voice) }
     }
 
     /// Play the current tutorial step's pre-rendered line.
     func playTutLine() {
         tutResult = nil
-        let step = tutStep, lang = language, cfg = AppConfig.load()
+        let step = tutStep, lang = language, key = googleKey, voice = selectedVoice
         Task {
-            if let pcm = await TutorialClips.shared.clip(step, lang: lang, config: cfg) {
+            if let pcm = await TutorialClips.shared.clip(step, lang: lang, key: key, voice: voice) {
                 await AppController.shared.onboardingSpeak(pcm)
             }
         }
@@ -185,7 +192,7 @@ struct OnboardingView: View {
             .clipped()
         }
         .frame(width: 640, height: 560)
-        .onAppear { m.loadVoices(); m.prepareTutorial() }
+        .onAppear { m.loadVoices() }
     }
 
     private var progress: some View {
@@ -261,7 +268,7 @@ struct OnboardingView: View {
     @ViewBuilder private var tutorialCard: some View {
         let step = m.tutStep
         VStack(spacing: 16) {
-            hero(step.symbol, step.title(m.language), step.line(m.language))
+            hero(step.symbol, step.title(m.language), step.displayLine(m.language))
             // sub-progress within the tutorial
             HStack(spacing: 5) {
                 ForEach(0..<TutorialStep.allCases.count, id: \.self) { i in
@@ -414,6 +421,12 @@ final class OnboardingPresenter {
     func showIfNeeded() {
         if !Self.isComplete { show(startAt: .welcome) }
         else if !Self.tutorialCurrent { show(startAt: .tutorial) }
+    }
+
+    /// Force a fresh onboarding from the welcome step, discarding any window already open.
+    func restart() {
+        window?.close(); window = nil
+        show(startAt: .welcome)
     }
 
     func show(startAt: OnboardingModel.Step = .welcome) {

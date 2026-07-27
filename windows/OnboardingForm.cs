@@ -44,12 +44,12 @@ public sealed class OnboardingForm : Form
     // Tutorial: one spoken line per step; expect 0=none 1=stop 2=wait.
     private static readonly (string title, string line, int expect, string icon)[] TutDe =
     {
-        ("So funktioniert's", "Willkommen, Sir. Am Ende jeder Antwort spreche ich die Zusammenfassung — Sie antworten einfach per Stimme.", 0, "wave"),
-        ("Sag \u201EStopp\u201C", "Sagen Sie \u201EStopp\u201C, höre ich sofort auf und die Sitzung pausiert. Probieren Sie es: sagen Sie jetzt \u201EStopp\u201C.", 1, "stop"),
-        ("Lass mich warten", "Sagen Sie zum Beispiel \u201Ewarte zehn Minuten\u201C — ich pausiere und melde mich von selbst zurück. Probieren Sie es.", 2, "clock"),
-        ("Parallele Projekte", "Läuft ein weiteres Projekt parallel, sagen Sie von hier aus: \u201Enimm das Projekt Soundso wieder auf\u201C.", 0, "stack"),
-        ("Einfach fragen", "Und wenn Sie etwas wissen möchten, stellen Sie einfach eine Frage — ich antworte sofort.", 0, "quest"),
-        ("Fertig!", "Starten Sie jetzt eine neue Claude-Code-Sitzung und tippen Sie Parley Voice — dann bin ich für Sie da.", 0, "check"),
+        ("So funktioniert's", "Willkommen bei Parley. Am Ende jeder Antwort spreche ich dir die Zusammenfassung vor, und du antwortest einfach mit deiner Stimme — ganz freihändig.", 0, "wave"),
+        ("Sag „Stopp“", "Sag einfach Stopp, dann halte ich sofort an und die Sitzung pausiert. Probier es gleich — sag jetzt Stopp.", 1, "stop"),
+        ("Lass mich warten", "Du kannst mir auch sagen: warte zehn Minuten. Dann lege ich eine Pause ein und melde mich von selbst wieder. Probier es ruhig aus.", 2, "clock"),
+        ("Parallele Projekte", "Läuft nebenbei ein anderes Projekt, sag mir einfach von hier aus: nimm das Projekt Soundso wieder auf. Das klappt aus jeder Sitzung.", 0, "stack"),
+        ("Einfach fragen", "Und wenn du etwas wissen willst, frag einfach — ich antworte dir sofort.", 0, "quest"),
+        ("Fertig!", "Das war's. Starte jetzt eine neue Clode-Code-Sitzung und tippe Parley Voice, dann bin ich für dich da.", 0, "check"),
     };
     private int _tutIndex;
     private bool _tutTrying;
@@ -59,10 +59,12 @@ public sealed class OnboardingForm : Form
 
     private Rectangle _nextRect, _backRect;
     private readonly Rectangle[] _cardRects = new Rectangle[3];
+    private readonly bool _tutorialOnly;
 
     public OnboardingForm(bool tutorialOnly = false)
     {
         Text = "Parley";
+        _tutorialOnly = tutorialOnly;
         if (tutorialOnly) _step = Step.Tutorial;
         ClientSize = new Size(640, 560);
         StartPosition = FormStartPosition.CenterScreen;
@@ -146,7 +148,7 @@ public sealed class OnboardingForm : Form
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         var w = ClientSize.Width;
-        var m = _step == Step.Tutorial ? (title: TutDe[_tutIndex].title, sub: TutDe[_tutIndex].line, icon: TutDe[_tutIndex].icon) : Meta[(int)_step];
+        var m = _step == Step.Tutorial ? (title: TutDe[_tutIndex].title, sub: TutDe[_tutIndex].line.Replace("Clode", "Claude"), icon: TutDe[_tutIndex].icon) : Meta[(int)_step];
 
         // progress dots
         var total = Meta.Length;
@@ -402,6 +404,13 @@ public sealed class OnboardingForm : Form
     private async void PlayTutLine()
     {
         var cfg = Config.Load();
+        // Use the voice picked in this onboarding, not the old saved one (matches macOS).
+        if (_voice.SelectedItem is string star && star.Length > 0)
+        {
+            var lang = _lang.SelectedItem?.ToString() ?? "Deutsch";
+            var code = lang switch { "English" => "en-US", "Français" => "fr-FR", "Español" => "es-ES", "Italiano" => "it-IT", "Nederlands" => "nl-NL", _ => "de-DE" };
+            cfg.GoogleVoice = $"{code}-Chirp3-HD-{star}";
+        }
         var text = TutDe[_tutIndex].line;
         try
         {
@@ -440,7 +449,7 @@ public sealed class OnboardingForm : Form
         {
             var d = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(Config.CredentialsPath));
             var seen = d != null && d.TryGetValue("tutorialSeen", out var v) ? (int.TryParse(v.GetString(), out var n) ? n : 0) : 0;
-            return seen < 1;   // TutorialVersion
+            return seen < 2;   // TutorialVersion
         }
         catch { return true; }
     }
@@ -457,13 +466,17 @@ public sealed class OnboardingForm : Form
             foreach (var kv in existing) d[kv.Key] = kv.Value.ValueKind == JsonValueKind.String ? kv.Value.GetString()! : kv.Value.ToString();
         }
         catch { }
-        d["googleAPIKey"] = _google.Text.Trim();
-        d["groqAPIKey"] = _groq.Text.Trim();
-        d["language"] = lang;
-        d["googleVoice"] = $"{code}-Chirp3-HD-{_voice.SelectedItem}";
-        d["notifyMode"] = _notifyIndex switch { 1 => "system", 2 => "none", _ => "pill" };
-        d["onboarded"] = "1";
-        d["tutorialSeen"] = "1";   // TutorialVersion
+        // Tutorial-only re-show has no config fields — only mark the tutorial seen, keep the rest.
+        if (!_tutorialOnly)
+        {
+            d["googleAPIKey"] = _google.Text.Trim();
+            d["groqAPIKey"] = _groq.Text.Trim();
+            d["language"] = lang;
+            d["googleVoice"] = $"{code}-Chirp3-HD-{_voice.SelectedItem}";
+            d["notifyMode"] = _notifyIndex switch { 1 => "system", 2 => "none", _ => "pill" };
+            d["onboarded"] = "1";
+        }
+        d["tutorialSeen"] = "2";   // TutorialVersion
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
     }
 
