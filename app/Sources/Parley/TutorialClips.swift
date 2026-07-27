@@ -15,7 +15,7 @@ enum TutorialStep: Int, CaseIterable {
         let en = lang == "English"
         switch self {
         case .principle: return en ? "How it works"      : "So funktioniert's"
-        case .stop:      return en ? "Say “Stop”"          : "Sag „Stopp“"
+        case .stop:      return en ? "Tell me to stop"      : "Halt mich an"
         case .wait:      return en ? "Ask me to wait"      : "Lass mich warten"
         case .projects:  return en ? "Parallel projects"   : "Parallele Projekte"
         case .questions: return en ? "Just ask"            : "Einfach fragen"
@@ -48,16 +48,16 @@ enum TutorialStep: Int, CaseIterable {
     // the phonetic spelling of "Claude Code" so the voice says it correctly.
     private static let de = [
         "Willkommen bei Parley. Am Ende jeder Antwort spreche ich dir die Zusammenfassung vor, und du antwortest einfach mit deiner Stimme — ganz freihändig.",
-        "Sag einfach Stopp, dann halte ich sofort an und die Sitzung pausiert. Probier es gleich — sag jetzt Stopp.",
-        "Du kannst mir auch sagen: warte zehn Minuten. Dann lege ich eine Pause ein und melde mich von selbst wieder. Probier es ruhig aus.",
+        "Wann immer ich aufhören soll, sag es einfach in deinen Worten — ob „stopp“, „lass uns hier aufhören“ oder „das reicht erst mal“. Auf ein bestimmtes Wort kommt es nicht an. Probier es: sag mir, dass ich anhalten soll.",
+        "Brauchst du eine Pause, sag mir einfach, ich soll warten — „warte zehn Minuten“, „gib mir eine Viertelstunde“, die Zeit bestimmst du frei. Ich melde mich dann von selbst zurück. Probier es ruhig aus.",
         "Läuft nebenbei ein anderes Projekt, sag mir einfach von hier aus: nimm das Projekt Soundso wieder auf. Das klappt aus jeder Sitzung.",
         "Und wenn du etwas wissen willst, frag einfach — ich antworte dir sofort.",
         "Das war's. Starte jetzt eine neue Clode-Code-Sitzung und tippe Parley Voice, dann bin ich für dich da.",
     ]
     private static let en = [
         "Welcome to Parley. At the end of every turn I speak you the summary, and you just reply with your voice — completely hands-free.",
-        "Just say Stop and I halt at once and the session pauses. Try it now — say Stop.",
-        "You can also tell me: wait ten minutes. Then I take a break and report back on my own. Give it a try.",
+        "Whenever I should stop, just say it in your own words — “stop”, “let's wrap up here”, or “that's enough for now”. It doesn't hinge on a magic word. Try it: tell me to stop.",
+        "Need a break? Just tell me to wait — “wait ten minutes”, “give me a quarter hour”, you pick the time. I'll come back to you on my own. Give it a try.",
         "If another project is running, just tell me from here: resume the such-and-such project. It works from any session.",
         "And whenever you want to know something, just ask — I answer right away.",
         "That's it. Now start a new Clode Code session and type Parley Voice, and I'm here for you.",
@@ -66,13 +66,14 @@ enum TutorialStep: Int, CaseIterable {
 
 actor TutorialClips {
     static let shared = TutorialClips()
-    static let version = 2        // bump when the tutorial changes → shown again
+    static let version = 3        // bump when the tutorial changes → shown again
 
     private var rendering = false
 
-    private static func dir(_ lang: String) -> URL {
+    // One folder per voice (e.g. "de-DE-Chirp3-HD-Alnilam") so a voice change re-renders.
+    private static func dir(_ voice: String) -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Parley/tutorial/\(lang == "English" ? "en" : "de")", isDirectory: true)
+            .appendingPathComponent("Parley/tutorial/\(voice)", isDirectory: true)
     }
 
     /// Cached PCM for a step, rendering all steps first if needed (returns nil if not ready).

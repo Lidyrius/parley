@@ -45,8 +45,8 @@ public sealed class OnboardingForm : Form
     private static readonly (string title, string line, int expect, string icon)[] TutDe =
     {
         ("So funktioniert's", "Willkommen bei Parley. Am Ende jeder Antwort spreche ich dir die Zusammenfassung vor, und du antwortest einfach mit deiner Stimme — ganz freihändig.", 0, "wave"),
-        ("Sag „Stopp“", "Sag einfach Stopp, dann halte ich sofort an und die Sitzung pausiert. Probier es gleich — sag jetzt Stopp.", 1, "stop"),
-        ("Lass mich warten", "Du kannst mir auch sagen: warte zehn Minuten. Dann lege ich eine Pause ein und melde mich von selbst wieder. Probier es ruhig aus.", 2, "clock"),
+        ("Halt mich an", "Wann immer ich aufhören soll, sag es einfach in deinen Worten — ob „stopp“, „lass uns hier aufhören“ oder „das reicht erst mal“. Auf ein bestimmtes Wort kommt es nicht an. Probier es: sag mir, dass ich anhalten soll.", 1, "stop"),
+        ("Lass mich warten", "Brauchst du eine Pause, sag mir einfach, ich soll warten — „warte zehn Minuten“, „gib mir eine Viertelstunde“, die Zeit bestimmst du frei. Ich melde mich dann von selbst zurück. Probier es ruhig aus.", 2, "clock"),
         ("Parallele Projekte", "Läuft nebenbei ein anderes Projekt, sag mir einfach von hier aus: nimm das Projekt Soundso wieder auf. Das klappt aus jeder Sitzung.", 0, "stack"),
         ("Einfach fragen", "Und wenn du etwas wissen willst, frag einfach — ich antworte dir sofort.", 0, "quest"),
         ("Fertig!", "Das war's. Starte jetzt eine neue Clode-Code-Sitzung und tippe Parley Voice, dann bin ich für dich da.", 0, "check"),
@@ -449,7 +449,7 @@ public sealed class OnboardingForm : Form
         {
             var d = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(Config.CredentialsPath));
             var seen = d != null && d.TryGetValue("tutorialSeen", out var v) ? (int.TryParse(v.GetString(), out var n) ? n : 0) : 0;
-            return seen < 2;   // TutorialVersion
+            return seen < 3;   // TutorialVersion
         }
         catch { return true; }
     }
@@ -476,7 +476,7 @@ public sealed class OnboardingForm : Form
             d["notifyMode"] = _notifyIndex switch { 1 => "system", 2 => "none", _ => "pill" };
             d["onboarded"] = "1";
         }
-        d["tutorialSeen"] = "2";   // TutorialVersion
+        d["tutorialSeen"] = "3";   // TutorialVersion
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
     }
 
