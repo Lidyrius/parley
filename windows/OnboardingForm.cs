@@ -146,7 +146,7 @@ public sealed class OnboardingForm : Form
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         var w = ClientSize.Width;
-        var m = _step == Step.Tutorial ? (TutDe[_tutIndex].title, TutDe[_tutIndex].line, TutDe[_tutIndex].icon) : Meta[(int)_step];
+        var m = _step == Step.Tutorial ? (title: TutDe[_tutIndex].title, sub: TutDe[_tutIndex].line, icon: TutDe[_tutIndex].icon) : Meta[(int)_step];
 
         // progress dots
         var total = Meta.Length;
