@@ -60,7 +60,19 @@ public sealed class OnboardingForm : Form
 
     private Rectangle _nextRect, _backRect;
     private readonly Rectangle[] _cardRects = new Rectangle[3];
+    // Key-step links: [google guide, google console, groq guide, groq console].
+    private Rectangle _gGuideRect, _gConsoleRect, _qGuideRect, _qConsoleRect;
     private readonly bool _tutorialOnly;
+
+    private const string GoogleConsoleUrl = "https://console.cloud.google.com/apis/library/texttospeech.googleapis.com";
+    private const string GroqConsoleUrl = "https://console.groq.com/keys";
+    private const string GoogleGuideUrl = "https://lidyrius.github.io/parley/keys/google.html";
+    private const string GroqGuideUrl = "https://lidyrius.github.io/parley/keys/groq.html";
+
+    private static void Open(string url)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+    }
 
     public OnboardingForm(bool tutorialOnly = false)
     {
@@ -141,6 +153,13 @@ public sealed class OnboardingForm : Form
     private void OnClick(object? s, MouseEventArgs e)
     {
         if (_backRect.Contains(e.Location) && (int)_step > 0) { _step = (Step)((int)_step - 1); SetStepControls(); return; }
+        if (_step == Step.Keys)
+        {
+            if (_gGuideRect.Contains(e.Location)) { Open(GoogleGuideUrl); return; }
+            if (_gConsoleRect.Contains(e.Location)) { Open(GoogleConsoleUrl); return; }
+            if (_qGuideRect.Contains(e.Location)) { Open(GroqGuideUrl); return; }
+            if (_qConsoleRect.Contains(e.Location)) { Open(GroqConsoleUrl); return; }
+        }
         if (_step == Step.Tutorial && _tryRect.Contains(e.Location) && !_tutTrying) { TryTut(); return; }
         if (_nextRect.Contains(e.Location) && CanContinue)
         {
@@ -207,6 +226,11 @@ public sealed class OnboardingForm : Form
             case Step.Keys:
                 g.DrawString("Google Cloud TTS  ·  1 Mio Zeichen/Monat gratis", lblFont, white, _google.Left, _google.Top - 20);
                 g.DrawString("Groq  ·  kostenloser Developer-Key", lblFont, white, _groq.Left, _groq.Top - 20);
+                // right-aligned links per field: [Anleitung]  [Konsole öffnen]
+                _gConsoleRect = DrawLink(g, "Konsole öffnen", _google.Right, _google.Top - 20, true);
+                _gGuideRect = DrawLink(g, "Anleitung", _gConsoleRect.Left - 14, _google.Top - 20, true);
+                _qConsoleRect = DrawLink(g, "Konsole öffnen", _groq.Right, _groq.Top - 20, true);
+                _qGuideRect = DrawLink(g, "Anleitung", _qConsoleRect.Left - 14, _groq.Top - 20, true);
                 if (!CanContinue)
                     using (var warn = new SolidBrush(Color.FromArgb(232, 152, 48)))
                     using (var wf = new Font("Segoe UI", 9.5f, FontStyle.Bold))
@@ -252,6 +276,16 @@ public sealed class OnboardingForm : Form
         var cc = new Rectangle(r.Right - 34, r.Y + r.Height / 2 - 9, 18, 18);
         if (on) { using var b = new SolidBrush(Accent); g.FillEllipse(b, cc); using var wp = new Pen(Color.White, 2); DrawCheckPath(g, cc, wp); }
         else { using var p = new Pen(Color.FromArgb(90, 255, 255, 255), 1.5f); g.DrawEllipse(p, cc); }
+    }
+
+    private Rectangle DrawLink(Graphics g, string text, int x, int y, bool rightAlign)
+    {
+        using var f = new Font("Segoe UI", 9.5f);
+        var sz = g.MeasureString(text, f);
+        var rect = new Rectangle(rightAlign ? x - (int)sz.Width : x, y, (int)sz.Width, (int)sz.Height);
+        using var b = new SolidBrush(Accent);
+        g.DrawString(text, f, b, rect.Location);
+        return rect;
     }
 
     private void DrawButton(Graphics g, Rectangle r, string text, bool primary, bool enabled = true)

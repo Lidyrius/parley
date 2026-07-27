@@ -56,6 +56,9 @@ final class OnboardingModel: ObservableObject {
     func openGroqConsole() {
         NSWorkspace.shared.open(URL(string: "https://console.groq.com/keys")!)
     }
+    // Step-by-step GitHub Pages guides (screenshots).
+    func openGoogleGuide() { NSWorkspace.shared.open(URL(string: "https://lidyrius.github.io/parley/keys/google.html")!) }
+    func openGroqGuide() { NSWorkspace.shared.open(URL(string: "https://lidyrius.github.io/parley/keys/groq.html")!) }
 
     /// Verify both keys with a tiny live request; updates the per-key status.
     func checkKeys() {
@@ -223,9 +226,9 @@ struct OnboardingView: View {
                 hero("key.fill", "API-Schlüssel", "Beide sind praktisch kostenlos. Öffne die Konsole, erstelle den Schlüssel, füge ihn ein — und prüfe.")
                 VStack(alignment: .leading, spacing: 16) {
                     keyField("Google Cloud TTS", "1 Mio Zeichen/Monat gratis", text: $m.googleKey,
-                             check: m.googleCheck, open: m.openGoogleConsole)
+                             check: m.googleCheck, open: m.openGoogleConsole, guide: m.openGoogleGuide)
                     keyField("Groq", "kostenloser Developer-Key", text: $m.groqKey,
-                             check: m.groqCheck, open: m.openGroqConsole)
+                             check: m.groqCheck, open: m.openGroqConsole, guide: m.openGroqGuide)
                 }.entrance(3)
                 Button(checking ? "Prüfe…" : "Schlüssel prüfen") { m.checkKeys() }
                     .buttonStyle(SecondaryButton()).disabled(checking).entrance(4)
@@ -349,14 +352,17 @@ struct OnboardingView: View {
     private var checking: Bool { m.googleCheck == .checking || m.groqCheck == .checking }
 
     private func keyField(_ label: String, _ hint: String, text: Binding<String>,
-                          check: OnboardingModel.Check, open: @escaping () -> Void) -> some View {
+                          check: OnboardingModel.Check, open: @escaping () -> Void,
+                          guide: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack {
+            HStack(spacing: 14) {
                 Text(label).font(.system(size: 13, weight: .semibold))
                 Spacer()
+                Button(action: guide) {
+                    Label("Anleitung", systemImage: "book.fill").font(.system(size: 11))
+                }.buttonStyle(.link)
                 Button(action: open) {
-                    Label("Konsole öffnen", systemImage: "arrow.up.right.square")
-                        .font(.system(size: 11))
+                    Label("Konsole öffnen", systemImage: "arrow.up.right.square").font(.system(size: 11))
                 }.buttonStyle(.link)
             }
             SecureField("", text: text).textFieldStyle(.roundedBorder).onSubmit { m.checkKeys() }
