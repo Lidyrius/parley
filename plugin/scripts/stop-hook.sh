@@ -84,6 +84,7 @@ resp="$(curl -sS --max-time 3600 -X POST "http://${HOST}:${PORT}/turn" \
 transcript="$(printf '%s' "$resp" | jq -r '.transcript // ""' 2>/dev/null || true)"
 transcript="$(printf '%s' "$transcript" | perl -0777 -pe 's/^\s+|\s+$//g')"
 park="$(printf '%s' "$resp" | jq -r '.park // false' 2>/dev/null || echo false)"
+wait_s="$(printf '%s' "$resp" | jq -r '.wait // 0' 2>/dev/null || echo 0)"
 
 # Feed a voice reply back into the session as the next user turn, then end this hook.
 inject() {
@@ -91,6 +92,14 @@ inject() {
     '{decision:"block", reason:$r, systemMessage:"🎙️ Parley: Sprachantwort eingespeist"}'
   exit 0
 }
+# "Warte X Minuten" — the app asked us to pause, then continue. Sleep, then inject the
+# resume prompt so Claude picks up on its own. (hooks.json timeout must exceed the wait.)
+if [ "${wait_s:-0}" -gt 0 ] 2>/dev/null; then
+  resume="$(printf '%s' "$resp" | jq -r '.resume // ""' 2>/dev/null || true)"
+  sleep "$wait_s"
+  inject "$resume"
+fi
+
 [ -n "$transcript" ] && inject "$transcript"
 
 # No reply. Unless the app asked to PARK this session, end normally.

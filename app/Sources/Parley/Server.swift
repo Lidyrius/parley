@@ -182,8 +182,9 @@ final class ControlServer: @unchecked Sendable {
         let esc = reply.transcript
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        struct Wire: Encodable { let transcript: String; let park: Bool }
-        let data = try? JSONEncoder().encode(Wire(transcript: reply.transcript, park: reply.park))
+        struct Wire: Encodable { let transcript: String; let park: Bool; let wait: Int; let resume: String }
+        let data = try? JSONEncoder().encode(Wire(transcript: reply.transcript, park: reply.park,
+                                                  wait: reply.waitSeconds, resume: reply.resume))
         return data.flatMap { String(data: $0, encoding: .utf8) }
             ?? #"{"transcript":"\#(esc)","park":\#(reply.park)}"#
     }

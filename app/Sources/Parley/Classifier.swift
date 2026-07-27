@@ -45,6 +45,40 @@ enum Classifier {
     present. Output only the label.
     """
 
+    // Wait/pause extraction: if the user asks to wait a DURATION before continuing, returns
+    // the total seconds; 0 otherwise. Language/format independent (handled by the model).
+    private static let waitSystem = """
+    The user speaks to a coding assistant. If they ask you to WAIT or PAUSE for a duration \
+    before continuing (e.g. "warte 5 Minuten", "mach 10 Minuten Pause", "in einer halben \
+    Stunde", "wait 30 seconds", "gib mir 2 Minuten"), output ONLY the total number of \
+    SECONDS as a plain integer. If they are NOT asking to wait for a set duration, output 0. \
+    Output only the integer, nothing else.
+    """
+
+    static func waitRequest(text: String, apiKey: String) -> URLRequest {
+        var req = URLRequest(url: URL(string: endpoint)!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "model": model, "temperature": 0, "max_tokens": 8,
+            "messages": [["role": "system", "content": waitSystem], ["role": "user", "content": text]],
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return req
+    }
+
+    /// Parse the wait response → seconds (clamped 0…3600; a lone tiny value is ignored).
+    static func parseWait(_ data: Data) -> Int {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = obj["choices"] as? [[String: Any]],
+              let msg = choices.first?["message"] as? [String: Any],
+              let content = msg["content"] as? String else { return 0 }
+        let digits = content.filter(\.isNumber)
+        let n = Int(digits) ?? 0
+        return n < 5 ? 0 : min(3600, n)
+    }
+
     static func request(text: String, apiKey: String) -> URLRequest {
         var req = URLRequest(url: URL(string: endpoint)!)
         req.httpMethod = "POST"

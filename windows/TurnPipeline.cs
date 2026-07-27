@@ -26,7 +26,7 @@ public sealed class TurnPipeline
         _wake = wake;
     }
 
-    public async Task<(string transcript, bool park)> Run(TurnPayload turn)
+    public async Task<(string transcript, bool park, int wait, string resume)> Run(TurnPayload turn)
     {
         var config = Config.Load();
         SessionTracker.Touch(turn.Project);
@@ -38,7 +38,7 @@ public sealed class TurnPipeline
             Log.Write("muted → skipping turn");
             // Stumm: nicht sprechen, aber die Zusammenfassung als Notification zeigen.
             Notifier.Notify($"Parley · {turn.SpokenLabel}", turn.Speak);
-            return ("", false);
+            return ("", false, 0, "");
         }
 
         // Prefetch the sentence synthesis immediately; observed duration feeds TtsTiming.
@@ -89,7 +89,7 @@ public sealed class TurnPipeline
             // Ich melde mich selbst zurück — Notification fängt dich, falls du weg bist.
             Notifier.Notify($"Parley · {turn.SpokenLabel}", turn.Speak);
             Log.Write("turn end (speak-only)");
-            return ("", false);
+            return ("", false, 0, "");
         }
 
         // Record → transcribe. A CONTROL command (resume a paused project by voice) is
@@ -127,6 +127,25 @@ public sealed class TurnPipeline
             // loop: listen again for the current session's actual reply
         }
 
+        // "Warte X Minuten" — pause before continuing (checked before STOP, which also
+        // matches "warte"). Confirm, resume media for the wait, tell the hook to sleep then
+        // re-inject a resume prompt so Claude picks up automatically.
+        if (text.Length > 0)
+        {
+            var wait = await Groq.ClassifyWait(text, config);
+            if (wait > 0)
+            {
+                var human = HumanDuration(wait);
+                Log.Write($"wait requested: {wait}s");
+                StatsStore.RecordTurn(turn.Speak, text, 0, "WAIT", turn.Project);
+                await SpeakLine($"Verstanden, Sir. Ich warte {human} und melde mich dann.", config);
+                ScheduleResume();
+                var resume = $"[Parley] Die vom Nutzer angeforderte Wartezeit von {human} ist vorbei. " +
+                    "Fahre jetzt fort: prüfe, ob alles wie erwartet funktioniert hat, und berichte kurz.";
+                return ("", false, wait, resume);
+            }
+        }
+
         var intent = text.Length == 0 ? Groq.Intent.Other : await Groq.Classify(text, config);
         Log.Write($"classified: {intent}");
 
@@ -155,15 +174,22 @@ public sealed class TurnPipeline
         if (intent == Groq.Intent.Stop)
         {
             Log.Write("turn end (stop → parked, resumable)");
-            return ("", true);
+            return ("", true, 0, "");
         }
         if (text.Length == 0)
         {
             Log.Write("turn end (silence → parked, resumable)");
-            return ("", true);
+            return ("", true, 0, "");
         }
         Log.Write("turn end");
-        return (text, false);
+        return (text, false, 0, "");
+    }
+
+    private static string HumanDuration(int seconds)
+    {
+        if (seconds % 60 == 0) { var m = seconds / 60; return m == 1 ? "eine Minute" : $"{m} Minuten"; }
+        if (seconds < 60) return $"{seconds} Sekunden";
+        return $"{seconds / 60} Minuten und {seconds % 60} Sekunden";
     }
 
     // Speak a short dynamic line (no mic) — used to confirm a resume before re-listening.

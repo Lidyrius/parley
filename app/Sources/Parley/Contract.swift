@@ -18,7 +18,12 @@ struct TurnPayload: Codable, Equatable {
 
 // Result of a /turn: the voice reply to inject, and whether the session should PARK
 // (stay alive & resumable via /wake) rather than end when the reply is empty.
-struct TurnReply { var transcript: String; var park: Bool }
+struct TurnReply {
+    var transcript: String
+    var park: Bool
+    var waitSeconds: Int = 0   // >0 → hook sleeps this long, then injects `resume`
+    var resume: String = ""    // prompt fed back to Claude after the wait
+}
 
 // A paused-but-resumable session, surfaced to the menu and matched by voice command.
 struct ParkedInfo: Identifiable, Equatable { var id: String; var label: String; var project: String }

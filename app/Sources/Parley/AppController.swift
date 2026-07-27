@@ -190,6 +190,25 @@ final class AppController: ObservableObject {
             // loop: listen again for the current session's actual reply
         }
 
+        // "Warte X Minuten" — the reply asks to pause before continuing. Confirm, resume
+        // media for the wait, and tell the hook to sleep then re-inject a resume prompt so
+        // Claude picks up automatically. (Checked before STOP, which also matches "warte".)
+        if !text.isEmpty {
+            let wait = await extractWait(text, config: config)
+            if wait > 0 {
+                let human = humanDuration(wait)
+                Log.write("wait requested: \(wait)s")
+                StatsStore.shared.recordTurn(speak: turn.speak, transcript: text,
+                                             recordSeconds: 0, intent: "WAIT", project: turn.project)
+                await speakLine("Verstanden, Sir. Ich warte \(human) und melde mich dann.", config: config)
+                scheduleResume()   // let media play during the pause
+                setStatus(key, "idle")
+                let resume = "[Parley] Die vom Nutzer angeforderte Wartezeit von \(human) ist vorbei. " +
+                    "Fahre jetzt fort: prüfe, ob alles wie erwartet funktioniert hat, und berichte kurz."
+                return TurnReply(transcript: "", park: false, waitSeconds: wait, resume: resume)
+            }
+        }
+
         // Classify (fast, ~0.3 s) — needed for the ack clip, stats and the STOP decision.
         let intent = text.isEmpty ? .other : await classify(text, config: config)
         Log.write("classified: \(intent.rawValue)")
@@ -376,6 +395,31 @@ final class AppController: ObservableObject {
             Log.write("tts error: \(error.localizedDescription)")
             lastError = "TTS: \(error.localizedDescription)"
         }
+    }
+
+    // Seconds the user asked to wait (0 = not a wait request).
+    private func extractWait(_ text: String, config: AppConfig) async -> Int {
+        guard !config.groqKey.isEmpty else { return 0 }
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: Classifier.waitRequest(text: text, apiKey: config.groqKey))
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return 0 }
+            return Classifier.parseWait(data)
+        } catch { return 0 }
+    }
+
+    // Speak a one-off line (no beep, no listen) — used for the wait confirmation.
+    private func speakLine(_ text: String, config: AppConfig) async {
+        guard config.useGoogle else { return }
+        let req = GoogleTTS.request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200, let pcm = GoogleTTS.pcm(from: data) else { return }
+        await playClip(pcm, rate: config.speakingRate)
+    }
+
+    private func humanDuration(_ seconds: Int) -> String {
+        if seconds % 60 == 0 { let m = seconds / 60; return m == 1 ? "eine Minute" : "\(m) Minuten" }
+        if seconds < 60 { return "\(seconds) Sekunden" }
+        return "\(seconds / 60) Minuten und \(seconds % 60) Sekunden"
     }
 
     private func classify(_ text: String, config: AppConfig) async -> Intent {

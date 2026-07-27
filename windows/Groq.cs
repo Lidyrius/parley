@@ -53,6 +53,46 @@ public static class Groq
         "CONTINUE (says to continue/proceed), FEATURE_RESEARCH (research then build), " +
         "BUG_FEATURE (fix a bug and build something), OTHER (anything else).";
 
+    private const string WaitSystem =
+        "The user speaks to a coding assistant. If they ask you to WAIT or PAUSE for a " +
+        "duration before continuing (e.g. \"warte 5 Minuten\", \"mach 10 Minuten Pause\", " +
+        "\"in einer halben Stunde\", \"wait 30 seconds\"), output ONLY the total number of " +
+        "SECONDS as a plain integer. If they are NOT asking to wait for a set duration, " +
+        "output 0. Output only the integer, nothing else.";
+
+    /// Seconds the user asked to wait (0 = not a wait request; clamped 0…3600).
+    public static async Task<int> ClassifyWait(string text, Config config)
+    {
+        if (!config.SttReady || text.Length == 0) return 0;
+        try
+        {
+            var payload = new
+            {
+                model = "llama-3.3-70b-versatile",
+                temperature = 0,
+                max_tokens = 8,
+                messages = new object[]
+                {
+                    new { role = "system", content = WaitSystem },
+                    new { role = "user", content = text },
+                },
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post,
+                "https://api.groq.com/openai/v1/chat/completions");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.GroqKey);
+            req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            using var resp = await Http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return 0;
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var content = doc.RootElement.GetProperty("choices")[0]
+                .GetProperty("message").GetProperty("content").GetString() ?? "";
+            var digits = new string(content.Where(char.IsDigit).ToArray());
+            var n = int.TryParse(digits, out var v) ? v : 0;
+            return n < 5 ? 0 : Math.Min(3600, n);
+        }
+        catch { return 0; }
+    }
+
     public static async Task<Intent> Classify(string text, Config config)
     {
         if (!config.SttReady || text.Length == 0) return Intent.Other;

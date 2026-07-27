@@ -14,7 +14,7 @@ public sealed class Server
 {
     private readonly HttpListener _listener = new();
     private readonly SemaphoreSlim _turnGate = new(1, 1);   // serializes the pipeline
-    private readonly Func<TurnPayload, Task<(string transcript, bool park)>> _runTurn;
+    private readonly Func<TurnPayload, Task<(string transcript, bool park, int wait, string resume)>> _runTurn;
     private readonly Action _onReady;
     private int _queued;
 
@@ -30,7 +30,7 @@ public sealed class Server
 
     private static string RouteKey(TurnPayload t) => string.IsNullOrEmpty(t.TmuxPane) ? t.SessionId : t.TmuxPane;
 
-    public Server(Func<TurnPayload, Task<(string, bool)>> runTurn, Action onReady)
+    public Server(Func<TurnPayload, Task<(string, bool, int, string)>> runTurn, Action onReady)
     {
         _runTurn = runTurn;
         _onReady = onReady;
@@ -95,14 +95,14 @@ public sealed class Server
                 if (_turnGate.CurrentCount == 0)   // another turn is active → this one waits
                     Notifier.Notify("Parley", $"Projekt {turn.SpokenLabel} wartet auf Antwort");
                 await _turnGate.WaitAsync();   // FIFO-ish serialization; hook connection stays open
-                (string transcript, bool park) r;
+                (string transcript, bool park, int wait, string resume) r;
                 try
                 {
                     Interlocked.Decrement(ref _queued);
                     r = await _runTurn(turn);
                 }
                 finally { _turnGate.Release(); }
-                await Respond(ctx, 200, TurnJson(r.transcript, r.park));
+                await Respond(ctx, 200, TurnJson(r.transcript, r.park, r.wait, r.resume));
                 return;
             }
 
@@ -124,7 +124,7 @@ public sealed class Server
                     Prune();
                     NotifyParked();
                 }
-                await Respond(ctx, 200, TurnJson(pending, false));
+                await Respond(ctx, 200, TurnJson(pending, false, 0, ""));
                 return;
             }
 
@@ -161,12 +161,14 @@ public sealed class Server
 
     private void NotifyParked() { try { OnParkedChanged?.Invoke(ParkedList()); } catch { } }
 
-    private static string TurnJson(string transcript, bool park) =>
-        JsonSerializer.Serialize(new WireReply(transcript, park));
+    private static string TurnJson(string transcript, bool park, int wait, string resume) =>
+        JsonSerializer.Serialize(new WireReply(transcript, park, wait, resume));
 
     private sealed record WireReply(
         [property: JsonPropertyName("transcript")] string Transcript,
-        [property: JsonPropertyName("park")] bool Park);
+        [property: JsonPropertyName("park")] bool Park,
+        [property: JsonPropertyName("wait")] int Wait,
+        [property: JsonPropertyName("resume")] string Resume);
 
     private static async Task Respond(HttpListenerContext ctx, int status, string json)
     {
