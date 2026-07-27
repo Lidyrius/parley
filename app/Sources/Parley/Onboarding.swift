@@ -366,12 +366,29 @@ struct OnboardingView: View {
         }
     }
 
+    // Custom dropdown: a fixed-width field (Menu label) so both dropdowns match exactly.
+    // A .menu Picker hugs its content, which made short values ("Deutsch") narrower.
     private func labeledPicker(_ label: String, selection: Binding<String>, options: [String]) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label).font(.system(size: 13, weight: .semibold))
-            Picker("", selection: selection) { ForEach(options, id: \.self) { Text($0).tag($0) } }
-                .labelsHidden().pickerStyle(.menu)
-                .frame(width: 260)               // equal width for both dropdowns
+            Menu {
+                ForEach(options, id: \.self) { opt in
+                    Button { selection.wrappedValue = opt } label: {
+                        if opt == selection.wrappedValue { Label(opt, systemImage: "checkmark") } else { Text(opt) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(selection.wrappedValue).foregroundStyle(.primary).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).frame(width: 260, height: 34)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.12)))
+            }
+            .menuStyle(.button).buttonStyle(.plain)
         }
         .frame(width: 260, alignment: .leading)
     }
