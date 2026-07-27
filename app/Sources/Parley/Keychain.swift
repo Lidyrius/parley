@@ -21,6 +21,7 @@ enum Keychain {
         case notifyInPill  // legacy: "1"=pill, "0"=system (migrated to notifyMode)
         case notifyMode    // "pill" (default) | "system" | "none"
         case onboarded     // "1" once the visual onboarding finished
+        case tutorialSeen  // highest tutorial version the user has completed
     }
 
     private static var fileURL: URL {

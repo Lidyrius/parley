@@ -84,6 +84,7 @@ internal sealed class TrayApp : ApplicationContext
         NotificationPill.EnsureCreated();   // create the pill on the UI thread
 
         if (!OnboardingForm.IsComplete()) new OnboardingForm().Show();
+        else if (OnboardingForm.NeedsTutorial()) new OnboardingForm(true).Show();
 
         try { _server.Start(); }
         catch (Exception e)

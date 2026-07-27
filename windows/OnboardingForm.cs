@@ -16,7 +16,7 @@ public sealed class OnboardingForm : Form
     private static readonly Color Accent = Color.FromArgb(56, 132, 255);
     private static readonly Color TextMuted = Color.FromArgb(168, 168, 176);
 
-    private enum Step { Welcome, Keys, Voice, Notify, Mic, Done }
+    private enum Step { Welcome, Keys, Voice, Notify, Mic, Tutorial, Done }
     private static readonly (string title, string sub, string icon)[] Meta =
     {
         ("Willkommen bei Parley", "Deine Sprachschicht für Claude Code. Am Ende jeder Antwort spreche ich die Zusammenfassung, höre deine Antwort und speise sie zurück — freihändig, im Charakter eines ruhigen Butlers.", "wave"),
@@ -24,6 +24,7 @@ public sealed class OnboardingForm : Form
         ("Sprache & Stimme", "In welcher Sprache spreche ich, und mit welcher Stimme?", "globe"),
         ("Benachrichtigungen", "Wie soll ich dich informieren, z. B. wenn ein Projekt wartet?", "bell"),
         ("Mikrofon", "Parley braucht dein Mikrofon, um deine Antworten aufzunehmen. Windows fragt beim ersten Sprechen automatisch.", "mic"),
+        ("Kurz-Tutorial", "Das Wichtigste in einer Minute.", "wave"),
         ("Fertig!", "Starte eine neue Claude-Code-Sitzung und tippe /parley:voice. Ich melde mich.", "check"),
     };
     private static readonly (string title, string sub, string icon)[] NotifyCards =
@@ -40,12 +41,29 @@ public sealed class OnboardingForm : Form
     private readonly ComboBox _lang = MakeCombo(Langs);
     private readonly ComboBox _voice = MakeCombo(Voices);
 
+    // Tutorial: one spoken line per step; expect 0=none 1=stop 2=wait.
+    private static readonly (string title, string line, int expect, string icon)[] TutDe =
+    {
+        ("So funktioniert's", "Willkommen, Sir. Am Ende jeder Antwort spreche ich die Zusammenfassung — Sie antworten einfach per Stimme.", 0, "wave"),
+        ("Sag \u201EStopp\u201C", "Sagen Sie \u201EStopp\u201C, höre ich sofort auf und die Sitzung pausiert. Probieren Sie es: sagen Sie jetzt \u201EStopp\u201C.", 1, "stop"),
+        ("Lass mich warten", "Sagen Sie zum Beispiel \u201Ewarte zehn Minuten\u201C — ich pausiere und melde mich von selbst zurück. Probieren Sie es.", 2, "clock"),
+        ("Parallele Projekte", "Läuft ein weiteres Projekt parallel, sagen Sie von hier aus: \u201Enimm das Projekt Soundso wieder auf\u201C.", 0, "stack"),
+        ("Einfach fragen", "Und wenn Sie etwas wissen möchten, stellen Sie einfach eine Frage — ich antworte sofort.", 0, "quest"),
+        ("Fertig!", "Starten Sie jetzt eine neue Claude-Code-Sitzung und tippen Sie Parley Voice — dann bin ich für Sie da.", 0, "check"),
+    };
+    private int _tutIndex;
+    private bool _tutTrying;
+    private bool? _tutResult;
+    private Rectangle _tryRect;
+    private bool TutLast => _tutIndex >= TutDe.Length - 1;
+
     private Rectangle _nextRect, _backRect;
     private readonly Rectangle[] _cardRects = new Rectangle[3];
 
-    public OnboardingForm()
+    public OnboardingForm(bool tutorialOnly = false)
     {
         Text = "Parley";
+        if (tutorialOnly) _step = Step.Tutorial;
         ClientSize = new Size(640, 560);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -68,6 +86,7 @@ public sealed class OnboardingForm : Form
         _groq.TextChanged += (_, _) => Invalidate();
 
         MouseClick += OnClick;
+        Shown += (_, _) => { if (_step == Step.Tutorial) PlayTutLine(); };
         Layout1();
     }
 
@@ -99,10 +118,14 @@ public sealed class OnboardingForm : Form
     private void OnClick(object? s, MouseEventArgs e)
     {
         if (_backRect.Contains(e.Location) && (int)_step > 0) { _step = (Step)((int)_step - 1); SetStepControls(); return; }
+        if (_step == Step.Tutorial && _tryRect.Contains(e.Location) && !_tutTrying) { TryTut(); return; }
         if (_nextRect.Contains(e.Location) && CanContinue)
         {
             if (_step == Step.Done) { Finish(); Close(); return; }
-            _step = (Step)((int)_step + 1); SetStepControls(); return;
+            if (_step == Step.Tutorial) { TutForward(); return; }
+            _step = (Step)((int)_step + 1); SetStepControls();
+            if (_step == Step.Tutorial) PlayTutLine();
+            return;
         }
         if (_step == Step.Notify)
             for (var i = 0; i < 3; i++)
@@ -123,7 +146,7 @@ public sealed class OnboardingForm : Form
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         var w = ClientSize.Width;
-        var m = Meta[(int)_step];
+        var m = _step == Step.Tutorial ? (TutDe[_tutIndex].title, TutDe[_tutIndex].line, TutDe[_tutIndex].icon) : Meta[(int)_step];
 
         // progress dots
         var total = Meta.Length;
@@ -172,7 +195,9 @@ public sealed class OnboardingForm : Form
 
         // buttons
         if ((int)_step > 0) DrawButton(g, _backRect, "Zurück", false);
-        DrawButton(g, _nextRect, _step == Step.Done ? "Los geht's" : "Weiter", true, enabled: CanContinue);
+        if (_step == Step.Tutorial) DrawTutorialExtras(g);
+        var nextLabel = _step == Step.Done ? "Los geht's" : (_step == Step.Tutorial && TutLast ? "Fertig" : "Weiter");
+        DrawButton(g, _nextRect, nextLabel, true, enabled: CanContinue);
     }
 
     private void DrawCard(Graphics g, int i)
@@ -256,6 +281,24 @@ public sealed class OnboardingForm : Form
                 DrawRound(g, pen, new Rectangle((int)(x + 2), (int)(y + 4), (int)(w - 4), (int)(h - 8)), 4);
                 g.FillEllipse(brush, x + w - 7, y + 3, 6, 6);
                 break;
+            case "stop":
+                DrawRound(g, pen, new Rectangle((int)(x + 3), (int)(y + 3), (int)(w - 6), (int)(h - 6)), 5);
+                break;
+            case "clock":
+                g.DrawEllipse(pen, x + 1, y + 1, w - 2, h - 2);
+                g.DrawLine(pen, cx, cy, cx, y + h * 0.28f);
+                g.DrawLine(pen, cx, cy, x + w * 0.72f, cy);
+                break;
+            case "stack":
+                DrawRound(g, pen, new Rectangle((int)(x + 5), (int)y, (int)(w - 8), (int)(h - 8)), 3);
+                DrawRound(g, pen, new Rectangle((int)x, (int)(y + 6), (int)(w - 8), (int)(h - 8)), 3);
+                break;
+            case "quest":
+                g.DrawEllipse(pen, x + 1, y + 1, w - 2, h - 2);
+                using (var qf = new Font("Segoe UI", h * 0.5f, FontStyle.Bold))
+                    g.DrawString("?", qf, brush, new RectangleF(x, y - 1, w, h),
+                        new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center });
+                break;
             case "off":
                 g.DrawArc(pen, x + w * 0.15f, y + h * 0.1f, w * 0.7f, h * 0.7f, 180, 180);
                 g.DrawLine(pen, x, y + h, x + w, y);
@@ -316,6 +359,92 @@ public sealed class OnboardingForm : Form
 
     // ----- persistence ----------------------------------------------------------------
 
+    // ----- tutorial ------------------------------------------------------------------
+
+    private void DrawTutorialExtras(Graphics g)
+    {
+        var w = ClientSize.Width;
+        // sub-progress dots
+        var n = TutDe.Length; var gap = 6; var d = 7;
+        var tw = n * d + (n - 1) * gap; var x = (w - tw) / 2;
+        for (var i = 0; i < n; i++)
+        {
+            using var b = new SolidBrush(i <= _tutIndex ? Accent : Color.FromArgb(70, 70, 78));
+            g.FillEllipse(b, x, 250, d, d); x += d + gap;
+        }
+        // interactive "Ausprobieren" for stop/wait steps
+        _tryRect = Rectangle.Empty;
+        if (TutDe[_tutIndex].expect != 0)
+        {
+            _tryRect = new Rectangle((w - 170) / 2, 285, 170, 36);
+            using (var b = new SolidBrush(Color.FromArgb(16, 255, 255, 255))) FillRound(g, b, _tryRect, 18);
+            using var f = new Font("Segoe UI", 10.5f, FontStyle.Bold);
+            using var tb = new SolidBrush(TextMuted);
+            var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            g.DrawString(_tutTrying ? "Höre zu…" : "Ausprobieren", f, tb, _tryRect, sf);
+            if (_tutResult is bool ok)
+            {
+                using var rf = new Font("Segoe UI", 9.5f);
+                using var rb = new SolidBrush(ok ? Color.FromArgb(120, 220, 130) : TextMuted);
+                var msg = ok ? "Genau so, Sir." : "Nicht erkannt — kein Problem, weiter geht's.";
+                g.DrawString(msg, rf, rb, new RectangleF(40, 330, w - 80, 22),
+                    new StringFormat { Alignment = StringAlignment.Center });
+            }
+        }
+    }
+
+    private void TutForward()
+    {
+        if (TutLast) { _step = Step.Done; SetStepControls(); return; }
+        _tutIndex++; _tutResult = null; Invalidate(); PlayTutLine();
+    }
+
+    private async void PlayTutLine()
+    {
+        var cfg = Config.Load();
+        var text = TutDe[_tutIndex].line;
+        try
+        {
+            var pcm = await GoogleTts.Synthesize(text, cfg);
+            if (pcm is not null)
+            {
+                await AudioOut.WaitForHiFiOutput();
+                await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, cfg.SpeakingRate));
+            }
+        }
+        catch { }
+    }
+
+    private async void TryTut()
+    {
+        _tutTrying = true; _tutResult = null; Invalidate();
+        var cfg = Config.Load();
+        var expect = TutDe[_tutIndex].expect;
+        try
+        {
+            var wav = await new MicCapture().Record();
+            var text = wav.Length >= 44 + 16000 * 2 / 5 ? await Groq.Transcribe(wav, cfg) : "";
+            bool ok;
+            if (expect == 1) ok = (await Groq.Classify(text, cfg)) == Groq.Intent.Stop;
+            else if (expect == 2) ok = (await Groq.ClassifyWait(text, cfg)) > 0;
+            else ok = true;
+            _tutResult = ok;
+        }
+        catch { _tutResult = false; }
+        _tutTrying = false; Invalidate();
+    }
+
+    public static bool NeedsTutorial()
+    {
+        try
+        {
+            var d = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(Config.CredentialsPath));
+            var seen = d != null && d.TryGetValue("tutorialSeen", out var v) ? (int.TryParse(v.GetString(), out var n) ? n : 0) : 0;
+            return seen < 1;   // TutorialVersion
+        }
+        catch { return true; }
+    }
+
     private void Finish()
     {
         var lang = _lang.SelectedItem?.ToString() ?? "Deutsch";
@@ -334,6 +463,7 @@ public sealed class OnboardingForm : Form
         d["googleVoice"] = $"{code}-Chirp3-HD-{_voice.SelectedItem}";
         d["notifyMode"] = _notifyIndex switch { 1 => "system", 2 => "none", _ => "pill" };
         d["onboarded"] = "1";
+        d["tutorialSeen"] = "1";   // TutorialVersion
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
     }
 

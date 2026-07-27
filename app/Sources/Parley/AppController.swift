@@ -397,6 +397,28 @@ final class AppController: ObservableObject {
         }
     }
 
+    // MARK: - onboarding tutorial helpers (reuse the real audio + mic + classifier)
+
+    /// Play a pre-rendered tutorial line (settled + hi-fi, so it's audible after any prior IO).
+    func onboardingSpeak(_ pcm: Data) async {
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        await waitForHiFiOutput()
+        await playClip(pcm, rate: AppConfig.load().speakingRate)
+    }
+
+    /// Record one reply (shows the pill) and report what the user did — for the interactive
+    /// tutorial steps. Returns the transcript + whether it was STOP + any wait seconds.
+    func onboardingListen() async -> (text: String, isStop: Bool, waitSeconds: Int) {
+        let cfg = AppConfig.load()
+        let wav = await record()
+        let text = await transcribe(wav, config: cfg)
+        guard !text.isEmpty else { return ("", false, 0) }
+        async let intent = classify(text, config: cfg)
+        async let wait = extractWait(text, config: cfg)
+        let (i, w) = await (intent, wait)
+        return (text, i == .stop, w)
+    }
+
     // Seconds the user asked to wait (0 = not a wait request).
     private func extractWait(_ text: String, config: AppConfig) async -> Int {
         guard !config.groqKey.isEmpty else { return 0 }

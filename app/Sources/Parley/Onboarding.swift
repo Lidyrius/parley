@@ -18,8 +18,17 @@ private func langCode(_ l: String) -> String {
 
 @MainActor
 final class OnboardingModel: ObservableObject {
-    enum Step: Int, CaseIterable { case welcome, keys, voice, notify, mic, done }
+    enum Step: Int, CaseIterable { case welcome, keys, voice, notify, mic, tutorial, done }
     @Published var step: Step = .welcome
+
+    init(start: Step = .welcome) { step = start }
+
+    // Tutorial sub-state (the `.tutorial` step walks all TutorialStep cases).
+    @Published var tutIndex = 0
+    @Published var tutTrying = false
+    @Published var tutResult: Bool? = nil
+    var tutStep: TutorialStep { TutorialStep(rawValue: tutIndex) ?? .principle }
+    var tutLast: Bool { tutIndex >= TutorialStep.allCases.count - 1 }
     @Published var googleKey = Keychain.get(.googleAPIKey) ?? "" { didSet { googleCheck = .idle } }
     @Published var groqKey = Keychain.get(.groqAPIKey) ?? "" { didSet { groqCheck = .idle } }
     @Published var language = Keychain.get(.language) ?? "Deutsch"
@@ -82,6 +91,45 @@ final class OnboardingModel: ObservableObject {
         }
     }
 
+    // MARK: - tutorial
+
+    /// Render the tutorial audio ahead of time (called when onboarding opens).
+    func prepareTutorial() {
+        let cfg = AppConfig.load()
+        Task { await TutorialClips.shared.render(lang: language, config: cfg) }
+    }
+
+    /// Play the current tutorial step's pre-rendered line.
+    func playTutLine() {
+        tutResult = nil
+        let step = tutStep, lang = language, cfg = AppConfig.load()
+        Task {
+            if let pcm = await TutorialClips.shared.clip(step, lang: lang, config: cfg) {
+                await AppController.shared.onboardingSpeak(pcm)
+            }
+        }
+    }
+
+    /// Interactive "Ausprobieren": record + check the expected action.
+    func tryTut() {
+        guard !tutTrying else { return }
+        tutTrying = true; tutResult = nil
+        let expect = tutStep.expect
+        Task {
+            let r = await AppController.shared.onboardingListen()
+            let ok = expect == .stop ? r.isStop : (expect == .wait ? r.waitSeconds > 0 : true)
+            await MainActor.run { self.tutResult = ok; self.tutTrying = false }
+        }
+    }
+
+    /// Advance within the tutorial; on the last step, continue to the final screen.
+    func tutForward() {
+        if tutLast { next(); return }
+        forward = true
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { tutIndex += 1 }
+        playTutLine()
+    }
+
     /// Fetch the Chirp3-HD voice list for the chosen language (best-effort).
     func loadVoices() {
         guard !googleKey.isEmpty else { return }
@@ -106,12 +154,18 @@ final class OnboardingModel: ObservableObject {
         Keychain.set("\(langCode(language))-Chirp3-HD-\(voiceName)", for: .googleVoice)
         Keychain.set(notifyMode, for: .notifyMode)
         Keychain.set("1", for: .onboarded)
+        Keychain.set(String(TutorialClips.version), for: .tutorialSeen)
     }
 }
 
 struct OnboardingView: View {
-    @StateObject private var m = OnboardingModel()
+    @StateObject private var m: OnboardingModel
     var onDone: () -> Void
+
+    init(startAt: OnboardingModel.Step = .welcome, onDone: @escaping () -> Void) {
+        _m = StateObject(wrappedValue: OnboardingModel(start: startAt))
+        self.onDone = onDone
+    }
 
     var body: some View {
         ZStack {
@@ -131,7 +185,7 @@ struct OnboardingView: View {
             .clipped()
         }
         .frame(width: 640, height: 560)
-        .onAppear { m.loadVoices() }
+        .onAppear { m.loadVoices(); m.prepareTutorial() }
     }
 
     private var progress: some View {
@@ -187,10 +241,47 @@ struct OnboardingView: View {
                     .disabled(m.micGranted)
                     .entrance(3)
             }
+        case .tutorial:
+            tutorialCard
         case .done:
-            hero("checkmark.seal.fill", "Fertig!",
-                 "Starte eine neue Claude-Code-Sitzung und tippe /parley:voice. Ich melde mich.")
+            VStack(spacing: 18) {
+                hero("checkmark.seal.fill", "Bereit, Sir",
+                     "Starte jetzt eine neue Claude-Code-Sitzung.")
+                Text("/parley:voice")
+                    .font(.system(size: 20, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 18).padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.tint.opacity(0.16)))
+                    .entrance(3)
+                Text("Tippe das in der neuen Sitzung — dann bin ich da.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).entrance(4)
+            }
         }
+    }
+
+    @ViewBuilder private var tutorialCard: some View {
+        let step = m.tutStep
+        VStack(spacing: 16) {
+            hero(step.symbol, step.title(m.language), step.line(m.language))
+            // sub-progress within the tutorial
+            HStack(spacing: 5) {
+                ForEach(0..<TutorialStep.allCases.count, id: \.self) { i in
+                    Circle().fill(i <= m.tutIndex ? Color.accentColor : .white.opacity(0.16))
+                        .frame(width: 6, height: 6)
+                }
+            }.entrance(3)
+            if step.expect != .none {
+                VStack(spacing: 8) {
+                    Button(m.tutTrying ? "Höre zu…" : "Ausprobieren") { m.tryTut() }
+                        .buttonStyle(SecondaryButton()).disabled(m.tutTrying)
+                    if let ok = m.tutResult {
+                        Label(ok ? "Genau so, Sir." : "Hab ich nicht erkannt — kein Problem, weiter geht's.",
+                              systemImage: ok ? "checkmark.circle.fill" : "info.circle")
+                            .font(.system(size: 12)).foregroundStyle(ok ? .green : .secondary)
+                    }
+                }.entrance(4)
+            }
+        }
+        .onAppear { m.playTutLine() }
     }
 
     private var bottomBar: some View {
@@ -201,6 +292,8 @@ struct OnboardingView: View {
             Spacer()
             if m.step == .done {
                 Button("Los geht's") { m.finish(); onDone() }.buttonStyle(PrimaryButton())
+            } else if m.step == .tutorial {
+                Button(m.tutLast ? "Fertig" : "Weiter") { m.tutForward() }.buttonStyle(PrimaryButton())
             } else {
                 Button("Weiter") { m.next() }.buttonStyle(PrimaryButton()).disabled(!m.canContinue)
             }
@@ -315,17 +408,22 @@ final class OnboardingPresenter {
     private var window: NSWindow?
 
     static var isComplete: Bool { Keychain.get(.onboarded) == "1" }
+    static var tutorialCurrent: Bool { (Int(Keychain.get(.tutorialSeen) ?? "0") ?? 0) >= TutorialClips.version }
 
-    func showIfNeeded() { if !Self.isComplete { show() } }
+    // First run → full onboarding. Already onboarded but the tutorial changed → tutorial only.
+    func showIfNeeded() {
+        if !Self.isComplete { show(startAt: .welcome) }
+        else if !Self.tutorialCurrent { show(startAt: .tutorial) }
+    }
 
-    func show() {
+    func show(startAt: OnboardingModel.Step = .welcome) {
         if let w = window { w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
         w.title = "Parley"
         w.isReleasedWhenClosed = false
         w.center()
-        w.contentView = NSHostingView(rootView: OnboardingView(onDone: { [weak self] in
+        w.contentView = NSHostingView(rootView: OnboardingView(startAt: startAt, onDone: { [weak self] in
             self?.window?.close(); self?.window = nil
         }))
         window = w
