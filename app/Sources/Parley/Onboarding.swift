@@ -229,6 +229,11 @@ struct OnboardingView: View {
                 }.entrance(3)
                 Button(checking ? "Prüfe…" : "Schlüssel prüfen") { m.checkKeys() }
                     .buttonStyle(SecondaryButton()).disabled(checking).entrance(4)
+                if !m.canContinue && !checking {
+                    Label("Bitte zuerst beide Schlüssel prüfen, um fortzufahren.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(.orange).entrance(5)
+                }
             }
         case .voice:
             VStack(spacing: 20) {
@@ -421,10 +426,18 @@ struct OnboardingView: View {
 }
 
 private struct PrimaryButton: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
-            .padding(.horizontal, 22).padding(.vertical, 9)
-            .background(Capsule().fill(Color.accentColor.opacity(configuration.isPressed ? 0.8 : 1)))
+    func makeBody(configuration: Configuration) -> some View { PrimaryLabel(configuration: configuration) }
+    fileprivate struct PrimaryLabel: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var enabled
+        var body: some View {
+            configuration.label.font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(enabled ? .white : Color.white.opacity(0.5))
+                .padding(.horizontal, 22).padding(.vertical, 9)
+                .background(Capsule().fill(enabled
+                    ? Color.accentColor.opacity(configuration.isPressed ? 0.8 : 1)
+                    : Color.white.opacity(0.10)))   // greyed out when disabled
+        }
     }
 }
 private struct SecondaryButton: ButtonStyle {

@@ -207,6 +207,11 @@ public sealed class OnboardingForm : Form
             case Step.Keys:
                 g.DrawString("Google Cloud TTS  ·  1 Mio Zeichen/Monat gratis", lblFont, white, _google.Left, _google.Top - 20);
                 g.DrawString("Groq  ·  kostenloser Developer-Key", lblFont, white, _groq.Left, _groq.Top - 20);
+                if (!CanContinue)
+                    using (var warn = new SolidBrush(Color.FromArgb(232, 152, 48)))
+                    using (var wf = new Font("Segoe UI", 9.5f, FontStyle.Bold))
+                        g.DrawString("⚠  Bitte beide Schlüssel eingeben, um fortzufahren.", wf, warn,
+                            new RectangleF(_groq.Left, _groq.Bottom + 12, _groq.Width, 24));
                 break;
             case Step.Voice:
                 g.DrawString("Sprache", lblFont, white, _lang.Left, _lang.Top - 20);
