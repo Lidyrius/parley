@@ -407,12 +407,16 @@ final class AppController: ObservableObject {
         } catch { return 0 }
     }
 
-    // Speak a one-off line (no beep, no listen) — used for the wait confirmation.
+    // Speak a one-off line (no beep, no listen) — used for the wait confirmation. Settles
+    // after the mic teardown + waits for hi-fi output first (same as playAck), otherwise the
+    // line renders into a still-contended device and is silent.
     private func speakLine(_ text: String, config: AppConfig) async {
         guard config.useGoogle else { return }
         let req = GoogleTTS.request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200, let pcm = GoogleTTS.pcm(from: data) else { return }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        await waitForHiFiOutput()
         await playClip(pcm, rate: config.speakingRate)
     }
 

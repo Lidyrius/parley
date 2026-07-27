@@ -196,7 +196,11 @@ public sealed class TurnPipeline
     private static async Task SpeakLine(string text, Config config)
     {
         var pcm = await GoogleTts.Synthesize(text, config);
-        if (pcm is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate));
+        if (pcm is null) return;
+        // Settle after the mic teardown + wait for hi-fi output, else it renders silent.
+        await Task.Delay(300);
+        await AudioOut.WaitForHiFiOutput();
+        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate));
     }
 
     // Fuzzy-match a spoken project name to a parked session (either contains the other).
