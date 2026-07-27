@@ -21,4 +21,11 @@
     <PackageReference Include="SoundTouch.Net" Version="2.3.2" />
   </ItemGroup>
 
+  <!-- Bundled voice preview samples (shared with the macOS app's resources). -->
+  <ItemGroup>
+    <Content Include="..\app\Sources\Parley\Resources\voice-previews\*.mp3"
+             Link="voice-previews\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

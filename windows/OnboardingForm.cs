@@ -51,6 +51,7 @@ public sealed class OnboardingForm : Form
         ("Einfach fragen", "Und wenn du etwas wissen willst, frag einfach — ich antworte dir sofort.", 0, "quest"),
         ("Fertig!", "Das war's. Starte jetzt eine neue Clode-Code-Sitzung und tippe Parley Voice, dann bin ich für dich da.", 0, "check"),
     };
+    private bool _previewLoading;
     private int _tutIndex;
     private bool _tutTrying;
     private bool? _tutResult;
@@ -86,9 +87,13 @@ public sealed class OnboardingForm : Form
         }
         _google.TextChanged += (_, _) => Invalidate();
         _groq.TextChanged += (_, _) => Invalidate();
+        // Hear the voice on pick — full quality via the user's key, cached; bundled fallback.
+        _voice.SelectedIndexChanged += (_, _) => PreviewSelected();
+        _lang.SelectedIndexChanged += (_, _) => { if (_step == Step.Voice) PreviewSelected(); };
 
         MouseClick += OnClick;
         Shown += (_, _) => { if (_step == Step.Tutorial) PlayTutLine(); };
+        FormClosed += (_, _) => VoicePreview.Stop();
         Layout1();
     }
 
@@ -117,6 +122,22 @@ public sealed class OnboardingForm : Form
 
     private bool CanContinue => _step != Step.Keys || (_google.Text.Trim().Length > 0 && _groq.Text.Trim().Length > 0);
 
+    // Full voice name for the current language + voice selection, e.g. "de-DE-Chirp3-HD-Alnilam".
+    private string SelectedVoice()
+    {
+        var lang = _lang.SelectedItem?.ToString() ?? "Deutsch";
+        var code = lang switch { "English" => "en-US", "Français" => "fr-FR", "Español" => "es-ES", "Italiano" => "it-IT", "Nederlands" => "nl-NL", _ => "de-DE" };
+        var star = _voice.SelectedItem as string ?? "Alnilam";
+        return $"{code}-Chirp3-HD-{star}";
+    }
+
+    private void PreviewSelected()
+    {
+        var lang = _lang.SelectedItem?.ToString() ?? "Deutsch";
+        VoicePreview.Play(SelectedVoice(), VoicePreview.Sentence(lang), _google.Text.Trim(),
+            loading => { _previewLoading = loading; Invalidate(); });
+    }
+
     private void OnClick(object? s, MouseEventArgs e)
     {
         if (_backRect.Contains(e.Location) && (int)_step > 0) { _step = (Step)((int)_step - 1); SetStepControls(); return; }
@@ -125,6 +146,7 @@ public sealed class OnboardingForm : Form
         {
             if (_step == Step.Done) { Finish(); Close(); return; }
             if (_step == Step.Tutorial) { TutForward(); return; }
+            if (_step == Step.Voice) VoicePreview.Stop();   // don't bleed into the tutorial
             _step = (Step)((int)_step + 1); SetStepControls();
             if (_step == Step.Tutorial) PlayTutLine();
             return;
@@ -189,6 +211,11 @@ public sealed class OnboardingForm : Form
             case Step.Voice:
                 g.DrawString("Sprache", lblFont, white, _lang.Left, _lang.Top - 20);
                 g.DrawString("Chirp3-HD-Stimme", lblFont, white, _voice.Left, _voice.Top - 20);
+                var note = _previewLoading ? "Erzeuge Vorschau…"
+                    : "Erste Wiedergabe wird kurz in deiner echten Stimme erzeugt — danach sofort.";
+                using (var noteFont = new Font("Segoe UI", 9f))
+                    g.DrawString(note, noteFont, muted,
+                        new RectangleF(_voice.Left, _voice.Bottom + 8, _voice.Width, 32));
                 break;
             case Step.Notify:
                 for (var i = 0; i < 3; i++) DrawCard(g, i);

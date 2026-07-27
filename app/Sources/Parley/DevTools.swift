@@ -22,7 +22,7 @@ enum DevTools {
         OnboardingPresenter.shared.restart()   // discard any open window → fresh from welcome
     }
 
-    static func showOnboarding() { OnboardingPresenter.shared.show() }
+    static func showOnboarding() { OnboardingPresenter.shared.restart() }
 
     static func testNotification() {
         Notifier.notify(title: "Parley · Test", body: "So sieht eine Benachrichtigung aus, Sir.")

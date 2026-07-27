@@ -78,7 +78,7 @@ final class OnboardingModel: ObservableObject {
     func next() {
         guard let s = Step(rawValue: step.rawValue + 1) else { return }
         // Voice just chosen → render the tutorial in that voice, before other cache clips.
-        if step == .voice { prepareTutorial() }
+        if step == .voice { VoicePreview.stop(); prepareTutorial() }
         forward = true
         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { step = s }
     }
@@ -98,6 +98,14 @@ final class OnboardingModel: ObservableObject {
 
     /// The Chirp3-HD voice the user picked in onboarding (not yet saved to config).
     var selectedVoice: String { "\(langCode(language))-Chirp3-HD-\(voiceName)" }
+
+    @Published var previewLoading = false
+
+    /// Preview the selected voice — full quality via the user's key, cached; bundled fallback.
+    func previewVoice() {
+        VoicePreview.play(voice: selectedVoice, sentence: VoicePreview.sentence(for: language),
+                          key: googleKey) { [weak self] loading in self?.previewLoading = loading }
+    }
 
     /// Render the tutorial audio in the CHOSEN voice — called right after the voice step,
     /// so tutorial phrases are ready before any other (lazy) cache sentences.
@@ -229,6 +237,15 @@ struct OnboardingView: View {
                     labeledPicker("Sprache", selection: $m.language, options: onboardKeyLangs)
                         .onChange(of: m.language) { _, _ in m.loadVoices() }
                     labeledPicker("Chirp3-HD-Stimme", selection: $m.voiceName, options: m.voices)
+                        .onChange(of: m.voiceName) { _, _ in m.previewVoice() }
+                    Button {
+                        m.previewVoice()
+                    } label: {
+                        Label(m.previewLoading ? "Erzeuge Vorschau…" : "Stimme anhören",
+                              systemImage: "speaker.wave.2.fill")
+                    }.buttonStyle(SecondaryButton()).disabled(m.previewLoading)
+                    Text("Erste Wiedergabe wird kurz in deiner echten Stimme erzeugt — danach sofort.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                 }.entrance(3)
             }
         case .notify:
