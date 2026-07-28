@@ -70,4 +70,4 @@ Write-Host 'Parley installiert.' -ForegroundColor Green
 Write-Host 'Das Einrichtungsfenster oeffnet sich automatisch. Danach eine neue Claude-Code-Sitzung starten und /parley:voice tippen.'
 Write-Host ''
 Write-Host 'Nutzt du Claude Code in WSL? Dann dort einmalig ausfuehren:'
-Write-Host '  mkdir -p ~/.claude/skills && ln -sfn /mnt/c/Users/'$env:USERNAME'/.parley/src/plugin ~/.claude/skills/parley && sudo apt-get install -y jq'
+Write-Host "  mkdir -p ~/.claude/skills && ln -sfn /mnt/c/Users/$env:USERNAME/.parley/src/plugin ~/.claude/skills/parley && sudo apt-get install -y jq"
