@@ -498,7 +498,8 @@ final class AppController: ObservableObject {
             NSLog("Parley: recording too short (\(wav.count) bytes) — no reply, likely no mic input")
             return ""
         }
-        let req = Groq.transcriptionRequest(wav: wav, apiKey: config.groqKey, boundary: "parleyBoundary")
+        var req = Groq.transcriptionRequest(wav: wav, apiKey: config.groqKey, boundary: "parleyBoundary")
+        req.timeoutInterval = 20   // fail fast instead of hanging the hook for the 60s default
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
@@ -506,13 +507,17 @@ final class AppController: ObservableObject {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 NSLog("Parley: STT HTTP \(code): \(body)")
                 lastError = "STT HTTP \(code)"
-                Notifier.notify(title: "Parley — Fehler", body: "Transkription fehlgeschlagen (HTTP \(code)).")
+                // Groq blocks VPN / datacenter IPs with a 403 "check your network settings".
+                let hint = code == 403 ? "Groq blockt dieses Netzwerk — VPN aus?" : "Transkription fehlgeschlagen (HTTP \(code))."
+                Notifier.notify(title: "Parley — Fehler", body: hint)
                 return ""   // never feed an error body back as the reply
             }
             return String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         } catch {
+            NSLog("Parley: STT error: \(error.localizedDescription)")
             lastError = "STT: \(error.localizedDescription)"
+            Notifier.notify(title: "Parley — Fehler", body: "Groq nicht erreichbar (Netzwerk/VPN?).")
             return ""
         }
     }

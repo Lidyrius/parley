@@ -25,13 +25,17 @@ public static class Groq
                 "https://api.groq.com/openai/v1/audio/transcriptions");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.GroqKey);
             req.Content = form;
-            using var resp = await Http.SendAsync(req);
+            // Fail fast instead of hanging the hook — VPN/blocked networks otherwise stall.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            using var resp = await Http.SendAsync(req, cts.Token);
             var body = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
                 var code = (int)resp.StatusCode;
                 Log.Write($"stt http {code}: {body[..Math.Min(200, body.Length)]}");
-                Notifier.Notify("Parley — Fehler", $"Transkription fehlgeschlagen (HTTP {code}).");
+                // Groq blocks VPN / datacenter IPs with a 403 "check your network settings".
+                Notifier.Notify("Parley — Fehler",
+                    code == 403 ? "Groq blockt dieses Netzwerk — VPN aus?" : $"Transkription fehlgeschlagen (HTTP {code}).");
                 return "";
             }
             return body.Trim();
@@ -39,6 +43,7 @@ public static class Groq
         catch (Exception e)
         {
             Log.Write($"stt error: {e.Message}");
+            Notifier.Notify("Parley — Fehler", "Groq nicht erreichbar (Netzwerk/VPN?).");
             return "";
         }
     }
