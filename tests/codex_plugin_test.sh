@@ -66,12 +66,12 @@ market="$tmp/home/.parley/codex-marketplace"
 [ "$(readlink "$market/plugin")" = "$here/plugin" ] || fail "Codex plugin link target"
 jq -e '.name == "parley-local" and .plugins[0].source.path == "./plugin"' \
   "$market/.agents/plugins/marketplace.json" >/dev/null || fail "local marketplace shape"
-rg -q 'plugin add parley@parley-local' "$FAKE_CODEX_LOG" || fail "Codex add command"
+grep -Fq 'plugin add parley@parley-local' "$FAKE_CODEX_LOG" || fail "Codex add command"
 echo "PASS: Codex marketplace synchronization"
 
 printf '%s\n' '{"detectedClaudeCode":"0","detectedCodex":"1","claudeCodeEnabled":"0","codexEnabled":"0"}' > "$creds"
 HOME="$tmp/home" PARLEY_CREDS="$creds" bash "$here/scripts/sync-integrations.sh"
-rg -q 'plugin remove parley@parley-local' "$FAKE_CODEX_LOG" || fail "Codex remove command"
+grep -Fq 'plugin remove parley@parley-local' "$FAKE_CODEX_LOG" || fail "Codex remove command"
 echo "PASS: disabled Codex integration"
 
 mkdir -p "$tmp/home/.claude/skills"
