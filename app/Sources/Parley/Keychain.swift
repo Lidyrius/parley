@@ -22,6 +22,11 @@ enum Keychain {
         case notifyMode    // "pill" (default) | "system" | "none"
         case onboarded     // "1" once the visual onboarding finished
         case tutorialSeen  // highest tutorial version the user has completed
+        case detectedClaudeCode
+        case detectedCodex
+        case claudeCodeEnabled
+        case codexEnabled
+        case sourceDir      // checkout containing the client integration scripts
     }
 
     private static var fileURL: URL {

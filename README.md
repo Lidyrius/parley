@@ -1,6 +1,6 @@
 # Parley
 
-**A voice layer for Claude Code.** When a Claude Code turn ends, Parley speaks the
+**A voice layer for Claude Code and Codex.** When an agent turn ends, Parley speaks the
 summary aloud, listens to your spoken reply, and feeds it straight back into the same
 session — a fluid, hands-free conversation with your coding agent, in the character of a
 calm, dry-witted butler.
@@ -24,8 +24,10 @@ irm https://raw.githubusercontent.com/Lidyrius/parley/main/windows/install.ps1 |
 
 On first launch Parley opens a **setup window** that guides you through the two API keys
 (both effectively **free** — Groq's dev tier and Google Cloud TTS's 1M chars/month), with
-a button to open each console and a live key check, then language, voice and notification
-style. When it's done, start a **new** Claude Code session and type `/parley:voice`.
+a button to open each console and a live key check, then language, voice, notification
+style, and client integrations. If Claude Code or Codex is installed, it is detected and
+preselected; both can be enabled together. Start a **new** session and activate
+`/parley:voice` in Claude Code or `$parley-voice` in Codex.
 
 Re-running the install command later **updates** Parley in place — keys, settings and
 statistics are kept.
@@ -35,7 +37,7 @@ statistics are kept.
 ## How it works
 
 ```
-Claude Code turn ends
+Claude Code or Codex turn ends
         │  Stop hook (blocks) — extracts the spoken <speak> line
         ▼
    Parley.app  (menu-bar, 127.0.0.1:8787)
@@ -46,17 +48,18 @@ Claude Code turn ends
      5. resume media
         │  returns the transcript
         ▼
-   Stop hook emits {"decision":"block", reason: <transcript>}
+   Stop hook emits a client-compatible continuation decision
         │
-        ▼  Claude continues with your spoken reply as the next turn
+        ▼  The agent continues with your spoken reply as the next turn
 ```
 
-The hook long-polls the app and injects the reply via Claude Code's stop decision — so
-it's completely terminal-agnostic.
+The hook long-polls the app and injects the reply through the host's stop decision — so
+it's completely terminal-agnostic. In Codex, activate the skill explicitly with
+`$parley-voice`; Claude Code keeps `/parley:voice`.
 
 ## Features
 
-- 🗣️ **Spoken summaries** — Claude ends each turn with a short spoken line, in your
+- 🗣️ **Spoken summaries** — the agent ends each turn with a short spoken line, in your
   language and in the Jarvis character.
 - 🎤 **Voice replies** — talk back; silence ends the recording automatically.
 - 🌊 **Live waveform pill** — a floating, always-on-top capsule shows it's listening and
@@ -77,10 +80,13 @@ On the first real turn, grant **Microphone**. No Accessibility needed (media pau
 
 ## Usage
 
-1. Start (or restart) a Claude Code session.
-2. Type `/parley:voice` — you'll hear a greeting.
+1. Start (or restart) a Claude Code or Codex session.
+2. Type `/parley:voice` in Claude Code or `$parley-voice` in Codex — you'll hear a greeting.
 3. Work as usual. When a turn finishes, Parley speaks the summary and listens.
 4. Reply by voice; stop talking and it's injected back automatically.
+
+Codex may ask you to review the bundled Stop hook once; open `/hooks`, review and trust
+Parley, then start a fresh thread and invoke `$parley-voice`.
 
 Re-run setup anytime via **Setup…** in the menu-bar / tray app.
 

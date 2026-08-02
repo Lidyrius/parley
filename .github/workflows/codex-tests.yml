@@ -1,0 +1,33 @@
+name: codex-tests
+
+on:
+  push:
+    paths:
+      - 'plugin/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/codex-tests.yml'
+  pull_request:
+    paths:
+      - 'plugin/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/codex-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shared and Codex suites
+        shell: bash
+        run: |
+          bash -n plugin/scripts/stop-hook.sh scripts/detect-integrations.sh scripts/sync-integrations.sh
+          bash tests/hook_test.sh
+          bash tests/codex_hook_test.sh
+          bash tests/codex_plugin_test.sh

@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/stop-hook.sh",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/scripts/stop-hook.sh\"",
+            "commandWindows": "bash \"${PLUGIN_ROOT}/scripts/stop-hook.sh\"",
             "timeout": 86400
           }
         ]

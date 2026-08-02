@@ -1,12 +1,12 @@
 # Parley — working notes for Claude
 
-Parley is a voice layer for Claude Code: on a Stop hook the app speaks the `<speak>`
+Parley is a voice layer for Claude Code and Codex: on a Stop hook the app speaks the `<speak>`
 summary, records the reply, transcribes it, and injects it back. Two apps share one
 plugin + contract:
 
 - **macOS** — `app/` (Swift 6 / SwiftUI menu-bar app). Build/bundle: `bash scripts/make-app.sh`. Release: `bash scripts/release.sh vX.Y.Z`.
 - **Windows** — `windows/` (C# / .NET 8 tray app). No local dotnet — the GitHub Actions `windows-build` workflow is the compiler; tag `win-vX.Y.Z` to cut a release.
-- **Shared** — `plugin/` (Stop hook, `/parley:voice`, greet/stop scripts), `README.md`, the `credentials.json` contract, and the `.parley.json` per-project name.
+- **Shared** — `plugin/` (Stop hook, `/parley:voice`, `$parley-voice`, greet/stop scripts), `README.md`, the `credentials.json` contract, and the `.parley.json` per-project name.
 
 ## Cross-platform rule (required)
 

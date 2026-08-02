@@ -14,6 +14,19 @@ set -euo pipefail
 PORT="${PARLEY_PORT:-8787}"
 input="$(cat)"
 
+# Claude Code and Codex send different Stop-hook envelopes. Codex requires valid
+# JSON on stdout even when the hook has nothing to do; Claude treats empty stdout
+# as success. Keep one script so both clients share extraction and /turn behavior.
+is_codex=false
+if printf '%s' "$input" | jq -e '.hook_event_name == "Stop"' >/dev/null 2>&1; then
+  is_codex=true
+fi
+
+finish() {
+  [ "$is_codex" = true ] && printf '{}\n'
+  exit 0
+}
+
 # Host resolution: 127.0.0.1 everywhere (macOS, native Git Bash, WSL2 mirrored
 # networking). Under WSL NAT mode the Windows host is reachable via the default
 # gateway instead — fall back to it when loopback doesn't answer.
@@ -35,7 +48,7 @@ fi
 # position is the one that counts — any earlier tag in prose (even a bare unclosed
 # `<speak>` in backticks) is ignored. Extract that tag's content to its close, or to end
 # of message if the close was forgotten.
-msg="$(printf '%s' "$input" | jq -r '.last_assistant_message // ""')"
+msg="$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' 2>/dev/null || true)"
 parsed="$(printf '%s' "$msg" | perl -0777 -ne '
   my $m = $_;
   my $sepos = -1; while ($m =~ /<speak-end>/g) { $sepos = $-[0]; }
@@ -51,7 +64,7 @@ parsed="$(printf '%s' "$msg" | perl -0777 -ne '
 listen="$(printf '%s' "$parsed" | head -1)"
 speak="$(printf '%s' "$parsed" | tail -n +2)"
 
-[ -z "$speak" ] && exit 0
+[ -z "$speak" ] && finish
 [ "$listen" = "false" ] || listen=true
 
 cwd="$(printf '%s' "$input" | jq -r '.cwd // ""')"
@@ -103,7 +116,7 @@ fi
 [ -n "$transcript" ] && inject "$transcript"
 
 # No reply. Unless the app asked to PARK this session, end normally.
-[ "$park" = "true" ] || exit 0
+[ "$park" = "true" ] || finish
 
 # PARKED — the conversation is paused but stays resumable. Keep this Stop hook alive by
 # short-polling /wake: because the hook never returns, Claude Code treats the turn as
@@ -117,7 +130,7 @@ wpayload="$(jq -n \
   '{session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, label:$label}')"
 while true; do
   wresp="$(curl -fsS --max-time 20 -X POST "http://${HOST}:${PORT}/wake" \
-    -H 'Content-Type: application/json' -d "$wpayload" 2>/dev/null)" || exit 0
+    -H 'Content-Type: application/json' -d "$wpayload" 2>/dev/null)" || finish
   wtext="$(printf '%s' "$wresp" | jq -r '.transcript // ""' 2>/dev/null || true)"
   wtext="$(printf '%s' "$wtext" | perl -0777 -pe 's/^\s+|\s+$//g')"
   [ -n "$wtext" ] && inject "$wtext"

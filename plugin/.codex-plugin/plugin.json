@@ -1,0 +1,21 @@
+{
+  "name": "parley",
+  "version": "0.1.0",
+  "description": "Voice conversation for Claude Code and Codex: speak turn summaries and inject spoken replies.",
+  "author": {
+    "name": "sydney",
+    "email": "sydney@developaway.de"
+  },
+  "license": "MIT",
+  "keywords": ["voice", "coding", "claude-code", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Parley",
+    "shortDescription": "Voice conversations for Claude Code and Codex",
+    "longDescription": "Let Parley speak agent turn summaries, listen to your reply, and continue the same coding session by voice.",
+    "developerName": "sydney",
+    "category": "Productivity",
+    "capabilities": ["Interactive"],
+    "defaultPrompt": "Activate Parley voice mode for this session."
+  }
+}

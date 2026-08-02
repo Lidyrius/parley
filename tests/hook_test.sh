@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests plugin/scripts/stop-hook.sh: <speak> extraction -> correct /turn JSON,
-# and no-tag input -> no POST at all. Spins a throwaway loopback listener,
-# captures the request body, asserts on it.
+# Tests plugin/scripts/stop-hook.sh for Claude Code and Codex: <speak> extraction
+# -> correct /turn JSON, Codex continuation output, and no-tag behavior. Spins a
+# throwaway loopback listener and captures the request body.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,10 +15,11 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 # One-shot listener: writes the POST body of a single request to $bodyfile.
 readyfile="$(mktemp)"
 start_listener() {
+  listener_response="${1:-{\"ok\":true}}"
   : > "$bodyfile"; : > "$readyfile"
-  python3 - "$port" "$bodyfile" > "$readyfile" 2>&1 <<'PY' &
+  python3 - "$port" "$bodyfile" "$listener_response" > "$readyfile" 2>&1 <<'PY' &
 import socket, sys
-port, out = int(sys.argv[1]), sys.argv[2]
+port, out, response = int(sys.argv[1]), sys.argv[2], sys.argv[3].encode()
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", port)); s.listen(1)
@@ -35,7 +36,7 @@ for line in head.split(b"\r\n"):
 while len(rest) < clen:
     rest += c.recv(4096)
 open(out, "wb").write(rest)
-c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"ok\":true}")
+c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(response)).encode() + b"\r\n\r\n" + response)
 c.close()
 PY
   srv=$!
@@ -104,5 +105,26 @@ sleep 0.3
 [ ! -s "$bodyfile" ] || fail "no-tag input still POSTed a body: $(cat "$bodyfile")"
 kill "$srv" 2>/dev/null || true
 echo "PASS: no-tag input -> no POST, exit 0"
+
+# --- Test 4: Codex no-tag input -> valid empty JSON and no POST ---
+start_listener
+codex_no_tag='{"hook_event_name":"Stop","last_assistant_message":"A normal Codex answer.","cwd":"/tmp/x","session_id":"codex-no-tag"}'
+codex_output="$(printf '%s' "$codex_no_tag" | PARLEY_PORT=$port bash "$hook")"
+[ "$codex_output" = '{}' ] || fail "Codex no-tag output was not {}: [$codex_output]"
+sleep 0.3
+[ ! -s "$bodyfile" ] || fail "Codex no-tag input POSTed a body: $(cat "$bodyfile")"
+kill "$srv" 2>/dev/null || true
+echo "PASS: Codex no-tag input -> empty JSON, no POST"
+
+# --- Test 5: Codex tagged input -> transcript becomes a continuation decision ---
+start_listener '{"transcript":"Ja, bitte fortfahren."}'
+codex_tagged='{"hook_event_name":"Stop","last_assistant_message":"<speak>Codex ist bereit. Soll ich fortfahren?</speak>","cwd":"/Users/sydney/workspace/privat/parley","session_id":"codex-1"}'
+codex_output="$(printf '%s' "$codex_tagged" | PARLEY_PORT=$port bash "$hook")"
+wait "$srv" 2>/dev/null || true
+[ "$(printf '%s' "$codex_output" | jq -r '.decision')" = "block" ] || fail "Codex did not block for transcript: [$codex_output]"
+[ "$(printf '%s' "$codex_output" | jq -r '.reason')" = "Ja, bitte fortfahren." ] \
+  || fail "Codex transcript mismatch: [$codex_output]"
+[ "$(jq -r '.session_id' < "$bodyfile")" = "codex-1" ] || fail "Codex session_id mismatch"
+echo "PASS: Codex tagged input -> continuation decision"
 
 echo "ALL HOOK TESTS PASSED"

@@ -1,10 +1,11 @@
 # Parley wire contract
 
-Plugin (Claude Code hooks) ⇄ App (`127.0.0.1:8787`). Plain HTTP, JSON.
+Plugin (Claude Code/Codex hooks) ⇄ App (`127.0.0.1:8787`). Plain HTTP, JSON.
 
 Terminal-agnostic voice loop (works in Warp, iTerm, tmux, any terminal): the Stop hook
 **long-polls** the app and feeds the transcribed reply back into the session via a
-`{"decision":"block"}` stop decision — no keystroke/tmux injection.
+the host's stop decision — no keystroke/tmux injection. Claude Code and Codex share the
+same `/turn` contract; Codex receives valid JSON on every Stop-hook invocation.
 
 ## `POST /turn`  (long-poll / blocking)
 Fired by the **Stop** hook when a turn ends with a `<speak>…</speak>` line. The hook
@@ -31,7 +32,7 @@ The hook then, if transcript non-empty, emits on stdout:
 ```json
 { "decision": "block", "reason": "Ja, mach das.", "systemMessage": "🎙️ Parley: Sprachantwort eingespeist" }
 ```
-which continues the Claude session with the spoken reply as the next turn. Empty
+which continues the host session with the spoken reply as the next turn. Empty
 transcript → hook exits 0 → session ends normally.
 
 App-side caps bound the block: ~8 s no-speech timeout, ~20 s max recording, then Groq

@@ -18,10 +18,16 @@ private func langCode(_ l: String) -> String {
 
 @MainActor
 final class OnboardingModel: ObservableObject {
-    enum Step: Int, CaseIterable { case welcome, keys, voice, notify, mic, tutorial, done }
+    enum Step: Int, CaseIterable { case welcome, integrations, keys, voice, notify, mic, tutorial, done }
     @Published var step: Step = .welcome
 
-    init(start: Step = .welcome) { step = start }
+    init(start: Step = .welcome) {
+        ClientIntegrations.refreshDetection()
+        step = start
+        let firstRun = Keychain.get(.onboarded) != "1"
+        installClaude = firstRun ? ClientIntegrations.detected(.claudeCode) : ClientIntegrations.enabled(.claudeCode)
+        installCodex = firstRun ? ClientIntegrations.detected(.codex) : ClientIntegrations.enabled(.codex)
+    }
 
     // Tutorial sub-state (the `.tutorial` step walks all TutorialStep cases).
     @Published var tutIndex = 0
@@ -37,6 +43,11 @@ final class OnboardingModel: ObservableObject {
     @Published var notifyMode = AppConfig.load().notifyMode
     @Published var micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published var voices: [String] = ["Alnilam", "Aoede", "Charon", "Kore", "Puck", "Fenrir"]
+    @Published var installClaude = ClientIntegrations.enabled(.claudeCode)
+    @Published var installCodex = ClientIntegrations.enabled(.codex)
+
+    var detectedClaude: Bool { ClientIntegrations.detected(.claudeCode) }
+    var detectedCodex: Bool { ClientIntegrations.detected(.codex) }
 
     enum Check: Equatable { case idle, checking, ok, fail(String) }
     @Published var googleCheck: Check = .idle
@@ -45,6 +56,7 @@ final class OnboardingModel: ObservableObject {
     var totalSteps: Int { Step.allCases.count }
     var canContinue: Bool {
         switch step {
+        case .integrations: return true
         case .keys: return googleCheck == .ok && groqCheck == .ok   // must verify to proceed
         default: return true
         }
@@ -171,8 +183,10 @@ final class OnboardingModel: ObservableObject {
         Keychain.set(language, for: .language)
         Keychain.set("\(langCode(language))-Chirp3-HD-\(voiceName)", for: .googleVoice)
         Keychain.set(notifyMode, for: .notifyMode)
+        ClientIntegrations.save(claudeCode: installClaude, codex: installCodex)
         Keychain.set("1", for: .onboarded)
         Keychain.set(String(TutorialClips.version), for: .tutorialSeen)
+        ClientIntegrations.sync()
     }
 }
 
@@ -220,7 +234,25 @@ struct OnboardingView: View {
         switch m.step {
         case .welcome:
             hero("waveform", "Willkommen bei Parley",
-                 "Deine Sprachschicht für Claude Code. Am Ende jeder Antwort spricht Parley die Zusammenfassung, hört deine Antwort und speist sie zurück — freihändig, im Charakter eines ruhigen Butlers.")
+                 "Deine Sprachschicht für Claude Code und Codex. Am Ende jeder Antwort spricht Parley die Zusammenfassung, hört deine Antwort und speist sie zurück — freihändig, im Charakter eines ruhigen Butlers.")
+        case .integrations:
+            VStack(spacing: 18) {
+                hero("rectangle.2.swap", "Wo soll Parley laufen?",
+                     "Erkannte Coding-Clients sind vorausgewählt. Du kannst die Verbindung jederzeit im Setup ändern.")
+                VStack(spacing: 10) {
+                    integrationChoice(.claudeCode, title: "Claude Code", subtitle: "Stop-Hook und /parley:voice", symbol: "bubble.left.and.bubble.right")
+                        .entrance(3)
+                    integrationChoice(.codex, title: "Codex", subtitle: "Plugin und $parley-voice-Skill", symbol: "terminal")
+                        .entrance(4)
+                }
+                if !m.detectedClaude && !m.detectedCodex {
+                    HStack(spacing: 10) {
+                        Text("Kein Client gefunden.").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Button("Claude Code installieren") { ClientIntegrations.openDownload(for: .claudeCode) }.buttonStyle(.link)
+                        Button("Codex installieren") { ClientIntegrations.openDownload(for: .codex) }.buttonStyle(.link)
+                    }.font(.system(size: 11)).entrance(5)
+                }
+            }
         case .keys:
             VStack(spacing: 18) {
                 hero("key.fill", "API-Schlüssel", "Beide sind praktisch kostenlos. Öffne die Konsole, erstelle den Schlüssel, füge ihn ein — und prüfe.")
@@ -278,14 +310,23 @@ struct OnboardingView: View {
         case .done:
             VStack(spacing: 18) {
                 hero("checkmark.seal.fill", "Bereit, Sir",
-                     "Starte jetzt eine neue Claude-Code-Sitzung.")
-                Text("/parley:voice")
-                    .font(.system(size: 20, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 18).padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.tint.opacity(0.16)))
-                    .entrance(3)
-                Text("Tippe das in der neuen Sitzung — dann bin ich da.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).entrance(4)
+                     "Starte jetzt eine neue Sitzung mit einem aktivierten Client.")
+                if m.installClaude {
+                    Text("/parley:voice").font(.system(size: 18, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 18).padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.tint.opacity(0.16)))
+                        .entrance(3)
+                }
+                if m.installCodex {
+                    Text("$parley-voice").font(.system(size: 18, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 18).padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.tint.opacity(0.16)))
+                        .entrance(4)
+                }
+                if !m.installClaude && !m.installCodex {
+                    Text("Du kannst die Clients später im Setup verbinden.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary).entrance(3)
+                }
             }
         }
     }
@@ -428,6 +469,32 @@ struct OnboardingView: View {
                 .strokeBorder(on ? Color.accentColor.opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+
+    private func integrationChoice(_ client: ClientIntegrations.Client, title: String,
+                                   subtitle: String, symbol: String) -> some View {
+        let detected = client == .claudeCode ? m.detectedClaude : m.detectedCodex
+        let enabled = client == .claudeCode ? m.installClaude : m.installCodex
+        return Button {
+            if client == .claudeCode { m.installClaude.toggle() } else { m.installCodex.toggle() }
+        } label: {
+            HStack(spacing: 13) {
+                Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary)).frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
+                    Text(detected ? subtitle + " · gefunden" : "Nicht gefunden — später verbinden").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+            }
+            .padding(13)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(enabled ? Color.accentColor.opacity(0.12) : Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(enabled ? Color.accentColor.opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(!detected)
+        .opacity(detected ? 1 : 0.55)
     }
 }
 

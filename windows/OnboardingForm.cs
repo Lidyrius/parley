@@ -16,16 +16,17 @@ public sealed class OnboardingForm : Form
     private static readonly Color Accent = Color.FromArgb(56, 132, 255);
     private static readonly Color TextMuted = Color.FromArgb(168, 168, 176);
 
-    private enum Step { Welcome, Keys, Voice, Notify, Mic, Tutorial, Done }
+    private enum Step { Welcome, Integrations, Keys, Voice, Notify, Mic, Tutorial, Done }
     private static readonly (string title, string sub, string icon)[] Meta =
     {
-        ("Willkommen bei Parley", "Deine Sprachschicht für Claude Code. Am Ende jeder Antwort spreche ich die Zusammenfassung, höre deine Antwort und speise sie zurück — freihändig, im Charakter eines ruhigen Butlers.", "wave"),
+        ("Willkommen bei Parley", "Deine Sprachschicht für Claude Code und Codex. Am Ende jeder Antwort spreche ich die Zusammenfassung, höre deine Antwort und speise sie zurück — freihändig, im Charakter eines ruhigen Butlers.", "wave"),
+        ("Wo soll Parley laufen?", "Erkannte Coding-Clients sind vorausgewählt. Du kannst die Verbindung jederzeit im Setup ändern.", "stack"),
         ("API-Schlüssel", "Beide sind praktisch kostenlos.", "key"),
         ("Sprache & Stimme", "In welcher Sprache spreche ich, und mit welcher Stimme?", "globe"),
         ("Benachrichtigungen", "Wie soll ich dich informieren, z. B. wenn ein Projekt wartet?", "bell"),
         ("Mikrofon", "Parley braucht dein Mikrofon, um deine Antworten aufzunehmen. Windows fragt beim ersten Sprechen automatisch.", "mic"),
         ("Kurz-Tutorial", "Das Wichtigste in einer Minute.", "wave"),
-        ("Fertig!", "Starte eine neue Claude-Code-Sitzung und tippe /parley:voice. Ich melde mich.", "check"),
+        ("Fertig!", "Starte jetzt eine neue Sitzung mit einem aktivierten Client.", "check"),
     };
     private static readonly (string title, string sub, string icon)[] NotifyCards =
     {
@@ -40,6 +41,10 @@ public sealed class OnboardingForm : Form
     private readonly TextBox _groq = MakeInput(true);
     private readonly ComboBox _lang = MakeCombo(Langs);
     private readonly ComboBox _voice = MakeCombo(Voices);
+    private readonly bool _detectedClaude;
+    private readonly bool _detectedCodex;
+    private bool _installClaude;
+    private bool _installCodex;
 
     // Tutorial: one spoken line per step; expect 0=none 1=stop 2=wait.
     private static readonly (string title, string line, int expect, string icon)[] TutDe =
@@ -60,6 +65,8 @@ public sealed class OnboardingForm : Form
 
     private Rectangle _nextRect, _backRect;
     private readonly Rectangle[] _cardRects = new Rectangle[3];
+    private readonly Rectangle[] _integrationRects = new Rectangle[2];
+    private Rectangle _downloadClaudeRect, _downloadCodexRect;
     // Key-step links: [google guide, google console, groq guide, groq console].
     private Rectangle _gGuideRect, _gConsoleRect, _qGuideRect, _qConsoleRect;
     private readonly bool _tutorialOnly;
@@ -87,6 +94,10 @@ public sealed class OnboardingForm : Form
         DoubleBuffered = true;
 
         var c = Config.Load();
+        _detectedClaude = c.DetectedClaudeCode;
+        _detectedCodex = c.DetectedCodex;
+        _installClaude = c.ClaudeCodeEnabled ?? _detectedClaude;
+        _installCodex = c.CodexEnabled ?? _detectedCodex;
         _google.Text = c.GoogleKey; _groq.Text = c.GroqKey;
         _lang.SelectedItem = c.Language; if (_lang.SelectedIndex < 0) _lang.SelectedIndex = 0;
         _voice.SelectedIndex = 0;
@@ -120,6 +131,7 @@ public sealed class OnboardingForm : Form
         _lang.SetBounds((w - 260) / 2, 300, 260, 26);
         _voice.SetBounds((w - 260) / 2, 372, 260, 26);
         for (var i = 0; i < 3; i++) _cardRects[i] = new Rectangle((w - 460) / 2, 268 + i * 74, 460, 62);
+        for (var i = 0; i < 2; i++) _integrationRects[i] = new Rectangle((w - 460) / 2, 268 + i * 74, 460, 62);
         _nextRect = new Rectangle(w - 40 - 140, ClientSize.Height - 66, 140, 40);
         _backRect = new Rectangle(40, ClientSize.Height - 66, 104, 40);
         SetStepControls();
@@ -159,6 +171,13 @@ public sealed class OnboardingForm : Form
             if (_gConsoleRect.Contains(e.Location)) { Open(GoogleConsoleUrl); return; }
             if (_qGuideRect.Contains(e.Location)) { Open(GroqGuideUrl); return; }
             if (_qConsoleRect.Contains(e.Location)) { Open(GroqConsoleUrl); return; }
+        }
+        if (_step == Step.Integrations)
+        {
+            if (_integrationRects[0].Contains(e.Location) && _detectedClaude) { _installClaude = !_installClaude; Invalidate(); return; }
+            if (_integrationRects[1].Contains(e.Location) && _detectedCodex) { _installCodex = !_installCodex; Invalidate(); return; }
+            if (_downloadClaudeRect.Contains(e.Location)) { Open("https://docs.anthropic.com/en/docs/claude-code/overview"); return; }
+            if (_downloadCodexRect.Contains(e.Location)) { Open("https://developers.openai.com/codex/cli"); return; }
         }
         if (_step == Step.Tutorial && _tryRect.Contains(e.Location) && !_tutTrying) { TryTut(); return; }
         if (_nextRect.Contains(e.Location) && CanContinue)
@@ -237,6 +256,15 @@ public sealed class OnboardingForm : Form
                         g.DrawString("⚠  Bitte beide Schlüssel eingeben, um fortzufahren.", wf, warn,
                             new RectangleF(_groq.Left, _groq.Bottom + 12, _groq.Width, 24));
                 break;
+            case Step.Integrations:
+                DrawIntegrationCard(g, 0, "Claude Code", "Stop-Hook und /parley:voice", "bubble");
+                DrawIntegrationCard(g, 1, "Codex", "Plugin und $parley-voice-Skill", "terminal");
+                if (!_detectedClaude && !_detectedCodex)
+                {
+                    _downloadClaudeRect = DrawLink(g, "Claude Code installieren", (w / 2) - 8, 425, true);
+                    _downloadCodexRect = DrawLink(g, "Codex installieren", (w / 2) + 8, 425, false);
+                }
+                break;
             case Step.Voice:
                 g.DrawString("Sprache", lblFont, white, _lang.Left, _lang.Top - 20);
                 g.DrawString("Chirp3-HD-Stimme", lblFont, white, _voice.Left, _voice.Top - 20);
@@ -273,6 +301,27 @@ public sealed class OnboardingForm : Form
         using var muted = new SolidBrush(TextMuted);
         g.DrawString(NotifyCards[i].title, tf, white, r.X + 52, r.Y + 12);
         g.DrawString(NotifyCards[i].sub, sf, muted, r.X + 52, r.Y + 34);
+        var cc = new Rectangle(r.Right - 34, r.Y + r.Height / 2 - 9, 18, 18);
+        if (on) { using var b = new SolidBrush(Accent); g.FillEllipse(b, cc); using var wp = new Pen(Color.White, 2); DrawCheckPath(g, cc, wp); }
+        else { using var p = new Pen(Color.FromArgb(90, 255, 255, 255), 1.5f); g.DrawEllipse(p, cc); }
+    }
+
+    private void DrawIntegrationCard(Graphics g, int i, string title, string subtitle, string icon)
+    {
+        var r = _integrationRects[i];
+        var detected = i == 0 ? _detectedClaude : _detectedCodex;
+        var on = i == 0 ? _installClaude : _installCodex;
+        using (var fill = new SolidBrush(on ? Color.FromArgb(30, Accent.R, Accent.G, Accent.B) : Color.FromArgb(13, 255, 255, 255)))
+            FillRound(g, fill, r, 12);
+        using (var pen = new Pen(on ? Color.FromArgb(128, Accent.R, Accent.G, Accent.B) : Color.FromArgb(22, 255, 255, 255)))
+            DrawRound(g, pen, r, 12);
+        DrawIcon(g, icon, new Rectangle(r.X + 16, r.Y + 20, 22, 22), on ? Accent : TextMuted);
+        using var tf = new Font("Segoe UI", 11, FontStyle.Bold);
+        using var sf = new Font("Segoe UI", 9);
+        using var white = new SolidBrush(Color.White);
+        using var muted = new SolidBrush(TextMuted);
+        g.DrawString(title, tf, white, r.X + 52, r.Y + 12);
+        g.DrawString(detected ? subtitle + "  ·  gefunden" : "Nicht gefunden — später verbinden", sf, muted, r.X + 52, r.Y + 34);
         var cc = new Rectangle(r.Right - 34, r.Y + r.Height / 2 - 9, 18, 18);
         if (on) { using var b = new SolidBrush(Accent); g.FillEllipse(b, cc); using var wp = new Pen(Color.White, 2); DrawCheckPath(g, cc, wp); }
         else { using var p = new Pen(Color.FromArgb(90, 255, 255, 255), 1.5f); g.DrawEllipse(p, cc); }
@@ -360,6 +409,16 @@ public sealed class OnboardingForm : Form
             case "stack":
                 DrawRound(g, pen, new Rectangle((int)(x + 5), (int)y, (int)(w - 8), (int)(h - 8)), 3);
                 DrawRound(g, pen, new Rectangle((int)x, (int)(y + 6), (int)(w - 8), (int)(h - 8)), 3);
+                break;
+            case "bubble":
+                DrawRound(g, pen, new Rectangle((int)x, (int)y + 1, (int)(w * 0.72f), (int)(h * 0.62f)), 4);
+                DrawRound(g, pen, new Rectangle((int)(x + w * 0.28f), (int)(y + h * 0.34f), (int)(w * 0.72f), (int)(h * 0.62f)), 4);
+                break;
+            case "terminal":
+                DrawRound(g, pen, new Rectangle((int)x, (int)y + 2, (int)w, (int)(h - 4)), 3);
+                g.DrawLine(pen, x + 5, cy - 2, x + 9, cy);
+                g.DrawLine(pen, x + 9, cy, x + 5, cy + 2);
+                g.DrawLine(pen, x + 12, cy + 3, x + w - 5, cy + 3);
                 break;
             case "quest":
                 g.DrawEllipse(pen, x + 1, y + 1, w - 2, h - 2);
@@ -542,8 +601,11 @@ public sealed class OnboardingForm : Form
             d["notifyMode"] = _notifyIndex switch { 1 => "system", 2 => "none", _ => "pill" };
             d["onboarded"] = "1";
         }
+        d["claudeCodeEnabled"] = _installClaude ? "1" : "0";
+        d["codexEnabled"] = _installCodex ? "1" : "0";
         d["tutorialSeen"] = "3";   // TutorialVersion
         File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
+        IntegrationSync.Apply();
     }
 
     public static bool IsComplete()

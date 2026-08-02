@@ -13,6 +13,11 @@ public sealed class Config
     public string Language { get; init; } = "Deutsch";
     public double SpeakingRate { get; init; } = 1.0;
     public string NotifyMode { get; init; } = "pill";   // "pill" | "system" | "none"
+    public bool DetectedClaudeCode { get; init; }
+    public bool DetectedCodex { get; init; }
+    public bool? ClaudeCodeEnabled { get; init; }
+    public bool? CodexEnabled { get; init; }
+    public string SourceDir { get; init; } = "";
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
@@ -36,6 +41,11 @@ public sealed class Config
             var d = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? new();
             string S(string k, string fallback = "") =>
                 d.TryGetValue(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? fallback : fallback;
+            bool? B(string k)
+            {
+                var value = S(k);
+                return value switch { "1" => true, "0" => false, _ => null };
+            }
             var rateStr = S("speakingRate", "1.0");
             double.TryParse(rateStr, System.Globalization.CultureInfo.InvariantCulture, out var rate);
             if (rate <= 0) rate = 1.0;
@@ -48,12 +58,44 @@ public sealed class Config
                 Language = S("language", "Deutsch"),
                 SpeakingRate = Math.Clamp(rate, 0.5, 2.0),
                 NotifyMode = ResolveNotifyMode(S("notifyMode"), S("notifyInPill")),
+                DetectedClaudeCode = S("detectedClaudeCode") == "1",
+                DetectedCodex = S("detectedCodex") == "1",
+                ClaudeCodeEnabled = B("claudeCodeEnabled"),
+                CodexEnabled = B("codexEnabled"),
+                SourceDir = S("sourceDir"),
             };
         }
         catch
         {
             return new Config();
         }
+    }
+}
+
+public static class IntegrationSync
+{
+    public static void Apply()
+    {
+        var cfg = Config.Load();
+        var source = cfg.SourceDir;
+        if (string.IsNullOrWhiteSpace(source))
+            source = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".parley", "src");
+        var script = Path.Combine(source, "windows", "sync-integrations.ps1");
+        if (!File.Exists(script)) return;
+        try
+        {
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            });
+            p?.WaitForExit(30000);
+        }
+        catch { }
     }
 }
 

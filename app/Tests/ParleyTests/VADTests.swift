@@ -18,7 +18,7 @@ final class LevelTests: XCTestCase {
 
 final class SilenceVADTests: XCTestCase {
     func testWaitsBeforeSpeech() {
-        var v = SilenceVAD(speechThresholdDB: -40, trailingSilence: 1.2)
+        var v = SilenceVAD(trailingSilence: 1.2)
         // quiet before any speech -> keep waiting, never ends
         for _ in 0..<100 {
             XCTAssertEqual(v.process(rmsDB: -60, duration: 0.1), .waiting)
@@ -27,7 +27,7 @@ final class SilenceVADTests: XCTestCase {
     }
 
     func testEndsAfterTrailingSilence() {
-        var v = SilenceVAD(speechThresholdDB: -40, trailingSilence: 1.2)
+        var v = SilenceVAD(trailingSilence: 1.2)
         XCTAssertEqual(v.process(rmsDB: -10, duration: 0.1), .speaking) // speech starts
         // 11 quiet buffers of 0.1s = 1.1s < 1.2s -> still speaking
         for _ in 0..<11 { XCTAssertEqual(v.process(rmsDB: -80, duration: 0.1), .speaking) }
@@ -36,7 +36,7 @@ final class SilenceVADTests: XCTestCase {
     }
 
     func testSpeechResetsSilenceTimer() {
-        var v = SilenceVAD(speechThresholdDB: -40, trailingSilence: 0.95)
+        var v = SilenceVAD(trailingSilence: 0.95)
         _ = v.process(rmsDB: -10, duration: 0.1)                 // start
         for _ in 0..<9 { _ = v.process(rmsDB: -80, duration: 0.1) } // 0.9s silence
         XCTAssertEqual(v.process(rmsDB: -10, duration: 0.1), .speaking) // speech again -> reset
