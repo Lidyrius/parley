@@ -31,3 +31,4 @@ jobs:
           bash tests/hook_test.sh
           bash tests/codex_hook_test.sh
           bash tests/codex_plugin_test.sh
+          bash tests/greet_test.sh

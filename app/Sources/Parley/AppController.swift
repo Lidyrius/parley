@@ -34,6 +34,7 @@ final class AppController: ObservableObject {
     // once) held the device far longer when merely stopped → the mic sat at 0 buffers for
     // ~10s across retries. The player is a local in each playback func, alive for its span.
     private var started = false
+    private var onboardingPlayer: TTSPlayer?
 
     func start() {
         guard !started else { return }   // idempotent: launch + menu .task may both call
@@ -402,8 +403,24 @@ final class AppController: ObservableObject {
     /// Play a pre-rendered tutorial line (settled + hi-fi, so it's audible after any prior IO).
     func onboardingSpeak(_ pcm: Data) async {
         try? await Task.sleep(nanoseconds: 200_000_000)
+        guard !Task.isCancelled else { return }
         await waitForHiFiOutput()
-        await playClip(pcm, rate: AppConfig.load().speakingRate)
+        guard !Task.isCancelled else { return }
+
+        let player = TTSPlayer(rate: AppConfig.load().speakingRate)
+        do { try player.start() } catch { return }
+        onboardingPlayer = player
+        player.enqueue(pcmChunk: pcm)
+        let seconds = Double(pcm.count / 2) / ElevenLabs.sampleRate / max(0.5, AppConfig.load().speakingRate)
+        try? await Task.sleep(nanoseconds: UInt64((seconds + 0.3) * 1_000_000_000))
+        player.stop()
+        if onboardingPlayer === player { onboardingPlayer = nil }
+    }
+
+    /// Stop a tutorial line immediately when the user advances, goes back, or skips.
+    func stopOnboardingSpeak() {
+        onboardingPlayer?.stop()
+        onboardingPlayer = nil
     }
 
     /// Record one reply (shows the pill) and report what the user did — for the interactive

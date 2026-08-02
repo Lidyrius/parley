@@ -16,6 +16,10 @@ The command prints `PARLEY_LANGUAGE=<language>` and optionally
 project name is empty, ask what this project should be called and save the answer
 as `{ "name": "<answer>" }` in `.parley.json` at the project root.
 
+If the script says that Parley is running but `/ready` registration failed, do not start a second
+Parley process. Treat it as a transient session-registration problem and retry the command once;
+only start the app manually when the script explicitly says that the control server is unreachable.
+
 From this point on, finish every response with exactly one final line:
 
 - `<speak>…</speak>` when Parley should speak and listen for a reply.

@@ -66,13 +66,15 @@ public sealed class OnboardingForm : Form
     private Rectangle _tryRect;
     private bool TutLast => _tutIndex >= TutDe.Length - 1;
 
-    private Rectangle _nextRect, _backRect;
+    private Rectangle _nextRect, _backRect, _skipRect;
     private readonly Rectangle[] _cardRects = new Rectangle[3];
     private readonly Rectangle[] _integrationRects = new Rectangle[2];
     private Rectangle _downloadClaudeRect, _downloadCodexRect;
     // Key-step links: [google guide, google console, groq guide, groq console].
     private Rectangle _gGuideRect, _gConsoleRect, _qGuideRect, _qConsoleRect;
     private readonly bool _tutorialOnly;
+    private CancellationTokenSource? _tutorialAudio;
+    private int _tutorialGeneration;
 
     private const string GoogleConsoleUrl = "https://console.cloud.google.com/apis/library/texttospeech.googleapis.com";
     private const string GroqConsoleUrl = "https://console.groq.com/keys";
@@ -119,7 +121,7 @@ public sealed class OnboardingForm : Form
 
         MouseClick += OnClick;
         Shown += (_, _) => { if (_step == Step.Tutorial) PlayTutLine(); };
-        FormClosed += (_, _) => VoicePreview.Stop();
+        FormClosed += (_, _) => { StopTutorialAudio(); VoicePreview.Stop(); };
         Layout1();
     }
 
@@ -137,6 +139,7 @@ public sealed class OnboardingForm : Form
         for (var i = 0; i < 2; i++) _integrationRects[i] = new Rectangle((w - 460) / 2, 268 + i * 74, 460, 62);
         _nextRect = new Rectangle(w - 40 - 140, ClientSize.Height - 66, 140, 40);
         _backRect = new Rectangle(40, ClientSize.Height - 66, 104, 40);
+        _skipRect = new Rectangle(156, ClientSize.Height - 66, 130, 40);
         SetStepControls();
     }
 
@@ -167,7 +170,11 @@ public sealed class OnboardingForm : Form
 
     private void OnClick(object? s, MouseEventArgs e)
     {
-        if (_backRect.Contains(e.Location) && (int)_step > 0) { _step = (Step)((int)_step - 1); SetStepControls(); return; }
+        if (_backRect.Contains(e.Location) && (int)_step > 0)
+        {
+            if (_step == Step.Tutorial) StopTutorialAudio();
+            _step = (Step)((int)_step - 1); SetStepControls(); return;
+        }
         if (_step == Step.Keys)
         {
             if (_gGuideRect.Contains(e.Location)) { Open(GoogleGuideUrl); return; }
@@ -183,6 +190,7 @@ public sealed class OnboardingForm : Form
             if (_downloadCodexRect.Contains(e.Location)) { Open("https://developers.openai.com/codex/cli"); return; }
         }
         if (_step == Step.Tutorial && _tryRect.Contains(e.Location) && !_tutTrying) { TryTut(); return; }
+        if (_step == Step.Tutorial && _skipRect.Contains(e.Location)) { SkipTutorial(); return; }
         if (_nextRect.Contains(e.Location) && CanContinue)
         {
             if (_step == Step.Done) { Finish(); Close(); return; }
@@ -305,6 +313,7 @@ public sealed class OnboardingForm : Form
 
         // buttons
         if ((int)_step > 0) DrawButton(g, _backRect, "Zurück", false);
+        if (_step == Step.Tutorial) DrawButton(g, _skipRect, "Überspringen", false);
         if (_step == Step.Tutorial) DrawTutorialExtras(g);
         var nextLabel = _step == Step.Done ? "Los geht's" : (_step == Step.Tutorial && TutLast ? "Fertig" : "Weiter");
         DrawButton(g, _nextRect, nextLabel, true, enabled: CanContinue);
@@ -588,12 +597,30 @@ public sealed class OnboardingForm : Form
 
     private void TutForward()
     {
-        if (TutLast) { _step = Step.Done; SetStepControls(); return; }
+        if (TutLast) { StopTutorialAudio(); _step = Step.Done; SetStepControls(); return; }
         _tutIndex++; _tutResult = null; Invalidate(); PlayTutLine();
+    }
+
+    private void SkipTutorial()
+    {
+        StopTutorialAudio();
+        _step = Step.Done;
+        SetStepControls();
+    }
+
+    private void StopTutorialAudio()
+    {
+        _tutorialGeneration++;
+        _tutorialAudio?.Cancel();
+        _tutorialAudio = null;
     }
 
     private async void PlayTutLine()
     {
+        StopTutorialAudio();
+        var generation = ++_tutorialGeneration;
+        using var audio = new CancellationTokenSource();
+        _tutorialAudio = audio;
         var cfg = Config.Load();
         // Use the voice picked in this onboarding, not the old saved one (matches macOS).
         if (_voice.SelectedItem is string star && star.Length > 0)
@@ -605,18 +632,25 @@ public sealed class OnboardingForm : Form
         var text = TutDe[_tutIndex].line;
         try
         {
-            var pcm = await GoogleTts.Synthesize(text, cfg);
-            if (pcm is not null)
+            var pcm = await GoogleTts.Synthesize(text, cfg, audio.Token);
+            if (pcm is not null && generation == _tutorialGeneration && !audio.IsCancellationRequested)
             {
-                await AudioOut.WaitForHiFiOutput();
-                await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, cfg.SpeakingRate));
+                await AudioOut.WaitForHiFiOutput(audio.Token);
+                if (!audio.IsCancellationRequested && generation == _tutorialGeneration)
+                    await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, cfg.SpeakingRate), cancellationToken: audio.Token);
             }
         }
+        catch (OperationCanceledException) { }
         catch { }
+        finally
+        {
+            if (ReferenceEquals(_tutorialAudio, audio)) _tutorialAudio = null;
+        }
     }
 
     private async void TryTut()
     {
+        StopTutorialAudio();
         _tutTrying = true; _tutResult = null; Invalidate();
         var cfg = Config.Load();
         var expect = TutDe[_tutIndex].expect;

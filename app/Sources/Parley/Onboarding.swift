@@ -33,6 +33,8 @@ final class OnboardingModel: ObservableObject {
     @Published var tutIndex = 0
     @Published var tutTrying = false
     @Published var tutResult: Bool? = nil
+    private var tutorialPlaybackTask: Task<Void, Never>?
+    private var tutorialGeneration = 0
     var tutStep: TutorialStep { TutorialStep(rawValue: tutIndex) ?? .principle }
     var tutLast: Bool { tutIndex >= TutorialStep.allCases.count - 1 }
     @Published var googleKey = Keychain.get(.googleAPIKey) ?? "" { didSet { googleCheck = .idle } }
@@ -99,6 +101,7 @@ final class OnboardingModel: ObservableObject {
     }
     func back() {
         guard let s = Step(rawValue: step.rawValue - 1) else { return }
+        if step == .tutorial { stopTutorialAudio() }
         forward = false
         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { step = s }
     }
@@ -131,18 +134,40 @@ final class OnboardingModel: ObservableObject {
 
     /// Play the current tutorial step's pre-rendered line.
     func playTutLine() {
+        stopTutorialAudio()
         tutResult = nil
+        tutorialGeneration += 1
+        let generation = tutorialGeneration
         let step = tutStep, lang = language, key = googleKey, voice = selectedVoice
-        Task {
-            if let pcm = await TutorialClips.shared.clip(step, lang: lang, key: key, voice: voice) {
+        tutorialPlaybackTask = Task { [weak self] in
+            guard let self else { return }
+            if let pcm = await TutorialClips.shared.clip(step, lang: lang, key: key, voice: voice),
+               !Task.isCancelled,
+               self.tutorialGeneration == generation {
                 await AppController.shared.onboardingSpeak(pcm)
             }
+            if self.tutorialGeneration == generation { self.tutorialPlaybackTask = nil }
         }
+    }
+
+    func stopTutorialAudio() {
+        tutorialGeneration += 1
+        tutorialPlaybackTask?.cancel()
+        tutorialPlaybackTask = nil
+        AppController.shared.stopOnboardingSpeak()
+    }
+
+    func skipTutorial() {
+        guard step == .tutorial else { return }
+        stopTutorialAudio()
+        forward = true
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { step = .done }
     }
 
     /// Interactive "Ausprobieren": record + check the expected action.
     func tryTut() {
         guard !tutTrying else { return }
+        stopTutorialAudio()
         tutTrying = true; tutResult = nil
         let expect = tutStep.expect
         Task {
@@ -154,7 +179,7 @@ final class OnboardingModel: ObservableObject {
 
     /// Advance within the tutorial; on the last step, continue to the final screen.
     func tutForward() {
-        if tutLast { next(); return }
+        if tutLast { stopTutorialAudio(); next(); return }
         forward = true
         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { tutIndex += 1 }
         playTutLine()
@@ -351,6 +376,7 @@ struct OnboardingView: View {
             }
         }
         .onAppear { m.playTutLine() }
+        .onDisappear { m.stopTutorialAudio() }
     }
 
     private var bottomBar: some View {
@@ -362,6 +388,7 @@ struct OnboardingView: View {
             if m.step == .done {
                 Button("Los geht's") { m.finish(); onDone() }.buttonStyle(PrimaryButton())
             } else if m.step == .tutorial {
+                Button("Überspringen") { m.skipTutorial() }.buttonStyle(SecondaryButton())
                 Button(m.tutLast ? "Fertig" : "Weiter") { m.tutForward() }.buttonStyle(PrimaryButton())
             } else {
                 Button("Weiter") { m.next() }.buttonStyle(PrimaryButton()).disabled(!m.canContinue)

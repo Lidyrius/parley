@@ -7,8 +7,12 @@ PORT="${PARLEY_PORT:-8787}"
 # mirrored networking. WSL2 NAT is handled by a gateway fallback further down.
 HOST="127.0.0.1"
 
+health_ok() {
+  curl -fsS --max-time 1 "http://${HOST}:${PORT}/health" >/dev/null 2>&1
+}
+
 # Launch the app if it isn't already answering. Cross-platform, harmless if running.
-if ! curl -sS --max-time 1 "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
+if ! health_ok; then
   if [ -n "${WSL_DISTRO_NAME:-}" ]; then
     # WSL: start the Windows-side Parley.exe (macOS `open` does not exist here).
     # Detach from all stdio, else the launched GUI app inherits our stdout pipe
@@ -24,12 +28,16 @@ fi
 
 # Give a cold launch a moment to bind the port. Under WSL2 NAT (non-mirrored) the
 # app is only reachable via the default gateway, so probe that as a fallback.
-for _ in 1 2 3 4 5 6 7 8; do
-  curl -sS --max-time 1 "http://${HOST}:${PORT}/health" >/dev/null 2>&1 && break
+reachable=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if health_ok; then
+    reachable=1
+    break
+  fi
   if [ -n "${WSL_DISTRO_NAME:-}" ]; then
     gw="$(ip route show default 2>/dev/null | awk '{print $3; exit}')"
-    if [ -n "$gw" ] && curl -sS --max-time 1 "http://${gw}:${PORT}/health" >/dev/null 2>&1; then
-      HOST="$gw"; break
+    if [ -n "$gw" ] && curl -fsS --max-time 1 "http://${gw}:${PORT}/health" >/dev/null 2>&1; then
+      HOST="$gw"; reachable=1; break
     fi
   fi
   sleep 0.5
@@ -41,11 +49,28 @@ payload="$(jq -n \
   --arg project "$(basename "$PWD")" \
   '{event:"ready", tmux_pane:$tmux_pane, cwd:$cwd, project:$project}')"
 
-if curl -sS --max-time 3 -X POST "http://${HOST}:${PORT}/ready" \
-     -H 'Content-Type: application/json' -d "$payload" >/dev/null 2>&1; then
+armed=0
+if [ "$reachable" -eq 1 ]; then
+  for _ in 1 2 3; do
+    if curl -fsS --max-time 3 -X POST "http://${HOST}:${PORT}/ready" \
+         -H 'Content-Type: application/json' -d "$payload" >/dev/null 2>&1; then
+      armed=1
+      break
+    fi
+    sleep 0.25
+  done
+fi
+
+if [ "$armed" -eq 1 ]; then
   echo "parley: armed (app reachable on :${PORT})"
+elif [ "$reachable" -eq 1 ]; then
+  echo "parley: WARNING — app is running on :${PORT}, but session registration (/ready) failed"
 else
-  echo "parley: WARNING — app not reachable on :${PORT}. Start it: ./app/.build/release/Parley"
+  if command -v pgrep >/dev/null 2>&1 && pgrep -x Parley >/dev/null 2>&1; then
+    echo "parley: WARNING — Parley is running, but its control server is not reachable on :${PORT}"
+  else
+    echo "parley: WARNING — app not reachable on :${PORT}. Start it: ./app/.build/release/Parley"
+  fi
 fi
 
 # Report the user's configured spoken-turn language so the command instructs Claude to

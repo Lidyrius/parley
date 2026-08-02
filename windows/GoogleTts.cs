@@ -10,7 +10,7 @@ public static class GoogleTts
     public const int SampleRate = 24000;
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
-    public static async Task<byte[]?> Synthesize(string text, Config config)
+    public static async Task<byte[]?> Synthesize(string text, Config config, CancellationToken cancellationToken = default)
     {
         if (!config.UseGoogle) return null;
         var lang = string.Join("-", config.GoogleVoice.Split('-').Take(2));
@@ -26,8 +26,8 @@ public static class GoogleTts
         req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         try
         {
-            using var resp = await Http.SendAsync(req);
-            var body = await resp.Content.ReadAsStringAsync();
+            using var resp = await Http.SendAsync(req, cancellationToken);
+            var body = await resp.Content.ReadAsStringAsync(cancellationToken);
             if (!resp.IsSuccessStatusCode)
             {
                 var code = (int)resp.StatusCode;
@@ -44,6 +44,10 @@ public static class GoogleTts
                 audio[2] == (byte)'F' && audio[3] == (byte)'F')
                 return audio[44..];
             return audio;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return null;
         }
         catch (Exception e)
         {

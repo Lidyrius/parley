@@ -36,7 +36,7 @@ public static class AudioOut
 
     /// Wait until the default output runs at a hi-fi rate again (Bluetooth headsets drop
     /// to 16/24 kHz while their mic is used; playing during the switch is swallowed).
-    public static async Task WaitForHiFiOutput()
+    public static async Task WaitForHiFiOutput(CancellationToken cancellationToken = default)
     {
         var start = DateTime.UtcNow;
         while ((DateTime.UtcNow - start).TotalSeconds < 3.0)
@@ -49,12 +49,13 @@ public static class AudioOut
                 if (dev.AudioClient.MixFormat.SampleRate >= 40000) return;
             }
             catch { return; }
-            await Task.Delay(150);
+            await Task.Delay(150, cancellationToken);
         }
     }
 
     /// Play raw 16-bit LE mono PCM at `sampleRate`, blocking until done.
-    public static async Task PlayPcm(byte[] pcm, int sampleRate = GoogleTts.SampleRate)
+    public static async Task PlayPcm(byte[] pcm, int sampleRate = GoogleTts.SampleRate,
+                                     CancellationToken cancellationToken = default)
     {
         if (pcm.Length < 2) return;
         var format = new WaveFormat(sampleRate, 16, 1);
@@ -68,8 +69,15 @@ public static class AudioOut
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         output.PlaybackStopped += (_, _) => done.TrySetResult();
         output.Init(provider);
+        using var cancellation = cancellationToken.Register(() =>
+        {
+            try { output.Stop(); } catch { }
+            done.TrySetResult();
+        });
+        if (cancellationToken.IsCancellationRequested) return;
         output.Play();
-        await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(pcm.Length / (double)(sampleRate * 2) + 5)));
+        await Task.WhenAny(done.Task, Task.Delay(
+            TimeSpan.FromSeconds(pcm.Length / (double)(sampleRate * 2) + 5), cancellationToken));
         output.Stop();
     }
 
