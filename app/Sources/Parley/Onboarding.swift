@@ -240,9 +240,9 @@ struct OnboardingView: View {
                 hero("rectangle.2.swap", "Wo soll Parley laufen?",
                      "Erkannte Coding-Clients sind vorausgewählt. Du kannst die Verbindung jederzeit im Setup ändern.")
                 VStack(spacing: 10) {
-                    integrationChoice(.claudeCode, title: "Claude Code", subtitle: "Stop-Hook und /parley:voice", symbol: "bubble.left.and.bubble.right")
+                    integrationChoice(.claudeCode, title: "Claude Code", subtitle: "Stop-Hook und /parley:voice")
                         .entrance(3)
-                    integrationChoice(.codex, title: "Codex", subtitle: "Plugin und $parley-voice-Skill", symbol: "terminal")
+                    integrationChoice(.codex, title: "Codex", subtitle: "Plugin und $parley-voice-Skill")
                         .entrance(4)
                 }
                 if !m.detectedClaude && !m.detectedCodex {
@@ -310,17 +310,13 @@ struct OnboardingView: View {
         case .done:
             VStack(spacing: 18) {
                 hero("checkmark.seal.fill", "Bereit, Sir",
-                     "Starte jetzt eine neue Sitzung mit einem aktivierten Client.")
+                     "Diese Befehle gehören zu den aktivierten Clients.")
                 if m.installClaude {
-                    Text("/parley:voice").font(.system(size: 18, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 18).padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.tint.opacity(0.16)))
+                    clientCommand(.claudeCode, command: "/parley:voice")
                         .entrance(3)
                 }
                 if m.installCodex {
-                    Text("$parley-voice").font(.system(size: 18, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 18).padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.tint.opacity(0.16)))
+                    clientCommand(.codex, command: "$parley-voice")
                         .entrance(4)
                 }
                 if !m.installClaude && !m.installCodex {
@@ -472,14 +468,14 @@ struct OnboardingView: View {
     }
 
     private func integrationChoice(_ client: ClientIntegrations.Client, title: String,
-                                   subtitle: String, symbol: String) -> some View {
+                                   subtitle: String) -> some View {
         let detected = client == .claudeCode ? m.detectedClaude : m.detectedCodex
         let enabled = client == .claudeCode ? m.installClaude : m.installCodex
         return Button {
             if client == .claudeCode { m.installClaude.toggle() } else { m.installCodex.toggle() }
         } label: {
             HStack(spacing: 13) {
-                Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary)).frame(width: 26)
+                ClientBrandIcon(client: client).frame(width: 26, height: 26)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
                     Text(detected ? subtitle + " · gefunden" : "Nicht gefunden — später verbinden").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -495,6 +491,59 @@ struct OnboardingView: View {
         .buttonStyle(.plain)
         .disabled(!detected)
         .opacity(detected ? 1 : 0.55)
+    }
+
+    private func clientCommand(_ client: ClientIntegrations.Client, command: String) -> some View {
+        HStack(spacing: 12) {
+            ClientBrandIcon(client: client).frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(client.displayName).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                Text(command).font(.system(size: 17, weight: .bold, design: .monospaced))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 15).padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.tint.opacity(0.14)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.tint.opacity(0.28)))
+    }
+}
+
+private extension ClientIntegrations.Client {
+    var displayName: String {
+        switch self {
+        case .claudeCode: return "Claude Code"
+        case .codex: return "Codex"
+        }
+    }
+}
+
+private struct ClientBrandIcon: View {
+    let client: ClientIntegrations.Client
+
+    var body: some View {
+        if let url = Bundle.module.url(forResource: client.assetName, withExtension: "png", subdirectory: "branding"),
+           let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: client == .claudeCode ? "chevron.left.forwardslash.chevron.right" : "sparkles")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+private extension ClientIntegrations.Client {
+    var assetName: String {
+        switch self {
+        case .claudeCode: return "claude-code"
+        case .codex: return "codex"
+        }
     }
 }
 

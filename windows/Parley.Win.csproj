@@ -26,6 +26,9 @@
     <Content Include="..\app\Sources\Parley\Resources\voice-previews\*.mp3"
              Link="voice-previews\%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\app\Sources\Parley\Resources\branding\*.png"
+             Link="branding\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

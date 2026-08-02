@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Text.Json;
 
 namespace Parley;
@@ -15,6 +16,8 @@ public sealed class OnboardingForm : Form
     private static readonly Color Bg = Color.FromArgb(28, 28, 32);
     private static readonly Color Accent = Color.FromArgb(56, 132, 255);
     private static readonly Color TextMuted = Color.FromArgb(168, 168, 176);
+    private static Image? _claudeBrandIcon;
+    private static Image? _codexBrandIcon;
 
     private enum Step { Welcome, Integrations, Keys, Voice, Notify, Mic, Tutorial, Done }
     private static readonly (string title, string sub, string icon)[] Meta =
@@ -26,7 +29,7 @@ public sealed class OnboardingForm : Form
         ("Benachrichtigungen", "Wie soll ich dich informieren, z. B. wenn ein Projekt wartet?", "bell"),
         ("Mikrofon", "Parley braucht dein Mikrofon, um deine Antworten aufzunehmen. Windows fragt beim ersten Sprechen automatisch.", "mic"),
         ("Kurz-Tutorial", "Das Wichtigste in einer Minute.", "wave"),
-        ("Fertig!", "Starte jetzt eine neue Sitzung mit einem aktivierten Client.", "check"),
+        ("Fertig!", "Diese Befehle gehören zu den aktivierten Clients.", "check"),
     };
     private static readonly (string title, string sub, string icon)[] NotifyCards =
     {
@@ -257,14 +260,35 @@ public sealed class OnboardingForm : Form
                             new RectangleF(_groq.Left, _groq.Bottom + 12, _groq.Width, 24));
                 break;
             case Step.Integrations:
-                DrawIntegrationCard(g, 0, "Claude Code", "Stop-Hook und /parley:voice", "bubble");
-                DrawIntegrationCard(g, 1, "Codex", "Plugin und $parley-voice-Skill", "terminal");
+                DrawIntegrationCard(g, 0, "Claude Code", "Stop-Hook und /parley:voice", "claude-code");
+                DrawIntegrationCard(g, 1, "Codex", "Plugin und $parley-voice-Skill", "codex");
                 if (!_detectedClaude && !_detectedCodex)
                 {
                     _downloadClaudeRect = DrawLink(g, "Claude Code installieren", (w / 2) - 8, 425, true);
                     _downloadCodexRect = DrawLink(g, "Codex installieren", (w / 2) + 8, 425, false);
                 }
                 break;
+            case Step.Done:
+            {
+                var commandY = 278;
+                if (_installClaude)
+                {
+                    DrawCommandCard(g, commandY, "Claude Code", "/parley:voice", "claude-code");
+                    commandY += 74;
+                }
+                if (_installCodex)
+                {
+                    DrawCommandCard(g, commandY, "Codex", "$parley-voice", "codex");
+                    commandY += 74;
+                }
+                if (!_installClaude && !_installCodex)
+                {
+                    using var noneFont = new Font("Segoe UI", 9.5f);
+                    g.DrawString("Du kannst die Clients später im Setup verbinden.", noneFont, muted,
+                        new RectangleF(40, 286, w - 80, 28), center);
+                }
+                break;
+            }
             case Step.Voice:
                 g.DrawString("Sprache", lblFont, white, _lang.Left, _lang.Top - 20);
                 g.DrawString("Chirp3-HD-Stimme", lblFont, white, _voice.Left, _voice.Top - 20);
@@ -315,7 +339,7 @@ public sealed class OnboardingForm : Form
             FillRound(g, fill, r, 12);
         using (var pen = new Pen(on ? Color.FromArgb(128, Accent.R, Accent.G, Accent.B) : Color.FromArgb(22, 255, 255, 255)))
             DrawRound(g, pen, r, 12);
-        DrawIcon(g, icon, new Rectangle(r.X + 16, r.Y + 20, 22, 22), on ? Accent : TextMuted);
+        DrawBrandIcon(g, icon, new Rectangle(r.X + 16, r.Y + 20, 22, 22), detected ? 1f : 0.45f);
         using var tf = new Font("Segoe UI", 11, FontStyle.Bold);
         using var sf = new Font("Segoe UI", 9);
         using var white = new SolidBrush(Color.White);
@@ -325,6 +349,22 @@ public sealed class OnboardingForm : Form
         var cc = new Rectangle(r.Right - 34, r.Y + r.Height / 2 - 9, 18, 18);
         if (on) { using var b = new SolidBrush(Accent); g.FillEllipse(b, cc); using var wp = new Pen(Color.White, 2); DrawCheckPath(g, cc, wp); }
         else { using var p = new Pen(Color.FromArgb(90, 255, 255, 255), 1.5f); g.DrawEllipse(p, cc); }
+    }
+
+    private void DrawCommandCard(Graphics g, int y, string title, string command, string icon)
+    {
+        var r = new Rectangle((ClientSize.Width - 460) / 2, y, 460, 62);
+        using (var fill = new SolidBrush(Color.FromArgb(30, Accent.R, Accent.G, Accent.B)))
+            FillRound(g, fill, r, 12);
+        using (var pen = new Pen(Color.FromArgb(72, Accent.R, Accent.G, Accent.B)))
+            DrawRound(g, pen, r, 12);
+        DrawBrandIcon(g, icon, new Rectangle(r.X + 16, r.Y + 18, 26, 26), 1f);
+        using var tf = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        using var cf = new Font("Consolas", 12, FontStyle.Bold);
+        using var white = new SolidBrush(Color.White);
+        using var muted = new SolidBrush(TextMuted);
+        g.DrawString(title, tf, muted, r.X + 56, r.Y + 10);
+        g.DrawString(command, cf, white, r.X + 56, r.Y + 31);
     }
 
     private Rectangle DrawLink(Graphics g, string text, int x, int y, bool rightAlign)
@@ -431,6 +471,32 @@ public sealed class OnboardingForm : Form
                 g.DrawLine(pen, x, y + h, x + w, y);
                 break;
         }
+    }
+
+    private static void DrawBrandIcon(Graphics g, string name, Rectangle r, float opacity)
+    {
+        var image = name switch
+        {
+            "claude-code" => _claudeBrandIcon ??= LoadBrandIcon("claude-code.png"),
+            "codex" => _codexBrandIcon ??= LoadBrandIcon("codex.png"),
+            _ => null,
+        };
+        if (image is null)
+        {
+            DrawIcon(g, name == "claude-code" ? "terminal" : "stack", r, TextMuted);
+            return;
+        }
+
+        using var attributes = new ImageAttributes();
+        attributes.SetColorMatrix(new ColorMatrix { Matrix33 = opacity });
+        g.DrawImage(image, r, 0, 0, image.Width, image.Height, GraphicsUnit.Pixel, attributes);
+    }
+
+    private static Image? LoadBrandIcon(string fileName)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "branding", fileName);
+        try { return File.Exists(path) ? Image.FromFile(path) : null; }
+        catch { return null; }
     }
 
     private static void DrawCheckPath(Graphics g, Rectangle r, Pen pen)
