@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { ease, parseSpeak, ringSvg, timer, wave, waveSvg } from '../hooks/register'
+import { bgLabel, details, ease, parseSpeak, ringSvg, timer, todayLine, wave, waveSvg } from '../hooks/register'
 
 const BAND = {
   plugin: 'parley-ui',
@@ -145,4 +145,93 @@ test('timer and ring: countdown, elapsed, stopped; ring drains without the clock
   const ring = ringSvg(s, 0.84, 48000)
   expect(ring).toContain('dur="252.0s"')
   expect(ringSvg({ ...s, state: 'working', until: null }, 1, 1000)).toBe(ringSvg({ ...s, state: 'working', until: null }, 1, 9000))
+})
+
+test('details + today: stats per tile behind a toggle; idle resumes; the app\'s instruction becomes a prompt', async ($, on) => {
+  const clock = mock.clock(on)
+  const now = clock.now()
+  const stats = { startedAt: now - 8040000, contextPercent: 62.4, costUsd: 3.4, turns: 14, replies: 9, lastLine: 'Tests grün, Sir.' }
+  const sessions = [
+    { id: 'b', label: 'Shop', project: 'shop', state: 'idle', since: now - 60000, until: null, voice: false, resumable: true, stats },
+  ]
+  const today = { costUsd: 12.8, turns: 23, spokenSeconds: 1380, rateLimits: [{ kind: 'five_hour', percentUsed: 42, resetsAt: null }] }
+  const calls: string[] = []
+  const prompts: string[] = []
+  let inbox: string | null = null
+  on('http.fetch', async ($, e) => {
+    calls.push(`${e.init?.method ?? 'GET'} ${e.url.replace(/^.*:8787/, '')} ${e.init?.body ?? ''}`)
+    const text = e.url.endsWith('/sessions') ? JSON.stringify({ sessions, today })
+      : e.url.endsWith('/presence') && inbox ? JSON.stringify({ instruction: inbox }) : '{}'
+    if (e.url.endsWith('/presence')) inbox = null
+    return { value: { status: 200, ok: true, headers: {}, text } }
+  })
+  on('session.usage', async () => ({ value: { startedAt: now - 60000, context: { tokens: 120000, window: 200000, percent: 60 }, rateLimits: [], cost: { usd: 1.5 } } }) as never)
+  on('prompt.submit', async ($, e) => { prompts.push(e.text); return { text: e.text } })
+  on('command.register', async () => ({ value: undefined }) as never)
+  on('session.id', async () => ({ value: 's1' }))
+  on('session.start', async ($, e) => ({ cwd: e.cwd }) as never)
+  on('classic.Stop', async () => ({}))
+  on('ui.render', async ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
+
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'desktop', isInteractive: true } as never)
+  await $.classic.Stop({ stop_hook_active: false, last_assistant_message: '<speak-end>Fertig.</speak-end>', cwd: '/tmp/parley-demo' })
+  await clock.advance(1100)
+  expect(calls.some(c => c.includes('/presence') && c.includes('"contextPercent":60') && c.includes('"costUsd":1.5'))).toBe(true)
+
+  const desk = await $.ui.mount({ plugin: 'parley-ui', surface: 'desktop', component: 'Pane', requestId: 'parley', props: {} as never })
+  expect(await desk.find({ type: 'Text', text: /Heute \$12\.80 · 23 Updates · 23 min gesprochen · 5-h-Limit 42 %/ })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: /Kontext/ })).toBeUndefined()
+  await desk.press({ key: 'info-b' })
+  expect(await desk.find({ type: 'Text', text: 'Kontext 62 %' })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: /Läuft seit 2 h 14 min/ })).toBeDefined()
+  await desk.press({ key: 'resume-b' })
+  expect(calls.some(c => c.startsWith('POST /resume') && c.includes('"id":"b"'))).toBe(true)
+  await desk.unmount()
+
+  inbox = 'Bau den Export noch ein.'
+  await clock.advance(2100)
+  expect(prompts).toEqual(['Bau den Export noch ein.'])
+  await clock.advance(2100)
+  expect(prompts.length).toBe(1) // handed out once
+})
+
+test('details and today line read well', async () => {
+  const s = { id: 'x', label: 'X', project: 'x', state: 'idle', since: 0, until: null, voice: false,
+    stats: { startedAt: 0, contextPercent: null, costUsd: null, turns: 2, replies: 1, lastLine: null } } as const
+  expect(details(s, 45 * 60000)).toEqual(['Läuft seit 45 min', '2 Updates · 1 Antworten'])
+  expect(todayLine({ costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: [{ kind: 'seven_day', percentUsed: 18.4, resetsAt: null }] }))
+    .toBe('Heute $0.00 · 0 Updates · 0 min gesprochen · Woche 18 %')
+})
+
+test('background: a Stop with running background work reports "background"; a new turn is "working" again', async ($, on) => {
+  const clock = mock.clock(on)
+  const bodies: string[] = []
+  on('http.fetch', async ($, e) => {
+    if (e.url.endsWith('/presence')) bodies.push(e.init?.body ?? '')
+    return { value: { status: 200, ok: true, headers: {}, text: e.url.endsWith('/sessions') ? '{"sessions":[]}' : '{}' } }
+  })
+  on('session.usage', async () => ({ value: { startedAt: 0, context: { window: 200000 }, rateLimits: [] } }) as never)
+  on('command.register', async () => ({ value: undefined }) as never)
+  on('session.id', async () => ({ value: 's1' }))
+  on('session.start', async ($, e) => ({ cwd: e.cwd }) as never)
+  on('classic.Stop', async () => ({}))
+  on('turn.start', async ($, e) => ({ turnId: e.turnId }) as never)
+
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'desktop', isInteractive: true } as never)
+  await $.classic.Stop({
+    stop_hook_active: false, last_assistant_message: '<speak-end>Läuft im Hintergrund.</speak-end>', cwd: '/tmp/parley-demo',
+    background_tasks: [{ id: 't1', type: 'subagent', status: 'running', description: 'App: session presence' }],
+  } as never)
+  await clock.advance(1100)
+  expect(bodies.at(-1)).toContain('"state":"background"')
+  expect(bodies.at(-1)).toContain('"description":"App: session presence"')
+
+  await $.turn.start({ text: '', turnId: 't2' } as never)
+  await clock.advance(2100)
+  expect(bodies.at(-1)).toContain('"state":"working"')
+
+  const s = { id: 'x', label: 'X', project: 'x', state: 'background', since: 0, until: null, voice: false } as const
+  expect(bgLabel({ ...s, tasks: [{ type: 'subagent', description: 'a' }] })).toBe('Agent im Hintergrund')
+  expect(bgLabel({ ...s, tasks: [{ type: 'shell', description: 'npm test' }] })).toBe('Job im Hintergrund')
+  expect(bgLabel({ ...s, state: 'idle' })).toBe(null)
 })

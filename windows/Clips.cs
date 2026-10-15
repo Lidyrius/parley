@@ -2,9 +2,9 @@ using System.Text;
 
 namespace Parley;
 
-// Cached spoken clips — ack lines per intent (picked at random for variety) and one
-// per-project announcement — rendered lazily via Google TTS into %APPDATA%\Parley\clips.
-// Same phrase templates as the macOS scripts/clip-texts (all six languages).
+// Cached spoken clips — ack lines per intent (picked at random for variety) and per-project
+// lines (one announcement, three resume lines) — rendered via Google TTS into
+// %APPDATA%\Parley\clips. Same phrase templates as macOS (all six languages).
 public static class Clips
 {
     private static string Root => Path.Combine(Config.Dir, "clips");
@@ -24,18 +24,54 @@ public static class Clips
         return null;
     }
 
-    // ---- project announcements -------------------------------------------------------
+    // ---- per-project lines ------------------------------------------------------------
+    //   announce\<slug>.pcm     "Update zu X" — before a turn when another session is alive
+    //                           (the old 10-phrasing clips lived in clips\projects\<slug> —
+    //                           a different path, never reused)
+    //   resume\<slug>-<n>.pcm   3 variants of "Ich habe die Arbeit an X wieder aufgenommen…"
+    //                           — opens the POST /resume voice dialog
+    // All rendered in the background as soon as the project's label shows up (Prerender).
 
-    // One fixed phrase per project ("Update zu X"), cached as clips\announce\<slug>.pcm.
-    // (The old 10-phrasing clips lived in clips\projects\<slug> — a different path, never reused.)
+    private static string AnnounceFile(string slug) => Path.Combine(Root, "announce", slug + ".pcm");
+    private static string ResumeFile(string slug, int n) => Path.Combine(Root, "resume", $"{slug}-{n}.pcm");
+
+    // The cached announcement, or null (kicks off a background render; never blocks a turn).
     public static byte[]? Announcement(string label, Config config)
     {
         var slug = Slug(label);
         if (slug.Length == 0) return null;
-        var file = Path.Combine(Root, "announce", slug + ".pcm");
+        var file = AnnounceFile(slug);
         try { if (File.Exists(file)) return File.ReadAllBytes(file); } catch { }
-        EnsureRendered("ann-" + slug, config, () => RenderAnnouncement(label, file, config));
+        Prerender(label, config);
         return null;
+    }
+
+    // A random cached resume line; if none is rendered yet, one is synthesized live (and
+    // cached) and the rest render in the background. null = no Google TTS.
+    public static async Task<byte[]?> ResumeClip(string label, Config config)
+    {
+        var slug = Slug(label);
+        if (slug.Length == 0) return null;
+        var cached = Enumerable.Range(0, 3).Select(i => ResumeFile(slug, i)).Where(f => File.Exists(f)).ToList();
+        if (cached.Count > 0)
+        {
+            try { return File.ReadAllBytes(cached[Random.Shared.Next(cached.Count)]); } catch { }
+        }
+        if (!config.UseGoogle) return null;
+        var variant = Random.Shared.Next(3);
+        var pcm = await GoogleTts.Synthesize(ResumePhrases(label, config.Language)[variant], config);
+        if (pcm is null) return null;
+        await WriteClip(ResumeFile(slug, variant), pcm);
+        Prerender(label, config);
+        return pcm;
+    }
+
+    // Render whatever is missing for the project: the announcement and the 3 resume lines.
+    public static void Prerender(string label, Config config)
+    {
+        var slug = Slug(label);
+        if (slug.Length == 0) return;
+        EnsureRendered("proj-" + slug, config, () => RenderProject(label, slug, config));
     }
 
     // {name} = the project's spoken label.
@@ -81,17 +117,38 @@ public static class Clips
         Log.Write("clips: ack lines done");
     }
 
-    private static async Task RenderAnnouncement(string label, string file, Config config)
+    private static async Task RenderProject(string label, string slug, Config config)
     {
-        Log.Write($"clips: rendering announcement for {label}");
-        var pcm = await GoogleTts.Synthesize(AnnouncementPhrase(label, config.Language), config);
-        if (pcm is null) return;
+        var resume = ResumePhrases(label, config.Language);
+        var jobs = new List<(string file, string text)> { (AnnounceFile(slug), AnnouncementPhrase(label, config.Language)) };
+        for (var n = 0; n < resume.Length; n++) jobs.Add((ResumeFile(slug, n), resume[n]));
+        foreach (var (file, text) in jobs)
+        {
+            if (File.Exists(file)) continue;
+            var pcm = await GoogleTts.Synthesize(text, config);
+            if (pcm is not null) await WriteClip(file, pcm);
+        }
+        Log.Write($"clips: project lines ready for {label}");
+    }
+
+    private static async Task WriteClip(string file, byte[] pcm)
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        var tmp = file + ".tmp";   // write-then-move: a turn never reads a half-written clip
+        var tmp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";   // write-then-move: never read half-written
         await File.WriteAllBytesAsync(tmp, pcm);
         File.Move(tmp, file, true);
-        Log.Write("clips: announcement done");
     }
+
+    // {name} = the project's spoken label.
+    public static string[] ResumePhrases(string name, string language) => (language switch
+    {
+        "English" => new[] { "I've resumed work on {name}. How can I help, Sir?", "Back on {name}, Sir. What's next?", "{name} is active again, Sir. How shall I proceed?" },
+        "Français" => new[] { "J'ai repris le travail sur {name}. Que puis-je faire pour vous, Monsieur ?", "De retour sur {name}, Monsieur. Quelle est la suite ?", "{name} est de nouveau actif, Monsieur. Comment dois-je poursuivre ?" },
+        "Español" => new[] { "He retomado el trabajo en {name}. ¿En qué puedo ayudarle, señor?", "De vuelta en {name}, señor. ¿Qué sigue?", "{name} vuelve a estar activo, señor. ¿Cómo debo continuar?" },
+        "Italiano" => new[] { "Ho ripreso il lavoro su {name}. Come posso aiutarla, signore?", "Di nuovo su {name}, signore. Qual è il prossimo passo?", "{name} è di nuovo attivo, signore. Come devo procedere?" },
+        "Nederlands" => new[] { "Ik heb het werk aan {name} hervat. Waarmee kan ik u helpen, meneer?", "Terug bij {name}, meneer. Wat staat er op het programma?", "{name} is weer actief, meneer. Hoe zal ik verdergaan?" },
+        _ => new[] { "Ich habe die Arbeit an {name} wieder aufgenommen. Wie kann ich Ihnen helfen, Sir?", "Zurück bei {name}, Sir. Was steht an?", "{name} ist wieder aktiv, Sir. Wie soll ich weitermachen?" },
+    }).Select(p => p.Replace("{name}", name)).ToArray();
 
     // ---- helpers ---------------------------------------------------------------------
 

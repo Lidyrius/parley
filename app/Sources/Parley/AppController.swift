@@ -16,7 +16,7 @@ struct SessionInfo: Identifiable, Equatable {
 @MainActor
 final class AppController: ObservableObject {
     @Published var sessions: [SessionInfo] = []
-    @Published var parked: [ParkedInfo] = []   // paused-but-resumable sessions (see /wake)
+    @Published var parked: [ParkedInfo] = []   // resumable sessions: parked (see /wake) or idle
     @Published var lastError: String?
     @Published var muted = false   // manual mute toggle (menu)
 
@@ -60,6 +60,11 @@ final class AppController: ObservableObject {
         server.onParked = { [weak self] list in
             Task { @MainActor in self?.parked = list }
         }
+        // A session's label appeared → pre-render its "Update zu" + resume lines in the
+        // background, so the first announcement / resume click is instant.
+        server.sessions.onLabel = { label in
+            Task { await ProjectClips.shared.prerender(label: label, config: AppConfig.load()) }
+        }
         // The long-poll pipeline: speak → record → transcribe → return the reply text,
         // which the hook feeds back into the Claude session (terminal-agnostic).
         server.replyProvider = { [weak self] turn, done in
@@ -91,6 +96,7 @@ final class AppController: ObservableObject {
         let key = routeKey(turn.tmux_pane, turn.session_id)
         LiveStatus.begin(session: turn.session_id)
         defer { LiveStatus.set(phase: "idle") }
+        if turn.event == ControlServer.resumeEvent { return await runResume(turn) }
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
         let config = AppConfig.load()
         resumeGen += 1   // a new turn began → cancel any pending debounced media resume
@@ -180,12 +186,14 @@ final class AppController: ObservableObject {
             text = await transcribe(wav, config: config)
             Log.write("transcribe done chars=\(text.count)")
 
-            guard !text.isEmpty, !parked.isEmpty, hop < 3,
-                  let cmd = await ControlCommand.detect(text, labels: parked.map { $0.label }, config: config),
-                  cmd.resume, let target = matchParked(cmd.target) else { break }
+            // Resumable = parked, or idle with the mod running (gets it via /presence).
+            let targets = text.isEmpty || hop >= 3 ? [] : server.resumableList()
+            guard !targets.isEmpty,
+                  let cmd = await ControlCommand.detect(text, labels: targets.map { $0.label }, config: config),
+                  cmd.resume, let target = matchParked(cmd.target, in: targets) else { break }
 
             let instruction = cmd.instruction.isEmpty ? ControlServer.resumeInstruction : cmd.instruction
-            server.wake(id: target.id, instruction: instruction)
+            server.resume(id: target.id, instruction: instruction)
             Log.write("control: resume \(target.label) → \"\(instruction)\"")
             await speakAndBeep("Verstanden, Sir — ich nehme \(target.label) wieder auf. Und für dieses Projekt?",
                                config: config, beep: true)
@@ -249,14 +257,51 @@ final class AppController: ObservableObject {
         return TurnReply(transcript: text, park: false)
     }
 
-    // Resume a parked session from the menu (mouse fallback for the voice command).
-    func resume(_ id: String) { server.wake(id: id, instruction: ControlServer.resumeInstruction) }
+    // Resume a session from the menu (mouse fallback for the voice command) — no dialog.
+    func resume(_ id: String) { server.resume(id: id, instruction: ControlServer.resumeInstruction) }
 
-    // Fuzzy-match a spoken project name to a parked session (either contains the other).
-    private func matchParked(_ spoken: String) -> ParkedInfo? {
+    // Re-read the resumable list (menu opened — idle sessions may have gone stale since).
+    func refreshResumable() { parked = server.resumableList() }
+
+    // POST /resume (the mod's button): a short voice dialog instead of a hook turn — the
+    // pre-recorded "Ich habe die Arbeit an X wieder aufgenommen…" line, then beep → record →
+    // transcribe exactly like a listening turn. No "Update zu" announcement. The transcript
+    // ("" → the default instruction) goes back to the server, which hands it to the session.
+    private func runResume(_ turn: TurnPayload) async -> TurnReply {
+        let config = AppConfig.load()
+        resumeGen += 1
+        Log.write("resume dialog start project=\(turn.project)")
+        if effectivelyMuted {
+            Log.write("muted → resuming without dialog")
+            return TurnReply(transcript: "", park: false)
+        }
+        await ackTask?.value
+        ackTask = nil
+
+        // Cached line (or synthesized live + cached); nil → speakAndBeep synthesizes the text.
+        let clip = await ProjectClips.shared.resumeClip(label: turn.spokenLabel, config: config)
+        await pauseMediaIfPlaying()
+        let line = ProjectClips.resumePhrases(name: turn.spokenLabel, language: config.language)[0]
+        await speakAndBeep(line, config: config, prefetched: clip, beep: true)
+
+        LiveStatus.set(phase: "listening")
+        let wav = await record()
+        LiveStatus.set(phase: "transcribing")
+        let text = await transcribe(wav, config: config)
+        Log.write("resume dialog done chars=\(text.count)")
+
+        ackTask = Task { [weak self] in
+            await self?.playAck(intent: .other, hasText: !text.isEmpty, config: config)
+            self?.scheduleResume()
+        }
+        return TurnReply(transcript: text, park: false)
+    }
+
+    // Fuzzy-match a spoken project name to a resumable session (either contains the other).
+    private func matchParked(_ spoken: String, in list: [ParkedInfo]) -> ParkedInfo? {
         let t = spoken.lowercased().trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return nil }
-        return parked.first { p in
+        return list.first { p in
             let l = p.label.lowercased()
             return l == t || l.contains(t) || t.contains(l)
         }

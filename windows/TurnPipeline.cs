@@ -11,29 +11,56 @@ public sealed class TurnPipeline
     private readonly MicCapture _mic = new();
     private readonly Func<int> _queuedTurns;
     private readonly PillOverlay? _pill;
-    private readonly Func<List<Server.ParkedInfo>>? _parkedList;
-    private readonly Action<string, string>? _wake;
+    private readonly Func<List<Server.ParkedInfo>>? _resumableList;   // parked / idle-with-mod sessions
+    private readonly Action<string, string>? _resume;                 // (id, instruction)
     private readonly Func<string, bool>? _othersAlive;   // any session besides this one not stopped
     private List<string> _pendingResume = new();
     private volatile int _resumeGen;   // bumped per turn; cancels a pending debounced resume
     private Task? _ackTask;
 
     public TurnPipeline(Func<int> queuedTurns, PillOverlay? pill,
-        Func<List<Server.ParkedInfo>>? parkedList = null, Action<string, string>? wake = null,
+        Func<List<Server.ParkedInfo>>? resumableList = null, Action<string, string>? resume = null,
         Func<string, bool>? othersAlive = null)
     {
         _queuedTurns = queuedTurns;
         _pill = pill;
-        _parkedList = parkedList;
-        _wake = wake;
+        _resumableList = resumableList;
+        _resume = resume;
         _othersAlive = othersAlive;
     }
 
     public async Task<(string transcript, bool park, int wait, string resume)> Run(TurnPayload turn)
     {
         LiveStatus.Begin(turn.SessionId);
-        try { return await RunTurn(turn); }
+        try { return turn.Event == Server.ResumeEvent ? await RunResume(turn) : await RunTurn(turn); }
         finally { LiveStatus.Set("idle"); }
+    }
+
+    // POST /resume (the mod's button): a short voice dialog instead of a hook turn — the
+    // pre-recorded "Ich habe die Arbeit an X wieder aufgenommen…" line, then beep → record →
+    // transcribe exactly like a listening turn. No "Update zu" announcement. The transcript
+    // ("" → the default instruction) goes back to the server, which hands it to the session.
+    private async Task<(string transcript, bool park, int wait, string resume)> RunResume(TurnPayload turn)
+    {
+        var config = Config.Load();
+        _resumeGen++;
+        Log.Write($"resume dialog start project={turn.Project}");
+        if (Muted)
+        {
+            Log.Write("muted → resuming without dialog");
+            return ("", false, 0, "");
+        }
+        if (_ackTask is not null) { await _ackTask; _ackTask = null; }
+
+        // Cached line, or synthesized live + cached; null → no TTS, just the beep.
+        var line = await Clips.ResumeClip(turn.SpokenLabel, config);
+        await PauseMediaIfPlaying();
+        if (line is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(line, config.SpeakingRate));
+
+        var (_, text) = await ListenOnce(config);
+        Log.Write($"resume dialog done chars={text.Length}");
+        StartAck(Groq.Intent.Other, text.Length > 0, config);
+        return (text, false, 0, "");
     }
 
     private async Task<(string transcript, bool park, int wait, string resume)> RunTurn(TurnPayload turn)
@@ -102,30 +129,15 @@ public sealed class TurnPipeline
             return ("", false, 0, "");
         }
 
-        // Record → transcribe. A CONTROL command (resume a paused project by voice) is
+        // Record → transcribe. A CONTROL command (resume a parked / idle project by voice) is
         // handled here and we re-record for THIS session's real answer. Capped to 4 hops.
-        var minBytes = 44 + 16000 * 2 / 5;   // header + ~0.2s
         byte[] wav = Array.Empty<byte>();
         var text = "";
         for (var hop = 0; hop < 4; hop++)
         {
-            await AudioOut.PlayBeep();
-            await Task.Delay(100);
+            (wav, text) = await ListenOnce(config);
 
-            LiveStatus.Set("listening");
-            Log.Write("record start");
-            ShowPill(true);
-            _mic.OnLevel = level => { LiveStatus.Push(level); _pill?.BeginInvoke(() => _pill.Push(level)); };
-            wav = await _mic.Record();
-            _mic.OnLevel = null;
-            ShowPill(false);
-            Log.Write($"record done bytes={wav.Length}");
-            LiveStatus.Set("transcribing");
-
-            text = wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
-            Log.Write($"transcribe done chars={text.Length}");
-
-            var parked = _parkedList?.Invoke() ?? new List<Server.ParkedInfo>();
+            var parked = _resumableList?.Invoke() ?? new List<Server.ParkedInfo>();
             if (text.Length == 0 || parked.Count == 0 || hop >= 3) break;
             var cmd = await Groq.DetectControlCommand(text, parked.Select(p => p.Label).ToList(), config);
             if (cmd is not { Resume: true }) break;
@@ -133,7 +145,7 @@ public sealed class TurnPipeline
             if (target is null) break;
 
             var instruction = string.IsNullOrWhiteSpace(cmd.Value.Instruction) ? Server.ResumeInstruction : cmd.Value.Instruction;
-            _wake?.Invoke(target.Value.Id, instruction);
+            _resume?.Invoke(target.Value.Id, instruction);
             Log.Write($"control: resume {target.Value.Label} → \"{instruction}\"");
             await SpeakLine($"Verstanden, Sir — ich nehme {target.Value.Label} wieder auf. Und für dieses Projekt?", config);
             // loop: listen again for the current session's actual reply
@@ -164,22 +176,7 @@ public sealed class TurnPipeline
         var recordSeconds = Math.Max(0, wav.Length - 44) / 2.0 / 16000.0;
         StatsStore.RecordTurn(turn.Speak, text, recordSeconds, intent.ToString().ToUpperInvariant(), turn.Project);
 
-        // Ack (cached Jarvis line, chime fallback) + media resume in the background — the
-        // transcript returns immediately so Claude starts working during the ack. Order:
-        // hi-fi restored → ack → resume (never video over the acknowledgment).
-        var hasText = text.Length > 0;
-        _ackTask = Task.Run(async () =>
-        {
-            await Task.Delay(300);
-            await AudioOut.WaitForHiFiOutput();
-            if (hasText)
-            {
-                var clip = Clips.AckClip(intent, config);
-                if (clip is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(clip, config.SpeakingRate));
-                else await AudioOut.PlayChime();
-            }
-            ScheduleResume();
-        });
+        StartAck(intent, text.Length > 0, config);
 
         // "Stop heißt Stop" — reply isn't fed back, but the session PARKS (stays resumable
         // by voice/tray) instead of ending. A silent turn parks too.
@@ -195,6 +192,47 @@ public sealed class TurnPipeline
         }
         Log.Write("turn end");
         return (text, false, 0, "");
+    }
+
+    // Beep → record (pill + VAD) → transcribe (min-audio guard): one listening pass.
+    private async Task<(byte[] wav, string text)> ListenOnce(Config config)
+    {
+        await AudioOut.PlayBeep();
+        await Task.Delay(100);
+
+        LiveStatus.Set("listening");
+        Log.Write("record start");
+        ShowPill(true);
+        _mic.OnLevel = level => { LiveStatus.Push(level); _pill?.BeginInvoke(() => _pill.Push(level)); };
+        var wav = await _mic.Record();
+        _mic.OnLevel = null;
+        ShowPill(false);
+        Log.Write($"record done bytes={wav.Length}");
+        LiveStatus.Set("transcribing");
+
+        var minBytes = 44 + 16000 * 2 / 5;   // header + ~0.2s
+        var text = wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
+        Log.Write($"transcribe done chars={text.Length}");
+        return (wav, text);
+    }
+
+    // Ack (cached Jarvis line, chime fallback) + media resume in the background — the
+    // transcript returns immediately so Claude starts working during the ack. Order:
+    // hi-fi restored → ack → resume (never video over the acknowledgment).
+    private void StartAck(Groq.Intent intent, bool hasText, Config config)
+    {
+        _ackTask = Task.Run(async () =>
+        {
+            await Task.Delay(300);
+            await AudioOut.WaitForHiFiOutput();
+            if (hasText)
+            {
+                var clip = Clips.AckClip(intent, config);
+                if (clip is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(clip, config.SpeakingRate));
+                else await AudioOut.PlayChime();
+            }
+            ScheduleResume();
+        });
     }
 
     private static string HumanDuration(int seconds)

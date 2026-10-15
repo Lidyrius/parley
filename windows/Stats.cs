@@ -24,6 +24,10 @@ public sealed class StatsData
     [JsonPropertyName("charMonth")] public string CharMonth { get; set; } = "";
     [JsonPropertyName("charsThisMonth")] public int CharsThisMonth { get; set; }
 
+    // Today's usage across all sessions (GET /sessions → today). Absent in older stats.json
+    // files (→ null); only meaningful on the all-time record, where DailyStats.Shared owns it.
+    [JsonPropertyName("today")] public DayStats? Today { get; set; }
+
     [JsonIgnore] public int BillableCharsThisMonth => Math.Max(0, CharsThisMonth - FreeCharsPerMonth);
     [JsonIgnore] public double EstimatedDollarsThisMonth => BillableCharsThisMonth / 1_000_000.0 * DollarsPerMillionChars;
 
@@ -73,6 +77,7 @@ public static class StatsStore
         {
             Total.Record(speak, transcript, recordSeconds, intent, project, month);
             Session.Record(speak, transcript, recordSeconds, intent, project, month);
+            DailyStats.Shared.RecordTurn(recordSeconds);
             Save();
 
             // Cost warning at 90% of the free monthly TTS-character tier — once per month.
@@ -87,6 +92,9 @@ public static class StatsStore
         }
     }
 
+    // Write stats.json now (DailyStats calls this when today's cost moved).
+    public static void Persist() { lock (Gate) Save(); }
+
     private static StatsData LoadFromDisk()
     {
         try { return JsonSerializer.Deserialize<StatsData>(File.ReadAllText(PathFor)) ?? new(); }
@@ -98,9 +106,95 @@ public static class StatsStore
         try
         {
             Directory.CreateDirectory(Config.Dir);
+            Total.Today = DailyStats.Shared.Snapshot();   // the only writer of stats.json
             File.WriteAllText(PathFor, JsonSerializer.Serialize(Total, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
+    }
+}
+
+// Today's usage across all sessions: voiced turns, seconds you spoke, and Claude cost. Rolls
+// over at local midnight. Cost comes from the mod's cumulative per-session costUsd: only the
+// increase since that session's last report counts, so restarts and repeated reports never
+// double-count — the per-session baselines (costSeen) persist with the day. 1:1 with macOS.
+public sealed class DayStats
+{
+    [JsonPropertyName("day")] public string Day { get; set; } = "";   // local "yyyy-MM-dd"
+    [JsonPropertyName("turns")] public int Turns { get; set; }
+    [JsonPropertyName("spokenSeconds")] public double SpokenSeconds { get; set; }
+    [JsonPropertyName("costUsd")] public double CostUsd { get; set; }
+    // session_id → last cumulative costUsd reported (at = epoch seconds).
+    [JsonPropertyName("costSeen")] public Dictionary<string, CostMark> CostSeen { get; set; } = new();
+
+    public DayStats Clone() => new()
+    {
+        Day = Day, Turns = Turns, SpokenSeconds = SpokenSeconds, CostUsd = CostUsd,
+        CostSeen = new Dictionary<string, CostMark>(CostSeen),
+    };
+}
+
+public sealed record CostMark(
+    [property: JsonPropertyName("cost")] double Cost,
+    [property: JsonPropertyName("at")] double At);
+
+// Thread-safe owner of today's DayStats: cost arrives from /presence, turns from the
+// pipeline. Persisted inside stats.json by StatsStore.Save().
+public sealed class DailyStats
+{
+    public static readonly DailyStats Shared = new(StatsStore.Total.Today, null, StatsStore.Persist);
+
+    private readonly object _gate = new();
+    private DayStats _d;
+    private readonly Func<DateTime> _now;
+    private readonly Action _persist;
+
+    public DailyStats(DayStats? day = null, Func<DateTime>? now = null, Action? persist = null)
+    {
+        _d = day ?? new DayStats();
+        _now = now ?? (() => DateTime.UtcNow);
+        _persist = persist ?? (() => { });
+    }
+
+    public void RecordTurn(double spokenSeconds)
+    {
+        lock (_gate) { Roll(_now()); _d.Turns++; _d.SpokenSeconds += spokenSeconds; }
+    }
+
+    // A session reported its cumulative cost. Known session → add the increase; unknown one
+    // that started today → all of it accrued today; unknown and older → baseline only.
+    public void AddCost(string session, double cumulative, DateTime? startedAt)
+    {
+        bool changed;
+        lock (_gate)
+        {
+            var t = _now();
+            Roll(t);
+            if (_d.CostSeen.TryGetValue(session, out var last))
+                _d.CostUsd += Math.Max(0, cumulative - last.Cost);
+            else if (startedAt is { } s && s.ToLocalTime() >= t.ToLocalTime().Date)
+                _d.CostUsd += Math.Max(0, cumulative);
+            changed = last is null || last.Cost != cumulative;
+            _d.CostSeen[session] = new CostMark(cumulative, (t - DateTime.UnixEpoch).TotalSeconds);
+        }
+        if (changed) _persist();   // outside the lock: Persist takes the StatsStore lock
+    }
+
+    public DayStats Snapshot()
+    {
+        lock (_gate) { Roll(_now()); return _d.Clone(); }
+    }
+
+    // New local day → zero the counters; keep cost baselines seen within the last 24 h.
+    private void Roll(DateTime t)
+    {
+        var key = t.ToLocalTime().ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        if (_d.Day == key) return;
+        var nowS = (t - DateTime.UnixEpoch).TotalSeconds;
+        _d = new DayStats
+        {
+            Day = key,
+            CostSeen = _d.CostSeen.Where(kv => nowS - kv.Value.At < 86_400).ToDictionary(kv => kv.Key, kv => kv.Value),
+        };
     }
 }
 

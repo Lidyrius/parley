@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Line, Phase, Sess, SessState } from '../types'
+import type { Line, Phase, Sess, SessState, Task, Today } from '../types'
 
 const phase = atom({ plugin: 'parley-ui', key: 'phase' } as const, 'off' as Phase)
 const line = atom({ plugin: 'parley-ui', key: 'line' } as const, '')
@@ -11,6 +11,9 @@ const isHidden = atom({ plugin: 'parley-ui', key: 'isHidden' } as const, false)
 const level = atom({ plugin: 'parley-ui', key: 'level' } as const, null as number | null)
 const overview = atom({ plugin: 'parley-ui', key: 'overview' } as const, null as Sess[] | null)
 const seen = atom({ plugin: 'parley-ui', key: 'seen' } as const, 0)
+const today = atom({ plugin: 'parley-ui', key: 'today' } as const, null as Today | null)
+const expanded = atom({ plugin: 'parley-ui', key: 'expanded' } as const, [] as string[])
+const tasks = atom({ plugin: 'parley-ui', key: 'tasks' } as const, [] as Task[])
 const isWorking = atom({ plugin: 'parley-ui', key: 'isWorking' } as const, false)
 
 const PANE = 'parley'
@@ -111,6 +114,7 @@ const STATE: Record<SessState, { label: string; tone: string; hex: string; glyph
   transcribing: { label: 'transkribiert', tone: 'claude', hex: '#D97757', glyph: '◉' },
   queued: { label: 'Warteschlange', tone: 'warning', hex: '#D9A43B', glyph: '◌' },
   working: { label: 'arbeitet', tone: 'suggestion', hex: '#5B8DEF', glyph: '◐' },
+  background: { label: 'Agent im Hintergrund', tone: 'permission', hex: '#9B87F5', glyph: '◍' },
   waiting: { label: 'pausiert', tone: 'warning', hex: '#D9A43B', glyph: '◔' },
   parked: { label: 'geparkt', tone: 'inactive', hex: '#8B8A85', glyph: '⏸' },
   idle: { label: 'bereit', tone: 'inactive', hex: '#8B8A85', glyph: '○' },
@@ -142,6 +146,8 @@ export function ringSvg(s: Sess, from: number, at: number): string {
       ? `${arc(1)}<circle cx="20" cy="20" r="7" fill="${col}"><animate attributeName="r" values="6;9;6" dur="1.4s" repeatCount="indefinite"/></circle>`
     : s.state === 'working' ? spin(0.28, 1.6)
     : s.state === 'queued' ? spin(0.12, 4)
+    : s.state === 'background'
+      ? `<g><circle cx="20" cy="5" r="3.5" fill="${col}"/><animateTransform attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" dur="2.4s" repeatCount="indefinite"/></g><circle cx="20" cy="20" r="4" fill="${col}" fill-opacity="0.5"/>`
     : s.state === 'waiting' && s.until
       ? arc(from, `<animate attributeName="stroke-dasharray" from="${(c * from).toFixed(2)} ${c}" to="0 ${c}" dur="${Math.max(0.1, (s.until - at) / 1000).toFixed(1)}s" fill="freeze"/>`)
     : s.state === 'parked' ? `<rect x="14" y="13" width="4" height="14" rx="1.5" fill="${col}"/><rect x="22" y="13" width="4" height="14" rx="1.5" fill="${col}"/>`
@@ -151,11 +157,65 @@ export function ringSvg(s: Sess, from: number, at: number): string {
     + `<circle cx="20" cy="20" r="${r}" fill="none" stroke="${col}" stroke-opacity="0.18" stroke-width="3"/>${inner}</svg>`
 }
 
+// What a tile's "Details" shows: what you would ask about a session at a glance.
+export function details(s: Sess, at: number): string[] {
+  const st = s.stats
+  if (!st) return []
+  const out: string[] = []
+  if (st.startedAt != null) out.push(`Läuft seit ${span(at - st.startedAt)}`)
+  if (st.contextPercent != null) out.push(`Kontext ${Math.round(st.contextPercent)} %`)
+  if (st.costUsd != null) out.push(`Kosten $${st.costUsd.toFixed(2)}`)
+  out.push(`${st.turns} Updates · ${st.replies} Antworten`)
+  for (const t of s.tasks ?? []) out.push(`◍ ${t.description}`)
+  if (st.lastLine) out.push(`Zuletzt: „${st.lastLine}“`)
+  return out
+}
+// "Agent im Hintergrund" for subagents/workflows, "Job im Hintergrund" for shells etc.
+export function bgLabel(s: Sess): string | null {
+  if (s.state !== 'background') return null
+  const list = s.tasks ?? []
+  const agents = list.filter(t => t.type === 'subagent' || t.type === 'workflow').length
+  if (!list.length || agents === list.length) return agents > 1 ? `${agents} Agents im Hintergrund` : 'Agent im Hintergrund'
+  return list.length > 1 ? `${list.length} Jobs im Hintergrund` : 'Job im Hintergrund'
+}
+const span = (ms: number) => {
+  const m = Math.max(0, Math.round(ms / 60000))
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`
+}
+const LIMIT: Record<string, string> = { five_hour: '5-h-Limit', seven_day: 'Woche' }
+export function todayLine(d: Today): string {
+  const parts = [`Heute $${d.costUsd.toFixed(2)}`, `${d.turns} Updates`, `${Math.round(d.spokenSeconds / 60)} min gesprochen`]
+  for (const r of d.rateLimits) if (LIMIT[r.kind]) parts.push(`${LIMIT[r.kind]} ${Math.round(r.percentUsed)} %`)
+  return parts.join(' · ')
+}
+
 async function readLabel($: EngineInterface, cwd: string): Promise<string> {
   const cfg = await $.fs.read(`${cwd}/.parley.json`).catch(() => '')
   try { return String(JSON.parse(String(cfg)).name ?? '') } catch { return '' }
 }
 const basename = (cwd: string) => cwd.split(/[\\/]/).pop() ?? '' // Windows cwd uses backslashes
+
+async function presence($: EngineInterface, sid: string, cwd: string, label: string) {
+  const u = await $.session.usage().catch(() => null)
+  const body = JSON.stringify({
+    session_id: sid, label, project: basename(cwd), cwd,
+    state: (await read($, isWorking)) ? 'working' : (await read($, tasks)).length ? 'background' : 'idle',
+    tasks: await read($, tasks),
+    usage: u && {
+      startedAt: u.startedAt, contextPercent: u.context.percent ?? null, contextTokens: u.context.tokens ?? null,
+      contextWindow: u.context.window, costUsd: u.cost?.usd ?? null,
+      rateLimits: u.rateLimits.map(r => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt ?? null })),
+    },
+  })
+  const res = await $.http.fetch(`${APP}/presence`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => null)
+  // "Fortsetzen" on an idle session: the app ran the voice dialog and hands us the reply.
+  const said = res?.ok ? (JSON.parse(res.text || '{}') as { instruction?: string }).instruction : undefined
+  if (said) {
+    await update($, isWorking, () => true)
+    await log($, 'you', said)
+    await $.prompt.submit({ text: said, asUser: true })
+  }
+}
 
 async function log($: EngineInterface, who: Line["who"], text: string) {
   const at = await $.clock.now()
@@ -170,23 +230,20 @@ export const register: Register = on => {
     await $.command.register({ name: 'parley', description: 'Parley: Sessions und Gesprächsverlauf als Pane öffnen' })
     const sid = await $.session.id()
     // Only once this session talks through Parley (phase leaves 'off'): report to the app
-    // every 5 s so it knows we are alive and working, and fetch every session's state each
-    // second for the overview (its timers count in seconds).
+    // every 2 s (alive, working, usage figures; the reply may hand back a resume
+    // instruction), and fetch every session's state each second for the overview.
     let n = 0
     $.clock.every(1000, () => {
       void read($, phase).then(async p => {
         if (p === 'off') return
-        if (n++ % 5 === 0) {
+        if (n++ % 2 === 0) {
           label ||= (await readLabel($, e.cwd)) || basename(e.cwd)
-          const body = JSON.stringify({
-            session_id: sid, label, project: basename(e.cwd), cwd: e.cwd,
-            state: (await read($, isWorking)) ? 'working' : 'idle',
-          })
-          void $.http.fetch(`${APP}/presence`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => null)
+          await presence($, sid, e.cwd, label)
         }
         const res = await $.http.fetch(`${APP}/sessions`).catch(() => null)
-        const list = res?.ok ? (JSON.parse(res.text) as { sessions: Sess[] }).sessions : null
-        await update($, overview, () => list)
+        const body = res?.ok ? (JSON.parse(res.text) as { sessions: Sess[]; today?: Today }) : null
+        await update($, overview, () => body?.sessions ?? null)
+        await update($, today, () => body?.today ?? null)
         const t = await $.clock.now()
         await update($, seen, () => t)
       }).catch(() => {})
@@ -212,6 +269,7 @@ export const register: Register = on => {
 
     label ||= (await readLabel($, e.cwd)) || basename(e.cwd)
     await update($, isWorking, () => false)
+    await update($, tasks, () => (e.background_tasks ?? []).map(t => ({ type: t.type, description: t.description })))
     await update($, isHidden, () => false) // hidden until the next spoken line
     await update($, line, () => spoken.text)
     await update($, phase, () => 'speaking')
@@ -245,6 +303,11 @@ export const register: Register = on => {
       await update($, phase, () => (spoken.listen ? 'parked' : 'idle'))
     }
     return res
+  }).catch(($, e, next) => next(e))
+
+  on('turn.start', async ($, e, next) => {
+    await update($, isWorking, () => true)
+    return next(e)
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
@@ -317,6 +380,8 @@ export const register: Register = on => {
     const list = await read($, history)
     const all = await read($, overview)
     const at = (await read($, seen)) || (await $.clock.now())
+    const day = await read($, today)
+    const open = await read($, expanded)
     const hhmm = (at: number) => new Date(at).toTimeString().slice(0, 5)
 
     const tile = (s: Sess) => {
@@ -335,13 +400,20 @@ export const register: Register = on => {
           {ring}
           <Box flexDirection="column" flexGrow={1}>
             <Text bold dimColor={off} wrap="truncate-end">{s.label || s.project}</Text>
-            <Text color={off ? undefined : st.tone} dimColor={off}>{st.label}</Text>
+            <Text color={off ? undefined : st.tone} dimColor={off}>{bgLabel(s) ?? st.label}</Text>
             <Text dimColor>{timer(s, at)}</Text>
-            {s.state === 'parked'
-              ? <Button key={`resume-${s.id}`} label="Fortsetzen" onPress={() => void $.http.fetch(`${APP}/resume`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id }),
-                }).catch(() => null)} />
-              : null}
+            {open.includes(s.id) ? details(s, at).map((d, i) => <Text key={`d${i}`} dimColor wrap="truncate-end">{d}</Text>) : null}
+            <Box flexDirection="row" gap={1}>
+              {s.resumable ?? s.state === 'parked'
+                ? <Button key={`resume-${s.id}`} label="Fortsetzen" onPress={() => void $.http.fetch(`${APP}/resume`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id }),
+                  }).catch(() => null)} />
+                : null}
+              {s.stats
+                ? <Button key={`info-${s.id}`} plain dimColor label={open.includes(s.id) ? 'Weniger' : 'Details'}
+                    onPress={() => update($, expanded, ids => (ids.includes(s.id) ? ids.filter(x => x !== s.id) : [...ids, s.id]))} />
+                : null}
+            </Box>
           </Box>
         </Box>
       )
@@ -355,6 +427,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" gap={1}>
         <Text bold dimColor>SESSIONS · {alive} aktiv</Text>
+        {day ? <Text dimColor wrap="truncate-end">{todayLine(day)}</Text> : null}
         {all === null ? <Text dimColor>Parley-App nicht erreichbar.</Text> : null}
         {rows.map((pair, r) => (
           <Box key={`row${r}`} flexDirection="row" gap={1}>
