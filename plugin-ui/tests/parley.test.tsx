@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { meter, parseSpeak, wave } from '../hooks/register'
+import { ease, parseSpeak, wave, waveSvg } from '../hooks/register'
 
 const BAND = {
   plugin: 'parley-ui',
@@ -52,12 +52,18 @@ test('/parley pane lists the conversation on terminal and desktop', async ($, on
   }
 })
 
-test('meter maps live levels to bar glyphs, newest last', async () => {
-  expect(meter([0, 0.5, 1], 24)).toBe('▁▅█')
-  expect(meter([0, 0, 0, 1], 2)).toBe('▁█')
+test('ease rises fast, falls slowly, and settles', async () => {
+  expect(ease(0, 1)).toBe(0.72)
+  expect(ease(1, 0)).toBe(0.76)
+  let v = 1
+  for (let i = 0; i < 40; i++) v = ease(v, 0)
+  expect(v).toBeLessThan(0.05)
+  const svg = waveSvg(0.5, 0, '#D97757', 1234)
+  expect(svg.match(/<line /g)?.length).toBe(28)
+  expect(svg).toContain('begin="-1.23s"') // wave phase follows the clock across redraws
 })
 
-test('live /status drives phase and a real meter while the app listens', async ($, on) => {
+test('live /status drives phase; desktop draws the SVG wave, terminal the glyph wave', async ($, on) => {
   const clock = mock.clock(on)
   let release = () => {}
   const gate = new Promise<void>(r => { release = r })
@@ -68,13 +74,18 @@ test('live /status drives phase and a real meter while the app listens', async (
   } }))
   on('ui.render', async ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
 
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const term = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const desk = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const stop = $.classic.Stop({ stop_hook_active: false, session_id: 's1', last_assistant_message: '<speak>Frage, Sir?</speak>' })
   await clock.advance(350)
-  expect(await ui.find({ type: 'Text', text: /hört zu\s+▁▅█/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /● hört zu/ })).toBeDefined()
+  expect(await term.find({ type: 'Svg' })).toBeUndefined()
+  expect(await desk.find({ type: 'Svg' })).toBeDefined()
 
   release()
   await stop
-  expect(await ui.find({ type: 'Text', text: /eingespeist/ })).toBeDefined()
-  await ui.unmount()
+  expect(await desk.find({ type: 'Text', text: /eingespeist/ })).toBeDefined()
+  expect(await desk.find({ type: 'Svg' })).toBeUndefined()
+  await term.unmount()
+  await desk.unmount()
 })

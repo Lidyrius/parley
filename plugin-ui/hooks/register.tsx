@@ -8,7 +8,7 @@ const line = atom({ plugin: 'parley-ui', key: 'line' } as const, '')
 const history = atom({ plugin: 'parley-ui', key: 'history' } as const, [] as Line[])
 const tick = atom({ plugin: 'parley-ui', key: 'tick' } as const, 0)
 const isHidden = atom({ plugin: 'parley-ui', key: 'isHidden' } as const, false)
-const levels = atom({ plugin: 'parley-ui', key: 'levels' } as const, null as number[] | null)
+const level = atom({ plugin: 'parley-ui', key: 'level' } as const, null as number | null)
 
 const PANE = 'parley'
 const BARS = '▁▂▃▄▅▆▇█'
@@ -29,23 +29,56 @@ export function parseSpeak(msg: string): { text: string; listen: boolean } | nul
   return text ? { text, listen } : null
 }
 
-export function wave(t: number, n: number, amp: number): string {
+// The app overlay's motion (RecordingHUD.swift): not a scrolling sample history but one
+// travelling wave whose height follows the eased volume, tapered to the ends. Period 2π.
+export function bar(i: number, n: number, p: number): number {
+  const env = Math.sin((i / (n - 1)) * Math.PI)
+  return env * Math.max(0, 0.55 + 0.3 * Math.sin(p + i * 0.55) + 0.15 * Math.sin(2 * p + i * 0.22))
+}
+const gain = (vol: number) => 0.12 + 0.88 * vol // a quiet idle wave even in silence
+
+// Asymmetric one-pole smoothing per 100 ms poll: rise τ≈80 ms, fall τ≈350 ms (VU-like, calm).
+// Quantised so near-equal values do not redraw.
+export function ease(prev: number, target: number): number {
+  const a = target > prev ? 0.71 : 0.25
+  return Math.round((prev + (target - prev) * a) * 50) / 50
+}
+
+// Terminal: the same wave in block glyphs.
+export function wave(p: number, n: number, vol: number): string {
   let s = ''
-  for (let i = 0; i < n; i++) {
-    const v = (Math.sin(t * 0.7 + i * 0.9) * Math.cos(t * 0.31 + i * 0.4) + 1) / 2
-    s += BARS[Math.min(7, Math.floor(v * amp * 8))]
-  }
+  for (let i = 0; i < n; i++) s += BARS[Math.min(7, Math.floor(bar(i, n, p) * gain(vol) * 8))]
   return s
 }
 
-// Real levels from the app → one bar glyph each (newest on the right).
-export function meter(values: readonly number[], n: number): string {
-  return values.slice(-n).map(v => BARS[Math.max(0, Math.min(7, Math.round(v * 7)))]).join('')
+// Desktop: rounded bars as SVG. The wave runs as SMIL in the surface (smooth at its frame
+// rate, phase kept across redraws by a clock-based negative `begin`); a redraw only eases
+// the height from the last drawn volume to the new one.
+const PERIOD = 2.4 // s per wave cycle; the overlay's ~1.2 s halved for a calmer inline band
+export const WAVE = { width: 168, height: 28 }
+export function waveSvg(vol: number, from: number, color: string, nowMs: number): string {
+  const n = 28, K = 24, { width: w, height: h } = WAVE
+  const slot = w / n, sw = slot * 0.5, begin = -((nowMs / 1000) % PERIOD)
+  let bars = ''
+  for (let i = 0; i < n; i++) {
+    const ys = Array.from({ length: K + 1 }, (_, k) => ((bar(i, n, (k / K) * 2 * Math.PI) * (h - sw)) / 2).toFixed(1))
+    const anim = (attr: string, sign: string) =>
+      `<animate attributeName="${attr}" values="${ys.map(y => sign + y).join(';')}" dur="${PERIOD}s" begin="${begin.toFixed(2)}s" repeatCount="indefinite"/>`
+    const x = (slot * (i + 0.5)).toFixed(1)
+    bars += `<line x1="${x}" x2="${x}" y1="-${ys[0]}" y2="${ys[0]}">${anim('y1', '-')}${anim('y2', '')}</line>`
+  }
+  const g = gain(vol).toFixed(3)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
+    + `<style>line{vector-effect:non-scaling-stroke}</style>`
+    + `<g transform="translate(0 ${h / 2})"><g transform="scale(1 ${g})">`
+    + `<animateTransform attributeName="transform" type="scale" from="1 ${gain(from).toFixed(3)}" to="1 ${g}" dur="0.2s" fill="freeze"/>`
+    + `<g stroke="${color}" stroke-opacity="0.9" stroke-width="${sw}" stroke-linecap="round">${bars}</g></g></g></svg>`
 }
 
 const isWaiting = (p: Phase) => p === 'queued' || LIVE.includes(p)
 
 type Status = { phase: string; session: string; levels: number[] }
+const COLOR = { speaking: '#D97757', listening: '#E5484D' } // Claude orange; red as the overlay
 
 async function poll($: EngineInterface, session: string): Promise<boolean> {
   const res = await $.http.fetch(STATUS).catch(() => null)
@@ -59,7 +92,10 @@ async function poll($: EngineInterface, session: string): Promise<boolean> {
   if ((LIVE as readonly string[]).includes(st.phase)) {
     // A poll still in flight when the turn ended must not undo 'heard'/'parked'.
     await update($, phase, p => (isWaiting(p) ? (st.phase as Phase) : p))
-    await update($, levels, () => st.levels)
+    const target = Math.max(0, ...st.levels.slice(-3))
+    const prev = await read($, level)
+    const next = ease(prev ?? 0, target)
+    if (next !== prev) await update($, level, () => next)
   }
   return true
 }
@@ -71,12 +107,13 @@ async function log($: EngineInterface, who: Line["who"], text: string) {
 
 export const register: Register = on => {
   let label = ''
+  let shown = 0 // volume the desktop wave last drew; its next redraw eases from here
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'parley', description: 'Parley: Gesprächsverlauf als Pane öffnen' })
     $.clock.every(140, () => {
-      void Promise.all([read($, phase), read($, levels)]).then(([p, lv]) => {
-        if (lv === null && (p === 'speaking' || p === 'listening')) void update($, tick, t => t + 1)
+      void read($, phase).then(p => {
+        if (p === 'speaking' || p === 'listening') void update($, tick, t => t + 1) // terminal wave only
       })
     })
     return next(e)
@@ -101,7 +138,7 @@ export const register: Register = on => {
     await update($, isHidden, () => false) // hidden until the next spoken line
     await update($, line, () => spoken.text)
     await update($, phase, () => 'speaking')
-    await update($, levels, () => null)
+    await update($, level, () => null)
     await log($, 'parley', spoken.text)
 
     // Live phase + levels from the app's GET /status while it voices this turn. An older
@@ -121,7 +158,7 @@ export const register: Register = on => {
     })
 
     const res = await next(e).finally(() => { ticker.cancel(); guess?.cancel() })
-    await update($, levels, () => null)
+    await update($, level, () => null)
 
     if (res.block) {
       await update($, phase, () => 'heard')
@@ -141,19 +178,30 @@ export const register: Register = on => {
     const p = await read($, phase)
     if (e.props.hasSurvey || p === 'off' || (await read($, isHidden))) return next(e)
 
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const t = await read($, tick)
-    const lv = await read($, levels)
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button } = els
+    const lv = await read($, level)
     const said = await read($, line)
     const last = (await read($, history)).at(-1)
     const width = Math.max(20, e.props.bodyColumns - 2)
     const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 
-    const bars = (fake: number, amp: number) => (lv ? meter(lv, 24) : wave(fake, 24, amp))
-    const peak = lv ? Math.max(...lv.slice(-4)) : 0
+    // No live data (older app without /status): a steady wave at a plausible height.
+    const vol = lv ?? (p === 'speaking' ? 0.5 : 0.2)
+    let viz = null
+    if (p === 'speaking' || p === 'listening') {
+      if ('Svg' in els) {
+        const { Svg } = els
+        const svg = waveSvg(vol, shown, COLOR[p], await $.clock.now())
+        shown = vol
+        viz = <Svg key="wave" source={svg} alt={p === 'speaking' ? 'Parley spricht' : 'Parley hört zu'} width={WAVE.width} height={WAVE.height} isInteractive />
+      } else {
+        viz = <Text color={p === 'speaking' ? 'claude' : 'error'}>{wave((await read($, tick)) * 0.35, 24, vol)}</Text>
+      }
+    }
     const chip =
-      p === 'speaking' ? <Text color="claude" bold>🔊 spricht  {bars(t, 1)}</Text>
-      : p === 'listening' ? <Text color="error" bold>{lv ? (peak > 0.35 ? '●' : '○') : t % 6 < 3 ? '●' : '○'} hört zu  {bars(t * 2, 0.45)}</Text>
+      p === 'speaking' ? <Text color="claude" bold>🔊 spricht</Text>
+      : p === 'listening' ? <Text color="error" bold>{lv !== null && lv > 0.35 ? '●' : '○'} hört zu</Text>
       : p === 'transcribing' ? <Text color="warning" bold>✎ transkribiert…</Text>
       : p === 'queued' ? <Text color="warning">⧗ wartet, anderes Projekt spricht</Text>
       : p === 'heard' ? <Text color="success" bold>✓ eingespeist</Text>
@@ -168,6 +216,7 @@ export const register: Register = on => {
             {label ? <Text dimColor>· {label}</Text> : null}
             <Text dimColor>·</Text>
             {chip}
+            {viz}
           </Box>
           <Box flexDirection="row" gap={1}>
             <Button key="log" plain label="Verlauf" onPress={() => void $.ui.open({ id: PANE, title: 'Parley' })} />
