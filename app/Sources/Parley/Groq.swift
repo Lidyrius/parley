@@ -53,4 +53,23 @@ enum Groq {
         body.append(Data("\r\n--\(boundary)--\r\n".utf8))
         return body
     }
+
+    // Whisper invents these on silence / background noise (YouTube-subtitle training data).
+    // Compared after lowercasing and collapsing punctuation + whitespace.
+    // ponytail: whole-transcript exact match; repeats ("Thank you. Thank you.") slip through.
+    static let hallucinations: Set<String> = [
+        "you", "thank you", "thank you very much", "thanks for watching",
+        "thank you for watching", "thanks for watching and see you next time", "please subscribe",
+        "danke", "vielen dank", "danke fürs zuschauen", "vielen dank fürs zuschauen",
+        "untertitel der amara org community", "untertitel im auftrag des zdf",
+        "untertitelung im auftrag des zdf", "untertitel im auftrag des zdf für funk 2017",
+        "untertitelung des zdf für funk 2017",
+    ]
+
+    /// The transcript, or "" when it's only a known Whisper hallucination (or no words at all),
+    /// so silence takes the normal "no reply" path instead of being injected as speech.
+    static func cleanTranscript(_ text: String) -> String {
+        let norm = text.lowercased().split { !$0.isLetter && !$0.isNumber }.joined(separator: " ")
+        return norm.isEmpty || hallucinations.contains(norm) ? "" : text
+    }
 }

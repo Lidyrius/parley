@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Parley;
 
@@ -38,7 +39,10 @@ public static class Groq
                     code == 403 ? "Groq blockt dieses Netzwerk — VPN aus?" : $"Transkription fehlgeschlagen (HTTP {code}).");
                 return "";
             }
-            return body.Trim();
+            var text = body.Trim();
+            var clean = CleanTranscript(text);
+            if (clean.Length == 0 && text.Length > 0) Log.Write($"stt: dropped Whisper hallucination \"{text}\"");
+            return clean;
         }
         catch (Exception e)
         {
@@ -46,6 +50,27 @@ public static class Groq
             Notifier.Notify("Parley — Fehler", "Groq nicht erreichbar (Netzwerk/VPN?).");
             return "";
         }
+    }
+
+    // Whisper invents these on silence / background noise (YouTube-subtitle training data).
+    // Compared after lowercasing and collapsing punctuation + whitespace — same list as macOS.
+    // ponytail: whole-transcript exact match; repeats ("Thank you. Thank you.") slip through.
+    private static readonly HashSet<string> Hallucinations = new()
+    {
+        "you", "thank you", "thank you very much", "thanks for watching",
+        "thank you for watching", "thanks for watching and see you next time", "please subscribe",
+        "danke", "vielen dank", "danke fürs zuschauen", "vielen dank fürs zuschauen",
+        "untertitel der amara org community", "untertitel im auftrag des zdf",
+        "untertitelung im auftrag des zdf", "untertitel im auftrag des zdf für funk 2017",
+        "untertitelung des zdf für funk 2017",
+    };
+
+    /// The transcript, or "" when it's only a known Whisper hallucination (or no words at all),
+    /// so silence takes the normal "no reply" path instead of being injected as speech.
+    public static string CleanTranscript(string text)
+    {
+        var norm = Regex.Replace(text.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim();
+        return norm.Length == 0 || Hallucinations.Contains(norm) ? "" : text;
     }
 
     public enum Intent { Feature, Bug, Research, Question, Stop, Continue, FeatureResearch, BugFeature, Other }
