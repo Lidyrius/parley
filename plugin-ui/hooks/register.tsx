@@ -14,6 +14,8 @@ const seen = atom({ plugin: 'parley-ui', key: 'seen' } as const, 0)
 const today = atom({ plugin: 'parley-ui', key: 'today' } as const, null as Today | null)
 const expanded = atom({ plugin: 'parley-ui', key: 'expanded' } as const, [] as string[])
 const tasks = atom({ plugin: 'parley-ui', key: 'tasks' } as const, [] as Task[])
+const sessSkip = atom({ plugin: 'parley-ui', key: 'sessSkip' } as const, 0)
+const histSkip = atom({ plugin: 'parley-ui', key: 'histSkip' } as const, 0)
 const isWorking = atom({ plugin: 'parley-ui', key: 'isWorking' } as const, false)
 
 const PANE = 'parley'
@@ -193,6 +195,17 @@ export function todayParts(d: Today): [string, string][] {
     if (name) parts.push([`${Math.round(r.percentUsed)} %`, name])
   }
   return parts
+}
+
+// Where a wheel tick goes in the split pane: over the top half it moves the session rows
+// (3 rows a tile row), anywhere else the history (2 rows a message, counted back from the
+// newest). Fractional, so small trackpad moves add up; clamped to what exists.
+export function scrollPane(by: number, bodyRows: number, row: number | undefined,
+  s: { sess: number; sessMax: number; hist: number; histMax: number }): { sess: number; hist: number } {
+  const clamp = (v: number, max: number) => Math.max(0, Math.min(Math.max(0, max), v))
+  return row !== undefined && row < Math.floor(bodyRows / 2)
+    ? { sess: clamp(s.sess + by / 3, s.sessMax), hist: s.hist }
+    : { sess: s.sess, hist: clamp(s.hist - by / 2, s.histMax) }
 }
 
 async function readLabel($: EngineInterface, cwd: string): Promise<string> {
@@ -456,37 +469,67 @@ export const register: Register = on => {
     const rows: Sess[][] = []
     for (let i = 0; i < sessions.length; i += 2) rows.push(sessions.slice(i, i + 2))
     const alive = sessions.filter(s => s.state !== 'stopped').length
-    const room = Math.max(2, (e.viewport?.rows ?? 24) - 6 - rows.length * 5)
+
+    // Two fixed halves of the body: sessions on top, the history below, pinned to its newest
+    // line (flex-end clips the oldest). Both scroll on their own (see ui.scroll below);
+    // without a known body height (inline pane) the tree just stacks.
+    const body = e.props.scroll?.bodyRows ?? 0
+    const top = body >= 12 ? Math.floor(body / 2) : undefined
+    const sSkip = Math.min(Math.floor(await read($, sessSkip)), Math.max(0, rows.length - 1))
+    const hSkip = Math.min(Math.floor(await read($, histSkip)), Math.max(0, list.length - 1))
+    const shown = list.slice(Math.max(0, list.length - hSkip - 60), list.length - hSkip)
 
     return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold dimColor>SESSIONS · {alive} aktiv</Text>
-        {day ? (
-          <Text wrap="truncate-end">
-            <Text dimColor>Heute  </Text>
-            {todayParts(day).map(([v, k], i) => (
-              <Text key={`h${i}`}>{i ? <Text dimColor>  ·  </Text> : null}<Text bold>{v}</Text><Text dimColor> {k}</Text></Text>
-            ))}
-          </Text>
-        ) : null}
-        {all === null ? <Text dimColor>Parley-App nicht erreichbar.</Text> : null}
-        {rows.map((pair, r) => (
-          <Box key={`row${r}`} flexDirection="row" gap={1}>
-            {pair.map(tile)}
-            {pair.length === 1 ? <Box key="pad" width="50%" flexShrink={1} /> : null}
-          </Box>
-        ))}
-        <Text bold dimColor>VERLAUF{label ? ` · ${label}` : ''}</Text>
-        {list.length === 0 ? <Text dimColor>Noch kein Gespräch in dieser Session.</Text> : null}
-        {list.slice(-room).map((l, i) => (
-          <Box key={`l${i}`} flexDirection="column">
-            <Text bold color={l.who === 'parley' ? 'claude' : 'success'}>
-              {l.who === 'parley' ? '◆ Parley' : '● Du'} <Text dimColor>{hhmm(l.at)}</Text>
+      <Box flexDirection="column" height={top ? body : undefined}>
+        <Box flexDirection="column" gap={1} height={top} flexShrink={0} overflow="hidden">
+          <Text bold dimColor>SESSIONS · {alive} aktiv{sSkip ? <Text> · ↑ {sSkip * 2} weitere</Text> : null}</Text>
+          {day ? (
+            <Text wrap="truncate-end">
+              <Text dimColor>Heute  </Text>
+              {todayParts(day).map(([v, k], i) => (
+                <Text key={`h${i}`}>{i ? <Text dimColor>  ·  </Text> : null}<Text bold>{v}</Text><Text dimColor> {k}</Text></Text>
+              ))}
             </Text>
-            <Text>{l.text}</Text>
+          ) : null}
+          {all === null ? <Text dimColor>Parley-App nicht erreichbar.</Text> : null}
+          {rows.slice(sSkip).map((pair, r) => (
+            <Box key={`row${r + sSkip}`} flexDirection="row" gap={1} flexShrink={0}>
+              {pair.map(tile)}
+              {pair.length === 1 ? <Box key="pad" width="50%" flexShrink={1} /> : null}
+            </Box>
+          ))}
+        </Box>
+        <Box flexDirection="column" height={top ? body - top : undefined} flexShrink={0} paddingTop={1}>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text bold dimColor>VERLAUF{label ? ` · ${label}` : ''}</Text>
+            {hSkip ? <Button key="latest" plain dimColor label="↓ Neueste" onPress={() => update($, histSkip, () => 0)} /> : null}
           </Box>
-        ))}
+          <Box flexDirection="column" flexGrow={1} overflow="hidden" justifyContent="flex-end" gap={1}>
+            {list.length === 0 ? <Text dimColor>Noch kein Gespräch in dieser Session.</Text> : null}
+            {shown.map((l, i) => (
+              <Box key={`l${list.length - hSkip - shown.length + i}`} flexDirection="column" flexShrink={0}>
+                <Text bold color={l.who === 'parley' ? 'claude' : 'success'}>
+                  {l.who === 'parley' ? '◆ Parley' : '● Du'} <Text dimColor>{hhmm(l.at)}</Text>
+                </Text>
+                <Text>{l.text}</Text>
+              </Box>
+            ))}
+          </Box>
+        </Box>
       </Box>
     )
+  })
+
+  // The pane scrolls its two halves itself: a wheel over the top half moves the session rows,
+  // anywhere else (and the scroll keys) the history, counted from its newest message.
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const sessRows = Math.ceil(((await read($, overview)) ?? []).length / 2)
+    const msgs = (await read($, history)).length
+    const next = scrollPane(e.by, e.bodyRows, e.pointer?.row, {
+      sess: await read($, sessSkip), sessMax: sessRows - 1, hist: await read($, histSkip), histMax: msgs - 1,
+    })
+    await update($, sessSkip, () => next.sess)
+    await update($, histSkip, () => next.hist)
+    return {}
   })
 }

@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { bgLabel, ease, facts, parseSpeak, ringSvg, timer, todayParts, wave, waveSvg } from '../hooks/register'
+import { bgLabel, ease, facts, parseSpeak, ringSvg, scrollPane, timer, todayParts, wave, waveSvg } from '../hooks/register'
 
 const BAND = {
   plugin: 'parley-ui',
@@ -240,4 +240,27 @@ test('background: a Stop with running background work reports "background"; a ne
   expect(bgLabel({ ...s, tasks: [{ type: 'subagent', description: 'a' }] })).toBe('Agent im Hintergrund')
   expect(bgLabel({ ...s, tasks: [{ type: 'shell', description: 'npm test' }] })).toBe('Job im Hintergrund')
   expect(bgLabel({ ...s, state: 'idle' })).toBe(null)
+})
+
+test('split pane: wheel over the top half scrolls sessions, below it the history from its newest', async () => {
+  const s = { sess: 0, sessMax: 2, hist: 0, histMax: 10 }
+  expect(scrollPane(3, 40, 5, s)).toEqual({ sess: 1, hist: 0 })        // down over the sessions
+  expect(scrollPane(-4, 40, 30, s)).toEqual({ sess: 0, hist: 2 })      // up over the history → older
+  expect(scrollPane(-4, 40, undefined, s)).toEqual({ sess: 0, hist: 2 }) // keys → history
+  expect(scrollPane(9, 40, 30, s)).toEqual({ sess: 0, hist: 0 })       // never past the newest
+  expect(scrollPane(-100, 40, 30, s).hist).toBe(10)                    // nor past the oldest
+})
+
+test('split pane: fixed halves when the body height is known, history shows the newest', async ($, on) => {
+  mock.clock(on)
+  on('classic.Stop', async () => ({ block: 'Antwort.' }))
+  on('ui.render', async ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
+  for (let i = 0; i < 6; i++) await $.classic.Stop({ stop_hook_active: false, last_assistant_message: `<speak>Satz ${i}.</speak>` })
+  const ui = await $.ui.mount({ plugin: 'parley-ui', surface: 'desktop', component: 'Pane', requestId: 'parley',
+    props: { scroll: { offset: 0, bodyRows: 30 }, bodyColumns: 80 } as never })
+  const boxes = (await ui.findAll({ type: 'Box' })) as { props: { height?: number } }[]
+  expect(boxes.some(b => b.props.height === 15)).toBe(true)
+  expect(await ui.find({ type: 'Text', text: 'Satz 5.' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /↓ Neueste/ })).toBeUndefined()
+  await ui.unmount()
 })
