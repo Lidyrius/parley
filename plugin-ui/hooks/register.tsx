@@ -262,7 +262,7 @@ async function log($: EngineInterface, who: Line["who"], text: string) {
 
 export const register: Register = on => {
   let label = ''
-  let selfId = '' // this session's id: its own tile says "hier" and offers no "Fortsetzen"
+  let selfId = '' // this session's id: its own tile says "hier" and offers no ↗ to itself
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'parley', description: 'Parley: Sessions und Gesprächsverlauf als Pane öffnen' })
@@ -478,7 +478,7 @@ export const register: Register = on => {
               {s.stats?.lastLine ? <Text italic dimColor wrap="truncate-end">„{s.stats.lastLine}“</Text> : null}
             </Box>
           ) : null}
-          {(s.resumable ?? s.state === 'parked') && !mine ? (
+          {s.resumable ?? s.state === 'parked' ? ( // this session too: its reply comes back here as a prompt
             <Box flexDirection="row" marginTop={1}>
               <Button key={`resume-${s.id}`} label="Fortsetzen" onPress={() => resume(s.id)} />
             </Box>
