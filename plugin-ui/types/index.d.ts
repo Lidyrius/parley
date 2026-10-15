@@ -3,7 +3,7 @@ export type Line = { who: 'parley' | 'you'; text: string; at: number }
 export type SessState = 'speaking' | 'listening' | 'transcribing' | 'queued' | 'working' | 'waiting' | 'parked' | 'background' | 'idle' | 'stopped'
 /** One Parley session as the app's GET /sessions reports it (epoch ms). */
 export type Stats = { startedAt: number | null; contextPercent: number | null; costUsd: number | null; turns: number; replies: number; lastLine: string | null }
-export type Sess = { id: string; label: string; project: string; state: SessState; since: number; until: number | null; voice: boolean; resumable?: boolean; stats?: Stats; tasks?: Task[] }
+export type Sess = { id: string; label: string; project: string; state: SessState; since: number; until: number | null; voice: boolean; resumable?: boolean; stats?: Stats; tasks?: Task[]; host?: string | null }
 /** Background work a session left running when its turn ended (subagent, shell, monitor). */
 export type Task = { type: string; description: string }
 export type Limit = { kind: string; percentUsed: number; resetsAt: string | null }

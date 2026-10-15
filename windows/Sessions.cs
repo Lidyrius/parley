@@ -18,6 +18,7 @@ public sealed class SessionRegistry
         public DateTime? PresenceAt;      // last /presence (null = never sent, e.g. Codex)
         public string PresenceState = "idle";   // the mod's last state: working | background | idle
         public List<BackgroundTask> Tasks = new();   // its in-flight background tasks, as last reported
+        public string? Host;              // desktop app session id (local_…): the mod opens it by deep link
         public DateTime HookAt;           // last /turn, /wake or turn reply
         public bool Queued;               // a /turn (or resume dialog) waits at the gate
         public DateTime? WaitUntil;       // "Warte X Minuten": the hook sleeps until then
@@ -67,7 +68,7 @@ public sealed class SessionRegistry
     // The mod's heartbeat. Returns a pending resume instruction — exactly once — for the mod
     // to submit as a prompt in its session.
     public string? Presence(string id, string label, string project, string state,
-        PresenceUsage? usage = null, List<BackgroundTask>? tasks = null)
+        PresenceUsage? usage = null, List<BackgroundTask>? tasks = null, string? host = null)
     {
         string? delivered = null;
         DateTime? startedAt = null;
@@ -76,6 +77,7 @@ public sealed class SessionRegistry
             e.PresenceAt = t;
             e.PresenceState = state;
             e.Tasks = tasks ?? new List<BackgroundTask>();
+            if (!string.IsNullOrEmpty(host)) e.Host = host;
             if (state == "working") e.ExpectWorkUntil = null;
             if (usage is not null)
             {
@@ -275,6 +277,7 @@ public sealed class SessionRegistry
                     voice = e.Id == active,
                     resumable = Resumable(e),
                     tasks = e.Tasks,
+                    host = e.Host,
                     stats = new
                     {
                         startedAt = (long?)Ms(e.StartedAt ?? e.FirstSeen),

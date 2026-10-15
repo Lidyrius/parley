@@ -71,6 +71,15 @@ final class SessionsTests: XCTestCase {
 
     // MARK: - /presence + /sessions shape
 
+    // The mod reports the desktop app's session id; /sessions echoes it for the tile's deep link,
+    // and a later presence without one keeps it.
+    func testPresenceHostIsEchoedAndKept() throws {
+        post("/presence", #"{"session_id":"h","label":"H","project":"h","cwd":"/x/h","state":"idle","host":"local_abc-123"}"#)
+        XCTAssertEqual(try sessions().first?["host"] as? String, "local_abc-123")
+        presence("h", "working")
+        XCTAssertEqual(try sessions().first?["host"] as? String, "local_abc-123")
+    }
+
     func testPresenceUpsertAndSessionsShape() throws {
         let (status, body) = presence("a", "working", label: "Parley")
         XCTAssertEqual(status, 200)
@@ -79,8 +88,9 @@ final class SessionsTests: XCTestCase {
         var rows = try sessions()
         XCTAssertEqual(rows.count, 1)
         let r = rows[0]
-        XCTAssertEqual(Set(r.keys), ["id", "label", "project", "state", "since", "until", "voice", "resumable", "tasks", "stats"])
+        XCTAssertEqual(Set(r.keys), ["id", "label", "project", "state", "since", "until", "voice", "resumable", "tasks", "host", "stats"])
         XCTAssertEqual((r["tasks"] as? [Any])?.count, 0)
+        XCTAssertTrue(r["host"] is NSNull)                   // no desktop id reported → null
         XCTAssertEqual(r["id"] as? String, "a")
         XCTAssertEqual(r["label"] as? String, "Parley")
         XCTAssertEqual(r["project"] as? String, "a-proj")   // cwd basename when project is empty

@@ -227,6 +227,7 @@ async function presence($: EngineInterface, sid: string, cwd: string, label: str
   const u = await $.session.usage().catch(() => null)
   const body = JSON.stringify({
     session_id: sid, label, project: basename(cwd), cwd,
+    host: (await $.env.get('CLAUDE_CODE_HOST_SESSION_ID').catch(() => undefined)) ?? null, // the desktop app's id: tiles open it
     state: (await read($, isWorking)) ? 'working' : (await read($, tasks)).length ? 'background' : 'idle',
     tasks: await read($, tasks),
     usage: u && {
@@ -243,6 +244,15 @@ async function presence($: EngineInterface, sid: string, cwd: string, label: str
     await log($, 'you', said)
     await $.prompt.submit({ text: said, asUser: true })
   }
+}
+
+// Brings a session forward in the desktop app: its claude:// deep link, opened by the OS.
+const HOST = /^local_[A-Za-z0-9-]{1,64}$/ // the desktop's own check; also keeps the argv inert
+async function openSession($: EngineInterface, host: string) {
+  if (!HOST.test(host)) return
+  const url = `claude://code/continue?session=${host}`
+  const windows = (await $.env.get('OS').catch(() => undefined)) === 'Windows_NT'
+  await $.process.run(windows ? ['cmd', '/c', 'start', '', url] : ['open', url]).catch(() => null)
 }
 
 async function log($: EngineInterface, who: Line["who"], text: string) {
@@ -424,6 +434,7 @@ export const register: Register = on => {
     // background tasks) behind a chevron; "Fortsetzen" as the tile's one action.
     const tile = (s: Sess) => {
       const st = STATE[s.state], off = s.state === 'stopped', mine = s.id === selfId, isOpen = open.includes(s.id)
+      const host = !mine && s.host && e.surface !== 'terminal' ? s.host : null // a desktop session: the tile opens it
       let ring = <Text color={st.tone} bold>{st.glyph}</Text>
       if ('Svg' in els && e.surface !== 'terminal') { // the terminal hands out Svg as an empty fragment
         const { Svg } = els
@@ -437,13 +448,20 @@ export const register: Register = on => {
       return (
         <Box key={s.id} flexDirection="column" width="50%" flexShrink={1} minWidth={0} overflow="hidden" paddingX={1}
           borderStyle="round" borderColor={s.voice ? 'claude' : 'subtle'}
-          backgroundColor={s.voice && e.surface !== 'terminal' ? 'rgba(217,119,87,0.10)' : undefined}>
+          backgroundColor={s.voice && e.surface !== 'terminal' ? 'rgba(217,119,87,0.10)' : undefined}
+          hover={host ? { borderColor: 'claude', backgroundColor: 'rgba(217,119,87,0.10)' } : undefined}>
           <Box flexDirection="row" alignItems="center" gap={1}>
             {ring}
             <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
-              <Text bold dimColor={off} wrap="truncate-end">
-                {s.label || s.project}{mine ? <Text dimColor> · hier</Text> : null}
-              </Text>
+              {host ? (
+                <Button key={`open-${s.id}`} plain onPress={() => openSession($, host)}>
+                  <Text bold dimColor={off} wrap="truncate-end">{s.label || s.project}</Text><Text dimColor> ↗</Text>
+                </Button>
+              ) : (
+                <Text bold dimColor={off} wrap="truncate-end">
+                  {s.label || s.project}{mine ? <Text dimColor> · hier</Text> : null}
+                </Text>
+              )}
               <Text wrap="truncate-end">
                 <Text color={off ? undefined : st.tone} dimColor={off}>{bgLabel(s) ?? st.label}</Text>
                 <Text dimColor> · {timer(s, at)}</Text>
@@ -519,7 +537,7 @@ export const register: Register = on => {
           </Box>
           <Box flexDirection="column" flexGrow={1} overflow="hidden" justifyContent="flex-end" gap={1} position="relative">
             {top && e.surface !== 'terminal' && 'Svg' in els
-              ? <Box key="fade" position="absolute" top={0} left={0} right={0}><els.Svg key="fade-svg" source={FADE} alt="" height={48} /></Box>
+              ? <Box key="fade" position="absolute" top={0} left={0} right={0}><els.Svg key="fade-svg" source={FADE} alt="" width={1600} height={48} /></Box>
               : null}
             {list.length === 0 ? <Text dimColor>Noch kein Gespräch in dieser Session.</Text> : null}
             {shown.map((l, i) => (

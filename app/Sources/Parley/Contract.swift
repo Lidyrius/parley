@@ -50,6 +50,7 @@ struct PresencePayload: Codable, Equatable {
     var state: String?
     var usage: PresenceUsage?
     var tasks: [BackgroundTask]?  // in-flight background tasks (subagents, shell jobs, monitors)
+    var host: String?             // the desktop app's id for the session (local_…), for claude:// deep links
 }
 
 // One background task as the mod reports it; echoed in GET /sessions rows.

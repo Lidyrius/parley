@@ -276,7 +276,7 @@ final class ControlServer: @unchecked Sendable {
             }
             let project = p.project?.isEmpty == false ? p.project! : ((p.cwd ?? "") as NSString).lastPathComponent
             let instruction = sessions.presence(id: p.session_id, label: p.label ?? "", project: project,
-                                                state: p.state ?? "idle", usage: p.usage, tasks: p.tasks)
+                                                state: p.state ?? "idle", usage: p.usage, tasks: p.tasks, host: p.host)
             notifyParked()
             guard let instruction,
                   let data = try? JSONEncoder().encode(["instruction": instruction]),
