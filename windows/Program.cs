@@ -28,14 +28,17 @@ internal sealed class TrayApp : ApplicationContext
 
         Server? serverRef = null;
         _pipeline = new TurnPipeline(() => serverRef?.QueuedTurns ?? 0, _pill,
-            () => serverRef?.ParkedList() ?? new List<Server.ParkedInfo>(),
-            (id, instr) => serverRef?.Wake(id, instr),
+            () => serverRef?.ResumableList() ?? new List<Server.ParkedInfo>(),
+            (id, instr) => serverRef?.Resume(id, instr),
             id => serverRef?.Sessions.OthersAlive(id) ?? false);
         _server = new Server(turn => _pipeline.Run(turn), () => StatsStore.StartSession());
         serverRef = _server;
+        // A session's label appeared → pre-render its "Update zu" + resume lines in the
+        // background, so the first announcement / resume click is instant.
+        _server.Sessions.OnLabel = label => Clips.Prerender(label, Config.Load());
 
         var menu = new ContextMenuStrip();
-        // Parked (paused-but-resumable) sessions are inserted at the top on open.
+        // Resumable sessions (parked, or idle with the mod running) are inserted at the top on open.
         menu.Opening += (_, _) => RefreshParkedMenu(menu);
         var mute = new ToolStripMenuItem("Stumm schalten") { CheckOnClick = true };
         mute.CheckedChanged += (_, _) =>
@@ -96,18 +99,19 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     // Rebuild the dynamic "▶ <project> fortsetzen" items (mouse fallback for the voice
-    // resume command) at the top of the tray menu each time it opens.
+    // resume command — no dialog, continues with "Wir machen weiter.") at the top of the
+    // tray menu each time it opens.
     private void RefreshParkedMenu(ContextMenuStrip menu)
     {
         for (var i = menu.Items.Count - 1; i >= 0; i--)
             if (menu.Items[i].Tag as string == "parked") menu.Items.RemoveAt(i);
-        var list = _server.ParkedList();
+        var list = _server.ResumableList();
         var idx = 0;
         foreach (var p in list)
         {
             var item = new ToolStripMenuItem($"▶ {p.Label} fortsetzen") { Tag = "parked" };
             var id = p.Id;
-            item.Click += (_, _) => _server.Wake(id, Server.ResumeInstruction);
+            item.Click += (_, _) => _server.Resume(id, Server.ResumeInstruction);
             menu.Items.Insert(idx++, item);
         }
         if (list.Count > 0) menu.Items.Insert(idx, new ToolStripSeparator { Tag = "parked" });

@@ -32,8 +32,11 @@ public sealed class Server
     // Every session and its state (GET /sessions, POST /resume, the announcement).
     public SessionRegistry Sessions { get; } = new();
 
-    // What the tray / voice command / POST /resume hand a parked session to continue.
+    // What a resumed session continues with when no instruction was spoken.
     public const string ResumeInstruction = "Wir machen weiter.";
+
+    // Queue item for the POST /resume voice dialog (rides the turn gate, never overlaps).
+    public const string ResumeEvent = "resume";
 
     // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
     public static string SessionKey(TurnPayload t) => string.IsNullOrEmpty(t.SessionId) ? t.TmuxPane : t.SessionId;
@@ -119,7 +122,7 @@ public sealed class Server
                 try
                 {
                     Interlocked.Decrement(ref _queued);
-                    Sessions.Activate(id);
+                    Sessions.Activate(id, turn.Speak);
                     r = await _runTurn(turn);
                 }
                 finally
@@ -154,7 +157,8 @@ public sealed class Server
                 return;
             }
 
-            // /presence — the mod's heartbeat from every Claude Code session (~5 s).
+            // /presence — the mod's heartbeat from every Claude Code session (~2 s). A pending
+            // resume instruction rides back exactly once; the mod submits it as a prompt.
             if (req.HttpMethod == "POST" && path == "/presence")
             {
                 var presence = PresencePayload.Decode(body);
@@ -166,24 +170,24 @@ public sealed class Server
                 var project = string.IsNullOrEmpty(presence.Project)
                     ? Path.GetFileName((presence.Cwd ?? "").TrimEnd('/', '\\'))
                     : presence.Project;
-                Sessions.Presence(presence.SessionId, presence.Label ?? "", project, presence.State == "working");
-                await Respond(ctx, 200, "{}");
+                var instruction = Sessions.Presence(presence.SessionId, presence.Label ?? "", project,
+                    presence.State ?? "idle", presence.Usage, presence.Tasks);
+                NotifyParked();
+                await Respond(ctx, 200, instruction is null ? "{}" : JsonSerializer.Serialize(new { instruction }));
                 return;
             }
 
-            // /resume — same as the tray's "fortsetzen", addressed by session_id. Only a parked
-            // session can be resumed; its next /wake poll (≤3s) picks the instruction up.
+            // /resume — the mod's resume button: answer at once, then run the short voice dialog
+            // for that session behind any running turn. Only parked / idle-with-mod sessions.
             if (req.HttpMethod == "POST" && path == "/resume")
             {
                 var id = ResumePayload.Decode(body)?.Id ?? "";
-                if (id.Length == 0 || !Sessions.IsParked(id))
+                if (id.Length == 0 || !Sessions.TryQueueResume(id))   // atomic: a double click gets 404
                 {
                     await Respond(ctx, 404, "{\"ok\":false}");
                     return;
                 }
-                var p = _parked.GetOrAdd(id, _ => new Parked());
-                p.Pending = ResumeInstruction;
-                p.LastSeen = DateTime.UtcNow;
+                _ = Task.Run(() => RunResumeDialog(id));
                 await Respond(ctx, 200, "{\"ok\":true}");
                 return;
             }
@@ -197,20 +201,54 @@ public sealed class Server
         }
     }
 
-    // Queue an instruction for a parked session; its next /wake poll (≤3s) injects it as
-    // the next turn, resuming the session. No-op if the id is unknown.
-    public void Wake(string id, string instruction)
+    // ---- resuming sessions (tray, voice command, POST /resume) ------------------------
+
+    // Resume without a dialog (tray / voice command). Unknown ids are a no-op.
+    public void Resume(string id, string instruction) => Deliver(id, instruction);
+
+    // Hand an instruction to a session: a parked hook picks it up on its next /wake poll
+    // (≤3 s) and injects it as the next turn; an idle session's mod gets it as the reply to
+    // its next /presence (≤2 s) and submits it as a prompt.
+    private void Deliver(string id, string instruction)
     {
-        if (_parked.TryGetValue(id, out var p)) { p.Pending = instruction; p.LastSeen = DateTime.UtcNow; }
+        if (Sessions.ParkedHookAlive(id))
+        {
+            var p = _parked.GetOrAdd(id, _ => new Parked());
+            p.Pending = instruction;
+            p.LastSeen = DateTime.UtcNow;
+            Sessions.WakeQueued(id);
+        }
+        else Sessions.SetPending(id, instruction);
+        NotifyParked();
     }
 
-    public List<ParkedInfo> ParkedList()
+    // The POST /resume dialog (pre-recorded line → beep → record → transcribe) waits at the
+    // turn gate like any turn; its transcript ("" → ResumeInstruction) is delivered after.
+    private async Task RunResumeDialog(string id)
     {
-        var cutoff = DateTime.UtcNow.AddSeconds(-90);
-        return _parked.Where(kv => kv.Value.LastSeen > cutoff)
-            .Select(kv => new ParkedInfo(kv.Key, kv.Value.Label, kv.Value.Project))
-            .OrderBy(p => p.Label).ToList();
+        var info = Sessions.Describe(id);
+        var (label, project) = info ?? ("", "");
+        var turn = new TurnPayload { Event = ResumeEvent, SessionId = id, Project = project, Label = label, Listen = true };
+        Interlocked.Increment(ref _queued);
+        await _turnGate.WaitAsync();
+        var transcript = "";
+        try
+        {
+            Interlocked.Decrement(ref _queued);
+            Sessions.Activate(id, null);
+            transcript = (await _runTurn(turn)).transcript;
+        }
+        catch (Exception e) { Log.Write($"resume dialog failed: {e.Message}"); }
+        finally
+        {
+            Sessions.ResumeFinished(id, transcript.Length > 0);
+            Deliver(id, transcript.Length > 0 ? transcript : ResumeInstruction);
+            _turnGate.Release();
+        }
     }
+
+    // Parked or idle-with-mod sessions, for the tray and the voice resume command.
+    public List<ParkedInfo> ResumableList() => Sessions.ResumableList();
 
     private void Prune()
     {
@@ -219,7 +257,7 @@ public sealed class Server
             _parked.TryRemove(kv.Key, out _);
     }
 
-    private void NotifyParked() { try { OnParkedChanged?.Invoke(ParkedList()); } catch { } }
+    private void NotifyParked() { try { OnParkedChanged?.Invoke(ResumableList()); } catch { } }
 
     private static string TurnJson(string transcript, bool park, int wait, string resume) =>
         JsonSerializer.Serialize(new WireReply(transcript, park, wait, resume));

@@ -31,7 +31,7 @@ struct MenuBarView: View {
 
                 if !controller.parked.isEmpty {
                     Divider()
-                    Text("Pausiert — zum Fortsetzen").font(.caption).foregroundStyle(.secondary)
+                    Text("Pausiert / bereit — zum Fortsetzen").font(.caption).foregroundStyle(.secondary)
                     ForEach(controller.parked) { p in
                         HStack {
                             Circle().fill(.purple).frame(width: 8, height: 8)
@@ -77,6 +77,7 @@ struct MenuBarView: View {
             }
             .padding(14)
             .frame(width: 300)
+            .onAppear { controller.refreshResumable() }
             .liquidGlass(cornerRadius: 16)
         }
     }

@@ -25,7 +25,8 @@ public sealed class TurnPayload
     }
 }
 
-// POST /presence — the Claude Code mod's heartbeat (~5 s per session). state: working|idle.
+// POST /presence — the Claude Code mod's heartbeat (~2 s per session).
+// state: working | background (turn over, its background tasks still run) | idle.
 public sealed class PresencePayload
 {
     [JsonPropertyName("session_id")] public string SessionId { get; set; } = "";
@@ -33,6 +34,9 @@ public sealed class PresencePayload
     [JsonPropertyName("project")] public string? Project { get; set; }
     [JsonPropertyName("cwd")] public string? Cwd { get; set; }
     [JsonPropertyName("state")] public string? State { get; set; }
+    [JsonPropertyName("usage")] public PresenceUsage? Usage { get; set; }
+    // In-flight background tasks (subagents, shell jobs, monitors).
+    [JsonPropertyName("tasks")] public List<BackgroundTask>? Tasks { get; set; }
 
     public static PresencePayload? Decode(string body)
     {
@@ -41,7 +45,33 @@ public sealed class PresencePayload
     }
 }
 
-// POST /resume — wake a parked session by its session_id (as listed by GET /sessions).
+// What the mod knows about its Claude Code session (all optional). startedAt = epoch ms.
+public sealed class PresenceUsage
+{
+    [JsonPropertyName("startedAt")] public double? StartedAt { get; set; }
+    [JsonPropertyName("contextPercent")] public double? ContextPercent { get; set; }
+    [JsonPropertyName("contextTokens")] public double? ContextTokens { get; set; }
+    [JsonPropertyName("contextWindow")] public double? ContextWindow { get; set; }
+    [JsonPropertyName("costUsd")] public double? CostUsd { get; set; }   // cumulative for the session
+    [JsonPropertyName("rateLimits")] public List<RateLimit>? RateLimits { get; set; }
+}
+
+// One background task as the mod reports it; echoed in GET /sessions rows.
+public sealed class BackgroundTask
+{
+    [JsonPropertyName("type")] public string? Type { get; set; }   // "subagent", …
+    [JsonPropertyName("description")] public string? Description { get; set; }
+}
+
+// One plan limit as the mod reports it; re-emitted as-is in GET /sessions → today.
+public sealed class RateLimit
+{
+    [JsonPropertyName("kind")] public string? Kind { get; set; }             // "five_hour", …
+    [JsonPropertyName("percentUsed")] public double? PercentUsed { get; set; }
+    [JsonPropertyName("resetsAt")] public string? ResetsAt { get; set; }     // ISO 8601
+}
+
+// POST /resume — resume a parked / idle session by its session_id (as listed by GET /sessions).
 public sealed class ResumePayload
 {
     [JsonPropertyName("id")] public string Id { get; set; } = "";

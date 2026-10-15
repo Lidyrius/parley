@@ -21,7 +21,7 @@ final class ControlServer: @unchecked Sendable {
     var onTurn: ((TurnPayload) -> Void)?
     var onReady: ((ReadyPayload) -> Void)?
     var onQueued: ((TurnPayload) -> Void)?   // a turn parked behind the active one
-    var onParked: (([ParkedInfo]) -> Void)?  // list of resumable (paused) sessions changed
+    var onParked: (([ParkedInfo]) -> Void)?  // list of resumable (parked / idle) sessions changed
     // The pipeline: speak + record + transcribe, then call the completion with the
     // transcribed reply. `park` keeps the session alive & resumable (see /wake). If nil,
     // /turn answers empty.
@@ -40,8 +40,12 @@ final class ControlServer: @unchecked Sendable {
     // Every session and its state (GET /sessions, POST /resume, the announcement).
     let sessions: SessionRegistry
 
-    // What the tray / menu / POST /resume hand a parked session to continue.
+    // What a resumed session continues with when no instruction was spoken.
     static let resumeInstruction = "Wir machen weiter."
+
+    // Queue item for the POST /resume voice dialog (rides the turn queue, never overlaps).
+    static let resumeEvent = "resume"
+    private var lastResumable: [ParkedInfo] = []
 
     // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
     static func sessionKey(session: String, pane: String) -> String { session.isEmpty ? pane : session }
@@ -124,21 +128,51 @@ final class ControlServer: @unchecked Sendable {
         return Self.turnJSON(TurnReply(transcript: pending ?? "", park: false))
     }
 
-    // MARK: - parked-session control (called from AppController)
+    // MARK: - resuming sessions (menu, voice command, POST /resume)
 
-    // Queue an instruction for a parked session; its next /wake poll (≤3s) picks it up and
-    // injects it as the next turn, resuming the session. No-op if the id is unknown.
-    func wake(id: String, instruction: String) {
-        queue.async {
-            guard var p = self.parked[id] else { return }
-            p.pending = instruction
-            p.lastSeen = Date()
-            self.parked[id] = p
-        }
+    // Resume without a dialog (menu / voice command). Unknown ids are a no-op.
+    func resume(id: String, instruction: String) {
+        queue.async { self.deliver(id, instruction) }
     }
 
-    func parkedList() -> [ParkedInfo] {
-        queue.sync { livingParked() }
+    // Hand an instruction to a session: a parked hook picks it up on its next /wake poll
+    // (≤3 s) and injects it as the next turn; an idle session's mod gets it as the reply to
+    // its next /presence (≤2 s) and submits it as a prompt.
+    private func deliver(_ id: String, _ instruction: String) {
+        if sessions.parkedHookAlive(id) {
+            var p = parked[id] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date())
+            p.pending = instruction
+            p.lastSeen = Date()
+            parked[id] = p
+            sessions.wakeQueued(id: id)
+        } else {
+            sessions.setPending(id: id, instruction)
+        }
+        notifyParked()
+    }
+
+    // POST /resume: queue the voice dialog (pre-recorded line → beep → record → transcribe)
+    // behind any running turn; its transcript ("" → resumeInstruction) is delivered after.
+    private func enqueueResume(_ id: String) {
+        guard let e = sessions.entries[id] else { return }
+        let turn = TurnPayload(event: Self.resumeEvent, session_id: id, cwd: "", project: e.project,
+                               tmux_pane: "", speak: "", label: e.label, listen: true)
+        sessions.resumeQueued(id: id)
+        replyQueue.append((turn, { _ in }))
+        pumpReplies()
+    }
+
+    // Book-keeping once a queue item is answered: a hook turn's reply, or the resume dialog's
+    // transcript handed to its session.
+    private func complete(_ turn: TurnPayload, _ reply: TurnReply) {
+        let id = Self.sessionKey(turn)
+        guard turn.event == Self.resumeEvent else { sessions.finished(id: id, reply: reply); return }
+        sessions.resumeFinished(id: id, replied: !reply.transcript.isEmpty)
+        deliver(id, reply.transcript.isEmpty ? Self.resumeInstruction : reply.transcript)
+    }
+
+    func resumableList() -> [ParkedInfo] {
+        queue.sync { sessions.resumableList() }
     }
 
     // True if any session besides `id` is alive (any state but stopped) → announce the turn.
@@ -146,19 +180,18 @@ final class ControlServer: @unchecked Sendable {
         queue.sync { sessions.othersAlive(except: id) }
     }
 
-    private func livingParked() -> [ParkedInfo] {
-        let cutoff = Date().addingTimeInterval(-90)
-        return parked.filter { $0.value.lastSeen > cutoff }
-            .map { ParkedInfo(id: $0.key, label: $0.value.label, project: $0.value.project) }
-            .sorted { $0.label < $1.label }
-    }
-
     private func pruneParked() {
         let cutoff = Date().addingTimeInterval(-90)
         parked = parked.filter { $0.value.lastSeen > cutoff }
     }
 
-    private func notifyParked() { onParked?(livingParked()) }
+    // Push the resumable list to the menu when it changed.
+    private func notifyParked() {
+        let list = sessions.resumableList()
+        guard list != lastResumable else { return }
+        lastResumable = list
+        onParked?(list)
+    }
 
     private func send(_ status: Int, _ json: String, on conn: NWConnection) {
         let data = HTTPParse.response(status: status, json: json)
@@ -180,19 +213,20 @@ final class ControlServer: @unchecked Sendable {
             let waiting = replyQueue; replyQueue.removeAll()
             for (turn, respond) in waiting {
                 let reply = TurnReply(transcript: "", park: false)
-                sessions.finished(id: Self.sessionKey(turn), reply: reply)
+                complete(turn, reply)
                 respond(reply)
             }
             return
         }
         replyActive = true
         let (turn, respond) = replyQueue.removeFirst()
-        sessions.activate(id: Self.sessionKey(turn))
-        onTurn?(turn)
+        let isResume = turn.event == Self.resumeEvent
+        sessions.activate(id: Self.sessionKey(turn), speak: isResume ? nil : turn.speak)
+        if !isResume { onTurn?(turn) }
         provider(turn) { [weak self] reply in
             guard let self else { return }
             self.queue.async {
-                self.sessions.finished(id: Self.sessionKey(turn), reply: reply)
+                self.complete(turn, reply)
                 respond(reply)
                 self.replyActive = false
                 self.pumpReplies()
@@ -235,25 +269,28 @@ final class ControlServer: @unchecked Sendable {
         case ("POST", "/wake"):
             return (200, wakePoll(req.body))
         case ("POST", "/presence"):
-            // The mod's heartbeat from every Claude Code session (~5 s).
+            // The mod's heartbeat from every Claude Code session (~2 s). A pending resume
+            // instruction rides back exactly once; the mod submits it as a prompt.
             guard let p = Contract.decodePresence(req.body), !p.session_id.isEmpty else {
                 return (400, #"{"ok":false,"error":"bad presence payload"}"#)
             }
             let project = p.project?.isEmpty == false ? p.project! : ((p.cwd ?? "") as NSString).lastPathComponent
-            sessions.presence(id: p.session_id, label: p.label ?? "", project: project, working: p.state == "working")
-            return (200, "{}")
+            let instruction = sessions.presence(id: p.session_id, label: p.label ?? "", project: project,
+                                                state: p.state ?? "idle", usage: p.usage, tasks: p.tasks)
+            notifyParked()
+            guard let instruction,
+                  let data = try? JSONEncoder().encode(["instruction": instruction]),
+                  let json = String(data: data, encoding: .utf8) else { return (200, "{}") }
+            return (200, json)
         case ("GET", "/sessions"):
             return (200, sessions.json())
         case ("POST", "/resume"):
-            // Same as the tray's "Fortsetzen", addressed by session_id. Only a parked session
-            // can be resumed; its next /wake poll (≤3 s) picks the instruction up.
-            guard let id = Contract.decodeResume(req.body)?.id, sessions.isParked(id) else {
+            // The mod's resume button: answer at once, then run the short voice dialog for
+            // that session through the turn queue. Only parked / idle-with-mod sessions.
+            guard let id = Contract.decodeResume(req.body)?.id, sessions.canResume(id) else {
                 return (404, #"{"ok":false}"#)
             }
-            var p = parked[id] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date())
-            p.pending = Self.resumeInstruction
-            p.lastSeen = Date()
-            parked[id] = p
+            enqueueResume(id)
             return (200, #"{"ok":true}"#)
         default:
             return (404, #"{"ok":false,"error":"not found"}"#)

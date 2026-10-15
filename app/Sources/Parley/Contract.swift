@@ -40,13 +40,52 @@ struct WakePayload: Codable, Equatable {
     var spokenLabel: String { (label?.isEmpty == false ? label : nil) ?? project ?? "" }
 }
 
-// POST /presence — the Claude Code mod's heartbeat (~5 s per session). state: working|idle.
+// POST /presence — the Claude Code mod's heartbeat (~2 s per session).
+// state: working | background (turn over, its background tasks still run) | idle.
 struct PresencePayload: Codable, Equatable {
     var session_id: String
     var label: String?
     var project: String?
     var cwd: String?
     var state: String?
+    var usage: PresenceUsage?
+    var tasks: [BackgroundTask]?  // in-flight background tasks (subagents, shell jobs, monitors)
+}
+
+// One background task as the mod reports it; echoed in GET /sessions rows.
+struct BackgroundTask: Codable, Equatable {
+    var type: String?             // "subagent", …
+    var description: String?
+    enum CodingKeys: String, CodingKey { case type, description }
+    func encode(to encoder: Encoder) throws {   // explicit nulls, not omitted
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(type, forKey: .type)
+        try c.encode(description, forKey: .description)
+    }
+}
+
+// What the mod knows about its Claude Code session (all optional). startedAt = epoch ms.
+struct PresenceUsage: Codable, Equatable {
+    var startedAt: Double?
+    var contextPercent: Double?
+    var contextTokens: Double?
+    var contextWindow: Double?
+    var costUsd: Double?          // cumulative for the session
+    var rateLimits: [RateLimit]?
+}
+
+// One plan limit as the mod reports it; re-emitted as-is in GET /sessions → today.
+struct RateLimit: Codable, Equatable {
+    var kind: String?             // "five_hour", …
+    var percentUsed: Double?
+    var resetsAt: String?         // ISO 8601
+    enum CodingKeys: String, CodingKey { case kind, percentUsed, resetsAt }
+    func encode(to encoder: Encoder) throws {   // explicit: unknown values are null, not omitted
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(percentUsed, forKey: .percentUsed)
+        try c.encode(resetsAt, forKey: .resetsAt)
+    }
 }
 
 // POST /resume — wake a parked session by its session_id (as listed by GET /sessions).
