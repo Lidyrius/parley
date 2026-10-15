@@ -71,6 +71,19 @@ final class SessionsTests: XCTestCase {
 
     // MARK: - /presence + /sessions shape
 
+    // The desktop app's own session files map our (CLI) ids to its local_… ids.
+    func testDesktopSessionFilesMapCliIdToDesktopId() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ccs-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent("org/user")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"sessionId":"local_abc","cliSessionId":"cli-1","title":"x"}"#.utf8)
+            .write(to: dir.appendingPathComponent("local_abc.json"))
+        try Data("not json".utf8).write(to: dir.appendingPathComponent("local_bad.json"))
+        try Data(#"{"sessionId":"x","cliSessionId":"cli-2"}"#.utf8).write(to: dir.appendingPathComponent("scheduled-tasks.json"))
+        XCTAssertEqual(DesktopSessions.load(root), ["cli-1": "local_abc"])
+        try? FileManager.default.removeItem(at: root)
+    }
+
     // The mod reports the desktop app's session id; /sessions echoes it for the tile's deep link,
     // and a later presence without one keeps it.
     func testPresenceHostIsEchoedAndKept() throws {
