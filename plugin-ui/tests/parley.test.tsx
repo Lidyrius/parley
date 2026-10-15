@@ -275,7 +275,7 @@ test('split pane: fixed halves when the body height is known, history shows the 
   await ui.unmount()
 })
 
-test('tiles open their desktop session: the name is a link, never on this session or a Codex one', async ($, on) => {
+test('tiles open their desktop session with a ↗ button, never on this session or a Codex one', async ($, on) => {
   const clock = mock.clock(on)
   const now = clock.now()
   const sessions = [
@@ -308,7 +308,6 @@ test('tiles open their desktop session: the name is a link, never on this sessio
   expect(keys).toContain('open-b')
   expect(keys).not.toContain('open-s1') // this session: no link to itself
   expect(keys).not.toContain('open-c')  // no desktop id (Codex): no link
-  // hover (orange frame + tint) is surface-only styling: not in the test's tree
   await desk.press({ key: 'open-b' })
   expect(runs).toEqual([['open', 'claude://code/continue?session=local_shop-1']])
   await desk.unmount()

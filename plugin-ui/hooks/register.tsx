@@ -448,26 +448,20 @@ export const register: Register = on => {
       return (
         <Box key={s.id} flexDirection="column" width="50%" flexShrink={1} minWidth={0} overflow="hidden" paddingX={1}
           borderStyle="round" borderColor={s.voice ? 'claude' : 'subtle'}
-          backgroundColor={s.voice && e.surface !== 'terminal' ? 'rgba(217,119,87,0.10)' : undefined}
-          hover={host ? { borderColor: 'claude', backgroundColor: 'rgba(217,119,87,0.10)' } : undefined}>
+          backgroundColor={s.voice && e.surface !== 'terminal' ? 'rgba(217,119,87,0.10)' : undefined}>
           <Box flexDirection="row" alignItems="center" gap={1}>
             {ring}
             <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
-              {host ? (
-                <Button key={`open-${s.id}`} plain onPress={() => openSession($, host)}>
-                  <Text bold dimColor={off} wrap="truncate-end">{s.label || s.project}</Text><Text dimColor> ↗</Text>
-                </Button>
-              ) : (
-                <Text bold dimColor={off} wrap="truncate-end">
-                  {s.label || s.project}{mine ? <Text dimColor> · hier</Text> : null}
-                </Text>
-              )}
+              <Text bold dimColor={off} wrap="truncate-end">
+                {s.label || s.project}{mine ? <Text dimColor> · hier</Text> : null}
+              </Text>
               <Text wrap="truncate-end">
                 <Text color={off ? undefined : st.tone} dimColor={off}>{bgLabel(s) ?? st.label}</Text>
                 <Text dimColor> · {timer(s, at)}</Text>
               </Text>
             </Box>
             {s.stats ? <Button key={`info-${s.id}`} plain dimColor label={isOpen ? '▴' : '▾'} onPress={() => toggle(s.id)} /> : null}
+            {host ? <Button key={`open-${s.id}`} label="↗" onPress={() => openSession($, host)} /> : null}
           </Box>
           {isOpen ? (
             <Box flexDirection="column" marginTop={1}>
