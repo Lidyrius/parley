@@ -279,7 +279,7 @@ test('tiles open their desktop session with a ↗ button, never on this session 
   const clock = mock.clock(on)
   const now = clock.now()
   const sessions = [
-    { id: 's1', label: 'Parley', project: 'vloude', state: 'working', since: now, until: null, voice: false, host: 'local_me' },
+    { id: 's1', label: 'Parley', project: 'vloude', state: 'idle', since: now, until: null, voice: false, resumable: true, host: 'local_me' },
     { id: 'b', label: 'Shop', project: 'shop', state: 'idle', since: now, until: null, voice: false, host: 'local_shop-1' },
     { id: 'c', label: 'Codex', project: 'cx', state: 'idle', since: now, until: null, voice: false, host: null },
   ]
@@ -307,6 +307,7 @@ test('tiles open their desktop session with a ↗ button, never on this session 
   const keys = ((await desk.findAll({ type: 'Button' })) as { props: { key?: string } }[]).map(b => b.props.key)
   expect(keys).toContain('open-b')
   expect(keys).not.toContain('open-s1') // this session: no link to itself
+  expect(keys).toContain('resume-s1')     // but it can be resumed when ready
   expect(keys).not.toContain('open-c')  // no desktop id (Codex): no link
   await desk.press({ key: 'open-b' })
   expect(runs).toEqual([['open', 'claude://code/continue?session=local_shop-1']])
