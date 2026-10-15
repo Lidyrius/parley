@@ -1,0 +1,8 @@
+{
+  "name": "parley-ui",
+  "version": "0.1.0",
+  "description": "Parley voice status in Claude Code: live band above the prompt and a /parley conversation pane",
+  "author": { "name": "sydney", "email": "sydney@developaway.de" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

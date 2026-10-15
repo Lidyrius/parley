@@ -69,6 +69,10 @@ it's completely terminal-agnostic. In Codex, activate the skill explicitly with
 - 🌍 **Any language** — pick the spoken language in onboarding.
 - 🎚️ **Your voice** — pick any Google Chirp3-HD voice during onboarding.
 - 🖥️ **Terminal-agnostic** — Warp, iTerm, tmux, plain Terminal.
+- 📟 **Live status in Claude Code** — the `parley-ui` mod draws a band above the prompt
+  (speaking / listening with a real level meter / injected) and a `/parley` conversation
+  pane. The installer adds it with the voice plugin; standalone:
+  `/plugin install parley-ui --marketplace Lidyrius/parley`.
 
 ## Requirements
 
@@ -119,6 +123,7 @@ prepended.
 ```bash
 rm -rf ~/Applications/Parley.app \
        ~/.claude/skills/parley \
+       ~/.claude/skills/parley-ui \
        "~/Library/Application Support/Parley"
 defaults delete de.developaway.parley 2>/dev/null || true
 ```

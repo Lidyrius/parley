@@ -82,6 +82,15 @@ HOME="$tmp/home" PARLEY_CREDS="$creds" bash "$here/scripts/sync-integrations.sh"
 [ "$(readlink "$tmp/home/.claude/skills/parley")" = "$tmp/other-plugin" ] || fail "foreign Claude link changed"
 echo "PASS: foreign Claude link is preserved"
 
+printf '%s\n' '{"detectedClaudeCode":"1","detectedCodex":"0","claudeCodeEnabled":"1","codexEnabled":"0"}' > "$creds"
+HOME="$tmp/claude-home" PARLEY_CREDS="$creds" bash "$here/scripts/sync-integrations.sh"
+[ "$(readlink "$tmp/claude-home/.claude/skills/parley")" = "$here/plugin" ] || fail "Claude plugin link"
+[ "$(readlink "$tmp/claude-home/.claude/skills/parley-ui")" = "$here/plugin-ui" ] || fail "parley-ui mod link"
+printf '%s\n' '{"detectedClaudeCode":"1","detectedCodex":"0","claudeCodeEnabled":"0","codexEnabled":"0"}' > "$creds"
+HOME="$tmp/claude-home" PARLEY_CREDS="$creds" bash "$here/scripts/sync-integrations.sh"
+[ ! -e "$tmp/claude-home/.claude/skills/parley-ui" ] || fail "parley-ui mod link not removed"
+echo "PASS: Claude plugin + parley-ui mod links"
+
 if [ -n "$real_codex" ]; then
   real_home="$tmp/real-home"
   real_codex_home="$real_home/.codex"

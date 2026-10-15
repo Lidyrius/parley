@@ -26,20 +26,31 @@ owned_link_target() {
   [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]
 }
 
+# Each Parley-owned Claude plugin is a symlink into this checkout: the voice plugin and the
+# parley-ui mod (live band above the prompt + /parley pane).
+CLAUDE_LINKS="parley:plugin parley-ui:plugin-ui"
+
 install_claude() {
-  local link="$HOME/.claude/skills/parley"
-  mkdir -p "$(dirname "$link")"
-  if [ -e "$link" ] || [ -L "$link" ]; then
-    if owned_link_target "$link" "$ROOT/plugin"; then return 0; fi
-    echo "Parley: not replacing existing Claude plugin path: $link" >&2
-    return 1
-  fi
-  ln -s "$ROOT/plugin" "$link"
+  local pair link target rc=0
+  for pair in $CLAUDE_LINKS; do
+    link="$HOME/.claude/skills/${pair%%:*}" target="$ROOT/${pair#*:}"
+    mkdir -p "$(dirname "$link")"
+    if [ -e "$link" ] || [ -L "$link" ]; then
+      owned_link_target "$link" "$target" && continue
+      echo "Parley: not replacing existing Claude plugin path: $link" >&2
+      rc=1; continue
+    fi
+    ln -s "$target" "$link"
+  done
+  return $rc
 }
 
 remove_claude() {
-  local link="$HOME/.claude/skills/parley"
-  if owned_link_target "$link" "$ROOT/plugin"; then rm "$link"; fi
+  local pair link
+  for pair in $CLAUDE_LINKS; do
+    link="$HOME/.claude/skills/${pair%%:*}"
+    if owned_link_target "$link" "$ROOT/${pair#*:}"; then rm "$link"; fi
+  done
 }
 
 MARKET_ROOT="${PARLEY_CODEX_MARKETPLACE:-$HOME/.parley/codex-marketplace}"

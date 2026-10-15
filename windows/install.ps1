@@ -84,4 +84,4 @@ if ($detectedCodex -eq '1') { Write-Host 'Codex: $parley-voice' }
 if ($detectedClaude -eq '0' -and $detectedCodex -eq '0') { Write-Host 'Kein Client erkannt — offizielle Installationslinks stehen im Setup.' }
 Write-Host ''
 Write-Host 'Nutzt du Claude Code in WSL? Dann dort einmalig ausfuehren:'
-Write-Host "  mkdir -p ~/.claude/skills && ln -sfn /mnt/c/Users/$env:USERNAME/.parley/src/plugin ~/.claude/skills/parley && sudo apt-get install -y jq"
+Write-Host "  mkdir -p ~/.claude/skills && ln -sfn /mnt/c/Users/$env:USERNAME/.parley/src/plugin ~/.claude/skills/parley && ln -sfn /mnt/c/Users/$env:USERNAME/.parley/src/plugin-ui ~/.claude/skills/parley-ui && sudo apt-get install -y jq"
