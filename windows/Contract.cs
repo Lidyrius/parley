@@ -37,6 +37,8 @@ public sealed class PresencePayload
     [JsonPropertyName("usage")] public PresenceUsage? Usage { get; set; }
     // In-flight background tasks (subagents, shell jobs, monitors).
     [JsonPropertyName("tasks")] public List<BackgroundTask>? Tasks { get; set; }
+    // The desktop app's id for the session (local_…), for claude:// deep links.
+    [JsonPropertyName("host")] public string? Host { get; set; }
 
     public static PresencePayload? Decode(string body)
     {

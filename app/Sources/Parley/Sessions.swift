@@ -17,6 +17,7 @@ final class SessionRegistry {
         var presenceAt: Date?          // last /presence (nil = never sent, e.g. Codex)
         var presenceState = "idle"     // the mod's last state: working | background | idle
         var tasks: [BackgroundTask] = []   // its in-flight background tasks, as last reported
+        var host: String?              // desktop app session id (local_…): the mod opens it by deep link
         var hookAt: Date               // last /turn, /wake or turn reply
         var queued = false             // a /turn (or resume dialog) waits in the queue
         var waitUntil: Date?           // "Warte X Minuten": the hook sleeps until then
@@ -66,12 +67,13 @@ final class SessionRegistry {
     // to submit as a prompt in its session.
     @discardableResult
     func presence(id: String, label: String, project: String, state: String,
-                  usage: PresenceUsage? = nil, tasks: [BackgroundTask]? = nil) -> String? {
+                  usage: PresenceUsage? = nil, tasks: [BackgroundTask]? = nil, host: String? = nil) -> String? {
         var delivered: String?
         update(id, label: label, project: project) { e, t in
             e.presenceAt = t
             e.presenceState = state
             e.tasks = tasks ?? []
+            if let h = host, !h.isEmpty { e.host = h }
             if state == "working" { e.expectWorkUntil = nil }
             if let u = usage {
                 if let s = u.startedAt { e.startedAt = Date(timeIntervalSince1970: s / 1000) }
@@ -213,7 +215,7 @@ final class SessionRegistry {
         }.map { e in
             Row(id: e.id, label: e.label, project: e.project, state: e.state, since: Self.ms(e.since),
                 until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil, voice: e.id == activeId,
-                resumable: Self.resumable(e), tasks: e.tasks,
+                resumable: Self.resumable(e), tasks: e.tasks, host: e.host,
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
         }
@@ -233,15 +235,17 @@ final class SessionRegistry {
         let until: Int64?
         let voice, resumable: Bool
         let tasks: [BackgroundTask]
+        let host: String?
         let stats: RowStats
-        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, voice, resumable, tasks, stats }
+        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, voice, resumable, tasks, host, stats }
         func encode(to encoder: Encoder) throws {   // explicit: `until` must be null, not omitted
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(label, forKey: .label)
             try c.encode(project, forKey: .project); try c.encode(state, forKey: .state)
             try c.encode(since, forKey: .since); try c.encode(until, forKey: .until)
             try c.encode(voice, forKey: .voice); try c.encode(resumable, forKey: .resumable)
-            try c.encode(tasks, forKey: .tasks); try c.encode(stats, forKey: .stats)
+            try c.encode(tasks, forKey: .tasks); try c.encode(host, forKey: .host)
+            try c.encode(stats, forKey: .stats)
         }
     }
 

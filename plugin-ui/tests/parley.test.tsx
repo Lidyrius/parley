@@ -274,3 +274,47 @@ test('split pane: fixed halves when the body height is known, history shows the 
   expect(await ui.find({ type: 'Text', text: 'Satz 5.' })).toBeDefined()
   await ui.unmount()
 })
+
+test('tiles open their desktop session: the name is a link, never on this session or a Codex one', async ($, on) => {
+  const clock = mock.clock(on)
+  const now = clock.now()
+  const sessions = [
+    { id: 's1', label: 'Parley', project: 'vloude', state: 'working', since: now, until: null, voice: false, host: 'local_me' },
+    { id: 'b', label: 'Shop', project: 'shop', state: 'idle', since: now, until: null, voice: false, host: 'local_shop-1' },
+    { id: 'c', label: 'Codex', project: 'cx', state: 'idle', since: now, until: null, voice: false, host: null },
+  ]
+  const bodies: string[] = []
+  const runs: string[][] = []
+  on('http.fetch', async ($, e) => {
+    if (e.url.endsWith('/presence')) bodies.push(e.init?.body ?? '')
+    return { value: { status: 200, ok: true, headers: {}, text: e.url.endsWith('/sessions') ? JSON.stringify({ sessions }) : '{}' } }
+  })
+  on('env.get', async ($, e) => ({ value: e.name === 'CLAUDE_CODE_HOST_SESSION_ID' ? 'local_me' : undefined }) as never)
+  on('process.run', async ($, e) => { runs.push([...e.argv]); return { value: { exitCode: 0, stdout: '', stderr: '' } } as never })
+  on('session.usage', async () => ({ value: { startedAt: 0, context: { window: 200000 }, rateLimits: [] } }) as never)
+  on('command.register', async () => ({ value: undefined }) as never)
+  on('session.id', async () => ({ value: 's1' }))
+  on('session.start', async ($, e) => ({ cwd: e.cwd }) as never)
+  on('classic.Stop', async () => ({}))
+  on('ui.render', async ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
+
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'desktop', isInteractive: true } as never)
+  await $.classic.Stop({ stop_hook_active: false, last_assistant_message: '<speak-end>Ok.</speak-end>', cwd: '/tmp/parley-demo' })
+  await clock.advance(1100)
+  expect(bodies.at(-1)).toContain('"host":"local_me"')
+
+  const desk = await $.ui.mount({ plugin: 'parley-ui', surface: 'desktop', component: 'Pane', requestId: 'parley', props: {} as never })
+  const keys = ((await desk.findAll({ type: 'Button' })) as { props: { key?: string } }[]).map(b => b.props.key)
+  expect(keys).toContain('open-b')
+  expect(keys).not.toContain('open-s1') // this session: no link to itself
+  expect(keys).not.toContain('open-c')  // no desktop id (Codex): no link
+  // hover (orange frame + tint) is surface-only styling: not in the test's tree
+  await desk.press({ key: 'open-b' })
+  expect(runs).toEqual([['open', 'claude://code/continue?session=local_shop-1']])
+  await desk.unmount()
+
+  const term = await $.ui.mount({ plugin: 'parley-ui', surface: 'terminal', component: 'Pane', requestId: 'parley', props: {} as never })
+  const termKeys = ((await term.findAll({ type: 'Button' })) as { props: { key?: string } }[]).map(b => b.props.key)
+  expect(termKeys).not.toContain('open-b') // the terminal opens nothing in the desktop app
+  await term.unmount()
+})

@@ -171,7 +171,7 @@ public sealed class Server
                     ? Path.GetFileName((presence.Cwd ?? "").TrimEnd('/', '\\'))
                     : presence.Project;
                 var instruction = Sessions.Presence(presence.SessionId, presence.Label ?? "", project,
-                    presence.State ?? "idle", presence.Usage, presence.Tasks);
+                    presence.State ?? "idle", presence.Usage, presence.Tasks, presence.Host);
                 NotifyParked();
                 await Respond(ctx, 200, instruction is null ? "{}" : JsonSerializer.Serialize(new { instruction }));
                 return;
