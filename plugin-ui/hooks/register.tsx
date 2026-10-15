@@ -531,5 +531,5 @@ export const register: Register = on => {
     await update($, sessSkip, () => next.sess)
     await update($, histSkip, () => next.hist)
     return {}
-  })
+  }).catch(($, e, next) => next(e)) // on a failure the engine scrolls the body as before
 }
