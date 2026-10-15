@@ -2,8 +2,8 @@ using System.Text;
 
 namespace Parley;
 
-// Cached spoken clips — ack lines per intent and per-project announcements — rendered
-// lazily via Google TTS into %APPDATA%\Parley\clips and picked at random for variety.
+// Cached spoken clips — ack lines per intent (picked at random for variety) and one
+// per-project announcement — rendered lazily via Google TTS into %APPDATA%\Parley\clips.
 // Same phrase templates as the macOS scripts/clip-texts (all six languages).
 public static class Clips
 {
@@ -26,16 +26,28 @@ public static class Clips
 
     // ---- project announcements -------------------------------------------------------
 
+    // One fixed phrase per project ("Update zu X"), cached as clips\announce\<slug>.pcm.
+    // (The old 10-phrasing clips lived in clips\projects\<slug> — a different path, never reused.)
     public static byte[]? Announcement(string label, Config config)
     {
         var slug = Slug(label);
         if (slug.Length == 0) return null;
-        var dir = Path.Combine(Root, "projects", slug);
-        var pick = RandomPcm(dir);
-        if (pick is not null) return pick;
-        EnsureRendered("proj-" + slug, config, () => RenderAnnouncements(label, slug, config));
+        var file = Path.Combine(Root, "announce", slug + ".pcm");
+        try { if (File.Exists(file)) return File.ReadAllBytes(file); } catch { }
+        EnsureRendered("ann-" + slug, config, () => RenderAnnouncement(label, file, config));
         return null;
     }
+
+    // {name} = the project's spoken label.
+    public static string AnnouncementPhrase(string name, string language) => (language switch
+    {
+        "English" => "Update on {name}",
+        "Français" => "Mise à jour sur {name}",
+        "Español" => "Actualización sobre {name}",
+        "Italiano" => "Aggiornamento su {name}",
+        "Nederlands" => "Update over {name}",
+        _ => "Update zu {name}",
+    }).Replace("{name}", name);
 
     // ---- rendering -------------------------------------------------------------------
 
@@ -69,20 +81,16 @@ public static class Clips
         Log.Write("clips: ack lines done");
     }
 
-    private static async Task RenderAnnouncements(string label, string slug, Config config)
+    private static async Task RenderAnnouncement(string label, string file, Config config)
     {
-        Log.Write($"clips: rendering announcements for {label}");
-        var dir = Path.Combine(Root, "projects", slug);
-        Directory.CreateDirectory(dir);
-        var i = 0;
-        foreach (var phrase in AnnouncementPhrases(config.Language))
-        {
-            var pcm = await GoogleTts.Synthesize(phrase.Replace("{name}", label), config);
-            if (pcm is not null)
-                await File.WriteAllBytesAsync(Path.Combine(dir, $"ann_{i:00}.pcm"), pcm);
-            i++;
-        }
-        Log.Write("clips: announcements done");
+        Log.Write($"clips: rendering announcement for {label}");
+        var pcm = await GoogleTts.Synthesize(AnnouncementPhrase(label, config.Language), config);
+        if (pcm is null) return;
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        var tmp = file + ".tmp";   // write-then-move: a turn never reads a half-written clip
+        await File.WriteAllBytesAsync(tmp, pcm);
+        File.Move(tmp, file, true);
+        Log.Write("clips: announcement done");
     }
 
     // ---- helpers ---------------------------------------------------------------------
@@ -138,16 +146,6 @@ public static class Clips
     private static string Template(string langFile) => langFile switch
     {
         "en-US" => EnUS, "fr-FR" => FrFR, "es-ES" => EsES, "it-IT" => ItIT, "nl-NL" => NlNL, _ => DeDE,
-    };
-
-    private static string[] AnnouncementPhrases(string language) => language switch
-    {
-        "English" => new[] { "I have an update on the {name} project.", "News from the {name} project.", "A quick note on {name}.", "Update for {name}.", "Regarding the {name} project.", "Something new on {name}.", "Feedback on {name}.", "This concerns the {name} project.", "This is {name}.", "On the status of {name}." },
-        "Français" => new[] { "J'ai une mise à jour pour le projet {name}.", "Des nouvelles du projet {name}.", "Un mot rapide sur {name}.", "Mise à jour pour {name}.", "Concernant le projet {name}.", "Du nouveau sur {name}.", "Un retour sur {name}.", "Cela concerne le projet {name}.", "Ici {name}.", "Sur l'état de {name}." },
-        "Español" => new[] { "Tengo una actualización del proyecto {name}.", "Novedades del proyecto {name}.", "Una nota rápida sobre {name}.", "Actualización de {name}.", "Sobre el proyecto {name}.", "Algo nuevo en {name}.", "Comentarios sobre {name}.", "Esto concierne al proyecto {name}.", "Aquí {name}.", "Sobre el estado de {name}." },
-        "Italiano" => new[] { "Ho un aggiornamento per il progetto {name}.", "Novità dal progetto {name}.", "Una breve nota su {name}.", "Aggiornamento per {name}.", "Riguardo al progetto {name}.", "Qualcosa di nuovo su {name}.", "Un riscontro su {name}.", "Riguarda il progetto {name}.", "Qui {name}.", "Sullo stato di {name}." },
-        "Nederlands" => new[] { "Ik heb een update voor het project {name}.", "Nieuws uit het project {name}.", "Een korte melding over {name}.", "Update voor {name}.", "Over het project {name}.", "Iets nieuws over {name}.", "Een terugkoppeling over {name}.", "Dit betreft het project {name}.", "Hier is {name}.", "Over de status van {name}." },
-        _ => new[] { "Ich habe ein Update für das Projekt {name}.", "Neuigkeiten aus dem Projekt {name}.", "Kurze Meldung zum Projekt {name}.", "Update für {name}.", "Zum Projekt {name}.", "Neues aus dem Projekt {name}.", "Eine Rückmeldung zu {name}.", "Betrifft das Projekt {name}.", "Hier ist {name}.", "Zum Stand von {name}." },
     };
 
     // ---- phrase templates (key|text; identical to scripts/clip-texts/*.txt) ----------

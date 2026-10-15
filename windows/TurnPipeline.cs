@@ -1,8 +1,8 @@
 namespace Parley;
 
 // The per-turn voice pipeline — full port of the macOS flow:
-// TTS prefetch (+ learned timing) → smart media pause → project announcement (multi-
-// instance) → speak at speaking rate (+beep on listen turns) → record with pill overlay
+// TTS prefetch (+ learned timing) → smart media pause → project announcement (another
+// session alive) → speak at speaking rate (+beep on listen turns) → record with pill overlay
 // (VAD) → transcribe (min-audio guard) → classify → cached ack line + media resume in
 // the background (transcript returns immediately) → stats. "" ends the conversation.
 public sealed class TurnPipeline
@@ -13,17 +13,20 @@ public sealed class TurnPipeline
     private readonly PillOverlay? _pill;
     private readonly Func<List<Server.ParkedInfo>>? _parkedList;
     private readonly Action<string, string>? _wake;
+    private readonly Func<string, bool>? _othersAlive;   // any session besides this one not stopped
     private List<string> _pendingResume = new();
     private volatile int _resumeGen;   // bumped per turn; cancels a pending debounced resume
     private Task? _ackTask;
 
     public TurnPipeline(Func<int> queuedTurns, PillOverlay? pill,
-        Func<List<Server.ParkedInfo>>? parkedList = null, Action<string, string>? wake = null)
+        Func<List<Server.ParkedInfo>>? parkedList = null, Action<string, string>? wake = null,
+        Func<string, bool>? othersAlive = null)
     {
         _queuedTurns = queuedTurns;
         _pill = pill;
         _parkedList = parkedList;
         _wake = wake;
+        _othersAlive = othersAlive;
     }
 
     public async Task<(string transcript, bool park, int wait, string resume)> Run(TurnPayload turn)
@@ -36,7 +39,6 @@ public sealed class TurnPipeline
     private async Task<(string transcript, bool park, int wait, string resume)> RunTurn(TurnPayload turn)
     {
         var config = Config.Load();
-        SessionTracker.Touch(turn.Project);
         Log.Write($"turn start project={turn.Project} listen={turn.WantsListen}");
         _resumeGen++;
 
@@ -61,8 +63,9 @@ public sealed class TurnPipeline
         // Wait out the previous turn's background ack so audio never overlaps.
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
 
-        // Multi-instance → cached project announcement (instant audio → pause right away).
-        byte[]? announcement = SessionTracker.LiveProjectCount() > 1
+        // Another session alive (any state but stopped) → cached "Update zu <Name>"
+        // announcement (instant audio → pause right away).
+        byte[]? announcement = _othersAlive?.Invoke(Server.SessionKey(turn)) == true
             ? Clips.Announcement(turn.SpokenLabel, config)
             : null;
 
@@ -129,7 +132,7 @@ public sealed class TurnPipeline
             var target = MatchParked(cmd.Value.Target, parked);
             if (target is null) break;
 
-            var instruction = string.IsNullOrWhiteSpace(cmd.Value.Instruction) ? "Wir machen weiter." : cmd.Value.Instruction;
+            var instruction = string.IsNullOrWhiteSpace(cmd.Value.Instruction) ? Server.ResumeInstruction : cmd.Value.Instruction;
             _wake?.Invoke(target.Value.Id, instruction);
             Log.Write($"control: resume {target.Value.Label} → \"{instruction}\"");
             await SpeakLine($"Verstanden, Sir — ich nehme {target.Value.Label} wieder auf. Und für dieses Projekt?", config);

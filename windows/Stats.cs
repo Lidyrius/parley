@@ -141,23 +141,3 @@ public static class TtsTiming
         catch { }
     }
 }
-
-// Live-session tracking for multi-instance announcements ("more than one project running").
-public static class SessionTracker
-{
-    private static readonly object Gate = new();
-    private static readonly Dictionary<string, DateTime> LastActive = new();   // project → last seen
-
-    public static void Touch(string project)
-    {
-        if (project.Length == 0) return;
-        lock (Gate) LastActive[project] = DateTime.UtcNow;
-    }
-
-    /// Distinct projects seen within the last 5 minutes.
-    public static int LiveProjectCount()
-    {
-        var cutoff = DateTime.UtcNow.AddMinutes(-5);
-        lock (Gate) return LastActive.Count(kv => kv.Value > cutoff);
-    }
-}

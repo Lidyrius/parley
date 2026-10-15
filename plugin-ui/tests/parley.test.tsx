@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { ease, parseSpeak, wave, waveSvg } from '../hooks/register'
+import { ease, parseSpeak, ringSvg, timer, wave, waveSvg } from '../hooks/register'
 
 const BAND = {
   plugin: 'parley-ui',
@@ -79,6 +79,7 @@ test('live /status drives phase; desktop draws the SVG wave, terminal the glyph 
   const stop = $.classic.Stop({ stop_hook_active: false, session_id: 's1', last_assistant_message: '<speak>Frage, Sir?</speak>' })
   await clock.advance(350)
   expect(await term.find({ type: 'Text', text: /● hört zu/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /^[▁▂▃▄▅▆▇█]{24}$/ })).toBeDefined()
   expect(await term.find({ type: 'Svg' })).toBeUndefined()
   expect(await desk.find({ type: 'Svg' })).toBeDefined()
 
@@ -88,4 +89,60 @@ test('live /status drives phase; desktop draws the SVG wave, terminal the glyph 
   expect(await desk.find({ type: 'Svg' })).toBeUndefined()
   await term.unmount()
   await desk.unmount()
+})
+
+test('overview: ring tiles for every Parley session, presence while active, parked ones resume', async ($, on) => {
+  const clock = mock.clock(on)
+  const now = clock.now()
+  const sessions = [
+    { id: 'a', label: 'Parley', project: 'vloude', state: 'speaking', since: now - 8000, until: null, voice: true },
+    { id: 'b', label: 'Shop', project: 'shop', state: 'working', since: now - 134000, until: null, voice: false },
+    { id: 'c', label: 'API', project: 'api', state: 'waiting', since: now - 48000, until: now + 252000, voice: false },
+    { id: 'd', label: 'Docs', project: 'docs', state: 'parked', since: now - 720000, until: null, voice: false },
+    { id: 'e', label: 'Alt', project: 'alt', state: 'stopped', since: now - 180000, until: null, voice: false },
+  ]
+  const calls: string[] = []
+  on('http.fetch', async ($, e) => {
+    calls.push(`${e.init?.method ?? 'GET'} ${e.url.replace(/^.*:8787/, '')} ${e.init?.body ?? ''}`)
+    const text = e.url.endsWith('/sessions') ? JSON.stringify({ sessions })
+      : e.url.endsWith('/status') ? JSON.stringify({ phase: 'idle', session: 'x', levels: [] }) : '{}'
+    return { value: { status: 200, ok: true, headers: {}, text } }
+  })
+  on('classic.Stop', async () => ({ block: 'Weiter.' }))
+  on('ui.render', async ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
+
+  on('command.register', async () => ({ value: undefined }) as never)
+  on('session.id', async () => ({ value: 's1' }))
+  on('session.start', async ($, e) => ({ cwd: e.cwd }) as never)
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(1100)
+  expect(calls.filter(c => c.includes('/presence'))).toEqual([]) // silent until voice mode is on
+
+  await $.classic.Stop({ stop_hook_active: false, last_assistant_message: '<speak>Hallo.</speak>', cwd: '/tmp/parley-demo' })
+  await clock.advance(1100)
+  expect(calls.some(c => c.startsWith('POST /presence') && c.includes('"state":"working"'))).toBe(true)
+
+  const desk = await $.ui.mount({ plugin: 'parley-ui', surface: 'desktop', component: 'Pane', requestId: 'parley', props: {} as never })
+  expect(await desk.find({ type: 'Text', text: /SESSIONS · 4 aktiv/ })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: /noch 4:1\d/ })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: 'geparkt' })).toBeDefined()
+  expect(await desk.find({ type: 'Svg' })).toBeDefined()
+  await desk.press({ key: 'resume-d' })
+  expect(calls.some(c => c.startsWith('POST /resume') && c.includes('"id":"d"'))).toBe(true)
+  await desk.unmount()
+
+  const term = await $.ui.mount({ plugin: 'parley-ui', surface: 'terminal', component: 'Pane', requestId: 'parley', props: {} as never })
+  expect(await term.find({ type: 'Text', text: '⏸' })).toBeDefined()
+  expect(await term.find({ type: 'Svg' })).toBeUndefined()
+  await term.unmount()
+})
+
+test('timer and ring: countdown, elapsed, stopped; ring drains without the clock in it', async () => {
+  const s = { id: 'c', label: 'API', project: 'api', state: 'waiting', since: 0, until: 300000, voice: false } as const
+  expect(timer(s, 48000)).toBe('noch 4:12')
+  expect(timer({ ...s, state: 'working', until: null }, 3723000)).toBe('seit 1:02:03')
+  expect(timer({ ...s, state: 'stopped', until: null }, 180000)).toBe('vor 3 min')
+  const ring = ringSvg(s, 0.84, 48000)
+  expect(ring).toContain('dur="252.0s"')
+  expect(ringSvg({ ...s, state: 'working', until: null }, 1, 1000)).toBe(ringSvg({ ...s, state: 'working', until: null }, 1, 9000))
 })

@@ -28,6 +28,30 @@ struct TurnReply {
 // A paused-but-resumable session, surfaced to the menu and matched by voice command.
 struct ParkedInfo: Identifiable, Equatable { var id: String; var label: String; var project: String }
 
+// A parked hook's /wake poll: the turn's identity without the spoken line (no `event`,
+// no `speak` — so it can't decode as a TurnPayload).
+struct WakePayload: Codable, Equatable {
+    var session_id: String?
+    var cwd: String?
+    var project: String?
+    var tmux_pane: String?
+    var label: String?
+
+    var spokenLabel: String { (label?.isEmpty == false ? label : nil) ?? project ?? "" }
+}
+
+// POST /presence — the Claude Code mod's heartbeat (~5 s per session). state: working|idle.
+struct PresencePayload: Codable, Equatable {
+    var session_id: String
+    var label: String?
+    var project: String?
+    var cwd: String?
+    var state: String?
+}
+
+// POST /resume — wake a parked session by its session_id (as listed by GET /sessions).
+struct ResumePayload: Codable, Equatable { var id: String }
+
 struct ReadyPayload: Codable, Equatable {
     var event: String
     var session_id: String?
@@ -42,5 +66,14 @@ enum Contract {
     }
     static func decodeReady(_ body: Data) -> ReadyPayload? {
         try? JSONDecoder().decode(ReadyPayload.self, from: body)
+    }
+    static func decodeWake(_ body: Data) -> WakePayload? {
+        try? JSONDecoder().decode(WakePayload.self, from: body)
+    }
+    static func decodePresence(_ body: Data) -> PresencePayload? {
+        try? JSONDecoder().decode(PresencePayload.self, from: body)
+    }
+    static func decodeResume(_ body: Data) -> ResumePayload? {
+        try? JSONDecoder().decode(ResumePayload.self, from: body)
     }
 }
