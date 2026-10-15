@@ -249,6 +249,7 @@ test('split pane: wheel over the top half scrolls sessions, below it the history
   expect(scrollPane(-4, 40, undefined, s)).toEqual({ sess: 0, hist: 2 }) // keys → history
   expect(scrollPane(9, 40, 30, s)).toEqual({ sess: 0, hist: 0 })       // never past the newest
   expect(scrollPane(-100, 40, 30, s).hist).toBe(10)                    // nor past the oldest
+  expect(scrollPane(-4, 40, 5, { ...s, sessMax: 0 })).toEqual({ sess: 0, hist: 2 }) // tiles fit → the wheel scrolls the history
 })
 
 test('split pane: fixed halves when the body height is known, history shows the newest', async ($, on) => {
@@ -261,6 +262,15 @@ test('split pane: fixed halves when the body height is known, history shows the 
   const boxes = (await ui.findAll({ type: 'Box' })) as { props: { height?: number } }[]
   expect(boxes.some(b => b.props.height === 15)).toBe(true)
   expect(await ui.find({ type: 'Text', text: 'Satz 5.' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /↓ Neueste/ })).toBeUndefined()
+  const labels = async () => ((await ui.findAll({ type: 'Button' })) as { props: { label?: string } }[]).map(b => b.props.label)
+  expect(await labels()).not.toContain('↓ Neueste')
+  expect(await ui.find({ type: 'Svg' })).toBeDefined() // the fade over the history's top edge
+  await ui.press({ key: 'older' })
+  await ui.press({ key: 'older' })
+  expect(await ui.find({ type: 'Text', text: 'Satz 5.' })).toBeUndefined() // two messages back: Satz 5 + its reply
+  expect(await ui.find({ type: 'Text', text: 'Satz 4.' })).toBeDefined()
+  expect(await labels()).toContain('↓ Neueste')
+  await ui.press({ key: 'latest' })
+  expect(await ui.find({ type: 'Text', text: 'Satz 5.' })).toBeDefined()
   await ui.unmount()
 })

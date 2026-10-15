@@ -197,13 +197,22 @@ export function todayParts(d: Today): [string, string][] {
   return parts
 }
 
-// Where a wheel tick goes in the split pane: over the top half it moves the session rows
-// (3 rows a tile row), anywhere else the history (2 rows a message, counted back from the
+// The history's top edge: a gradient from the pane's background to transparent laid over the
+// clipped lines, so the oldest one fades out instead of being cut. The mod cannot read the
+// desktop's theme, so the colour follows the system's scheme (dark measured at #191918).
+export const FADE = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="48" preserveAspectRatio="none" viewBox="0 0 10 48">`
+  + `<style>stop{stop-color:#FAF9F5}@media (prefers-color-scheme: dark){stop{stop-color:#191918}}</style>`
+  + `<defs><linearGradient id="f" x1="0" y1="0" x2="0" y2="1"><stop offset="0"/><stop offset="0.35" stop-opacity="0.85"/>`
+  + `<stop offset="1" stop-opacity="0"/></linearGradient></defs><rect width="10" height="48" fill="url(#f)"/></svg>`
+
+// Where a wheel tick goes in the split pane: over the top half (when the tiles overflow it)
+// it moves the session rows (3 rows a tile row), anywhere else the history (2 rows a message, counted back from the
 // newest). Fractional, so small trackpad moves add up; clamped to what exists.
 export function scrollPane(by: number, bodyRows: number, row: number | undefined,
   s: { sess: number; sessMax: number; hist: number; histMax: number }): { sess: number; hist: number } {
   const clamp = (v: number, max: number) => Math.max(0, Math.min(Math.max(0, max), v))
-  return row !== undefined && row < Math.floor(bodyRows / 2)
+  // Sessions take the wheel only when they overflow their half; otherwise anywhere scrolls the history.
+  return s.sessMax > 0 && row !== undefined && row < Math.floor(bodyRows / 2)
     ? { sess: clamp(s.sess + by / 3, s.sessMax), hist: s.hist }
     : { sess: s.sess, hist: clamp(s.hist - by / 2, s.histMax) }
 }
@@ -502,9 +511,16 @@ export const register: Register = on => {
         <Box flexDirection="column" height={top ? body - top : undefined} flexShrink={0} paddingTop={1}>
           <Box flexDirection="row" justifyContent="space-between">
             <Text bold dimColor>VERLAUF{label ? ` · ${label}` : ''}</Text>
-            {hSkip ? <Button key="latest" plain dimColor label="↓ Neueste" onPress={() => update($, histSkip, () => 0)} /> : null}
+            <Box flexDirection="row" gap={1}>
+              {hSkip ? <Button key="latest" plain dimColor label="↓ Neueste" onPress={() => update($, histSkip, () => 0)} /> : null}
+              <Button key="older" plain dimColor label="▲" onPress={() => update($, histSkip, v => Math.min(list.length - 1, Math.floor(v) + 1))} />
+              <Button key="newer" plain dimColor label="▼" onPress={() => update($, histSkip, v => Math.max(0, Math.floor(v) - 1))} />
+            </Box>
           </Box>
-          <Box flexDirection="column" flexGrow={1} overflow="hidden" justifyContent="flex-end" gap={1}>
+          <Box flexDirection="column" flexGrow={1} overflow="hidden" justifyContent="flex-end" gap={1} position="relative">
+            {top && e.surface !== 'terminal' && 'Svg' in els
+              ? <Box key="fade" position="absolute" top={0} left={0} right={0}><els.Svg key="fade-svg" source={FADE} alt="" height={48} /></Box>
+              : null}
             {list.length === 0 ? <Text dimColor>Noch kein Gespräch in dieser Session.</Text> : null}
             {shown.map((l, i) => (
               <Box key={`l${list.length - hSkip - shown.length + i}`} flexDirection="column" flexShrink={0}>
@@ -524,9 +540,10 @@ export const register: Register = on => {
   // anywhere else (and the scroll keys) the history, counted from its newest message.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const sessRows = Math.ceil(((await read($, overview)) ?? []).length / 2)
+    const overflows = 3 + sessRows * 5 > Math.floor(e.bodyRows / 2)
     const msgs = (await read($, history)).length
     const next = scrollPane(e.by, e.bodyRows, e.pointer?.row, {
-      sess: await read($, sessSkip), sessMax: sessRows - 1, hist: await read($, histSkip), histMax: msgs - 1,
+      sess: await read($, sessSkip), sessMax: overflows ? sessRows - 1 : 0, hist: await read($, histSkip), histMax: msgs - 1,
     })
     await update($, sessSkip, () => next.sess)
     await update($, histSkip, () => next.hist)
