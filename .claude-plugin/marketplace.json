@@ -1,0 +1,5 @@
+{
+  "name": "parley",
+  "owner": { "name": "sydney" },
+  "plugins": [{ "name": "parley-ui", "source": "./plugin-ui" }]
+}

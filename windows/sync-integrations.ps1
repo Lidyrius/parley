@@ -32,7 +32,10 @@ if (-not $enabledClaude) { $enabledClaude = $detectedClaude }
 if (-not $enabledCodex) { $enabledCodex = $detectedCodex }
 
 $pluginRoot = Join-Path $Root 'plugin'
-$claudeLink = Join-Path $env:USERPROFILE '.claude\skills\parley'
+# Each Parley-owned Claude plugin is a junction into this checkout: the voice plugin and the
+# parley-ui mod (live band above the prompt + /parley pane).
+$claudeLinks = @{ 'parley' = $pluginRoot; 'parley-ui' = (Join-Path $Root 'plugin-ui') }
+$claudeSkills = Join-Path $env:USERPROFILE '.claude\skills'
 
 function Is-OwnedJunction($path, $target) {
     if (-not (Test-Path -LiteralPath $path)) { return $false }
@@ -40,17 +43,23 @@ function Is-OwnedJunction($path, $target) {
 }
 
 function Install-Claude {
-    New-Item -ItemType Directory -Force -Path (Split-Path $claudeLink) | Out-Null
-    if (Test-Path -LiteralPath $claudeLink) {
-        if (Is-OwnedJunction $claudeLink $pluginRoot) { return }
-        Write-Warning "Parley: bestehender Claude-Code-Pfad bleibt unverändert: $claudeLink"
-        return
+    New-Item -ItemType Directory -Force -Path $claudeSkills | Out-Null
+    foreach ($name in $claudeLinks.Keys) {
+        $link = Join-Path $claudeSkills $name
+        $target = $claudeLinks[$name]
+        if (Test-Path -LiteralPath $link) {
+            if (-not (Is-OwnedJunction $link $target)) { Write-Warning "Parley: bestehender Claude-Code-Pfad bleibt unverändert: $link" }
+            continue
+        }
+        New-Item -ItemType Junction -Path $link -Target $target | Out-Null
     }
-    New-Item -ItemType Junction -Path $claudeLink -Target $pluginRoot | Out-Null
 }
 
 function Remove-Claude {
-    if (Is-OwnedJunction $claudeLink $pluginRoot) { Remove-Item -LiteralPath $claudeLink -Force }
+    foreach ($name in $claudeLinks.Keys) {
+        $link = Join-Path $claudeSkills $name
+        if (Is-OwnedJunction $link $claudeLinks[$name]) { Remove-Item -LiteralPath $link -Force }
+    }
 }
 
 $marketRoot = if ($env:PARLEY_CODEX_MARKETPLACE) { $env:PARLEY_CODEX_MARKETPLACE } else { Join-Path $env:USERPROFILE '.parley\codex-marketplace' }
