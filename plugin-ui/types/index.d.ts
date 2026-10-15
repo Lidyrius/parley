@@ -26,6 +26,10 @@ declare module 'claude-code' {
       today: Today | null
       /** This session's in-flight background tasks, as its last Stop reported them. */
       tasks: Task[]
+      /** Overview session rows scrolled past at the top (fractional: wheel ticks accumulate). */
+      sessSkip: number
+      /** History messages scrolled back from the newest (0 = following the conversation). */
+      histSkip: number
       /** Session ids whose tile shows its details. */
       expanded: string[]
       /** When `overview` was fetched (epoch ms): the clock its timers count against. */
