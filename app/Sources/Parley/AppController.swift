@@ -559,7 +559,7 @@ final class AppController: ObservableObject {
         // 44-byte WAV header + ~0.2s of 16 kHz mono 16-bit.
         let minBytes = 44 + (16000 * 2) / 5
         guard wav.count >= minBytes else {
-            NSLog("Parley: recording too short (\(wav.count) bytes) — no reply, likely no mic input")
+            NSLog("Parley: recording too short (\(wav.count) bytes) — no reply, no speech or no mic input")
             return ""
         }
         var req = Groq.transcriptionRequest(wav: wav, apiKey: config.groqKey, boundary: "parleyBoundary")
@@ -576,8 +576,11 @@ final class AppController: ObservableObject {
                 Notifier.notify(title: "Parley — Fehler", body: hint)
                 return ""   // never feed an error body back as the reply
             }
-            return String(data: data, encoding: .utf8)?
+            let text = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let clean = Groq.cleanTranscript(text)
+            if clean.isEmpty && !text.isEmpty { Log.write("stt: dropped Whisper hallucination \"\(text)\"") }
+            return clean
         } catch {
             NSLog("Parley: STT error: \(error.localizedDescription)")
             lastError = "STT: \(error.localizedDescription)"

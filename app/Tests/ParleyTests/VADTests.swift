@@ -78,3 +78,20 @@ final class GroqRequestTests: XCTestCase {
         XCTAssertTrue(body.contains("--BOUND--"))
     }
 }
+
+final class HallucinationFilterTests: XCTestCase {
+    func testKnownHallucinationsBecomeEmpty() {
+        for t in ["Thank you.", "thank you!", "  Thank   you  ", "Thanks for watching!", "you",
+                  "Untertitel der Amara.org-Community", "Vielen Dank fürs Zuschauen.",
+                  "Untertitelung im Auftrag des ZDF", "Vielen Dank.", "...", "♪"] {
+            XCTAssertEqual(Groq.cleanTranscript(t), "", t)
+        }
+    }
+
+    func testRealSentencesAreKept() {
+        for t in ["Thank you, that fixed it.", "Thank you, now push it.", "Danke, mach weiter.",
+                  "Okay.", "Ja", "Stop"] {
+            XCTAssertEqual(Groq.cleanTranscript(t), t)
+        }
+    }
+}

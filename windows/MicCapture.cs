@@ -26,6 +26,7 @@ public sealed class MicCapture
         double totalDuration = 0;
         double resamplePos = 0;
         float prevSample = 0;
+        var reason = "error";
 
         try
         {
@@ -71,7 +72,7 @@ public sealed class MicCapture
             capture.StartRecording();
             Log.Write($"mic: capture started ({fmt.SampleRate}Hz, {channels}ch)");
 
-            var reason = await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(MaxListenSeconds)))
+            reason = await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(MaxListenSeconds)))
                 == done.Task ? done.Task.Result : "max-cap";
             Log.Write($"mic: finished reason={reason} samples={samples.Count}");
         }
@@ -84,6 +85,8 @@ public sealed class MicCapture
             try { capture?.StopRecording(); } catch { }
             capture?.Dispose();
         }
+        // VAD never heard speech → send nothing; Whisper turns pure silence into "Thank you.".
+        if (reason == "no-speech") samples.Clear();
         return Wav.Encode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(samples));
     }
 

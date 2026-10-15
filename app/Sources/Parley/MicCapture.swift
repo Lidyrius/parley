@@ -235,7 +235,8 @@ final class MicCapture: @unchecked Sendable {
         let count = samples.count
         writeDiagnostics(samples: count)
         Log.write("mic: finished reason=\(endReason) buffers=\(buffersSeen) samples=\(count) maxDB=\(Int(maxDBSeen))")
-        let wav = WAV.encode(int16: samples)
+        // VAD never heard speech → send nothing; Whisper turns pure silence into "Thank you.".
+        let wav = WAV.encode(int16: endReason == "no-speech" ? [] : samples)
         let cb = onFinished
         onFinished = nil
         cb?(wav)
