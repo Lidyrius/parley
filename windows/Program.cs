@@ -29,7 +29,8 @@ internal sealed class TrayApp : ApplicationContext
         Server? serverRef = null;
         _pipeline = new TurnPipeline(() => serverRef?.QueuedTurns ?? 0, _pill,
             () => serverRef?.ParkedList() ?? new List<Server.ParkedInfo>(),
-            (id, instr) => serverRef?.Wake(id, instr));
+            (id, instr) => serverRef?.Wake(id, instr),
+            id => serverRef?.Sessions.OthersAlive(id) ?? false);
         _server = new Server(turn => _pipeline.Run(turn), () => StatsStore.StartSession());
         serverRef = _server;
 
@@ -106,7 +107,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             var item = new ToolStripMenuItem($"▶ {p.Label} fortsetzen") { Tag = "parked" };
             var id = p.Id;
-            item.Click += (_, _) => _server.Wake(id, "Wir machen weiter.");
+            item.Click += (_, _) => _server.Wake(id, Server.ResumeInstruction);
             menu.Items.Insert(idx++, item);
         }
         if (list.Count > 0) menu.Items.Insert(idx, new ToolStripSeparator { Tag = "parked" });

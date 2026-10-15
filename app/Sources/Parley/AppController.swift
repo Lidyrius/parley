@@ -7,7 +7,6 @@ struct SessionInfo: Identifiable, Equatable {
     var project: String
     var pane: String
     var status: String
-    var lastActive = Date()   // refreshed on each ready/turn; used to count live instances
 }
 
 // Ties the control server to the audio + tmux pipeline and exposes session state
@@ -126,9 +125,9 @@ final class AppController: ObservableObject {
         await ackTask?.value
         ackTask = nil
 
-        // Multiple projects running in parallel → announce which one is speaking (cached,
-        // plays instantly — so media must pause right away in that case).
-        let announcement: Data? = liveProjectCount() > 1
+        // Another session alive (any state but stopped) → announce which one is speaking,
+        // "Update zu <Name>" (cached, plays instantly — so media must pause right away then).
+        let announcement: Data? = server.othersAlive(except: ControlServer.sessionKey(turn))
             ? await ProjectClips.shared.clipData(label: turn.spokenLabel, language: config.language, config: config)
             : nil
 
@@ -185,7 +184,7 @@ final class AppController: ObservableObject {
                   let cmd = await ControlCommand.detect(text, labels: parked.map { $0.label }, config: config),
                   cmd.resume, let target = matchParked(cmd.target) else { break }
 
-            let instruction = cmd.instruction.isEmpty ? "Wir machen weiter." : cmd.instruction
+            let instruction = cmd.instruction.isEmpty ? ControlServer.resumeInstruction : cmd.instruction
             server.wake(id: target.id, instruction: instruction)
             Log.write("control: resume \(target.label) → \"\(instruction)\"")
             await speakAndBeep("Verstanden, Sir — ich nehme \(target.label) wieder auf. Und für dieses Projekt?",
@@ -251,7 +250,7 @@ final class AppController: ObservableObject {
     }
 
     // Resume a parked session from the menu (mouse fallback for the voice command).
-    func resume(_ id: String) { server.wake(id: id, instruction: "Wir machen weiter.") }
+    func resume(_ id: String) { server.wake(id: id, instruction: ControlServer.resumeInstruction) }
 
     // Fuzzy-match a spoken project name to a parked session (either contains the other).
     private func matchParked(_ spoken: String) -> ParkedInfo? {
@@ -551,14 +550,6 @@ final class AppController: ObservableObject {
     private func upsert(_ info: SessionInfo) {
         if let i = sessions.firstIndex(where: { $0.id == info.id }) { sessions[i] = info }
         else { sessions.append(info) }
-    }
-
-    // Distinct projects seen within the window — i.e. instances currently running in
-    // parallel. Used to decide whether to announce which project is speaking.
-    // ponytail: 5-min recency proxy for "alive"; there's no clean session-ended signal.
-    private func liveProjectCount() -> Int {
-        let cutoff = Date().addingTimeInterval(-300)
-        return Set(sessions.filter { $0.lastActive > cutoff }.map { $0.project }).count
     }
 
     private func setStatus(_ id: String, _ status: String) {

@@ -9,7 +9,8 @@ namespace Parley;
 // Loopback HTTP server, same contract as macOS: the Claude Code Stop hook LONG-POLLS
 // POST /turn and blocks until the voice reply is transcribed. Turns are serialized —
 // one is spoken/recorded at a time; concurrent hooks queue FIFO (their connections
-// stay open). GET /health and POST /ready as on macOS.
+// stay open). GET /health, /status, /sessions and POST /ready, /wake, /presence, /resume
+// as on macOS.
 public sealed class Server
 {
     private readonly HttpListener _listener = new();
@@ -21,14 +22,21 @@ public sealed class Server
     public int QueuedTurns => Volatile.Read(ref _queued);
 
     // Parked (paused-but-resumable) sessions. Their Stop hook short-polls /wake; we hand
-    // back a pending instruction to wake them — no keystrokes. Keyed by route key.
+    // back a pending instruction to wake them — no keystrokes. Keyed by session key.
     private sealed class Parked { public string Label = "", Project = ""; public string? Pending; public DateTime LastSeen; }
     private readonly ConcurrentDictionary<string, Parked> _parked = new();
     public event Action<List<ParkedInfo>>? OnParkedChanged;
 
     public readonly record struct ParkedInfo(string Id, string Label, string Project);
 
-    private static string RouteKey(TurnPayload t) => string.IsNullOrEmpty(t.TmuxPane) ? t.SessionId : t.TmuxPane;
+    // Every session and its state (GET /sessions, POST /resume, the announcement).
+    public SessionRegistry Sessions { get; } = new();
+
+    // What the tray / voice command / POST /resume hand a parked session to continue.
+    public const string ResumeInstruction = "Wir machen weiter.";
+
+    // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
+    public static string SessionKey(TurnPayload t) => string.IsNullOrEmpty(t.SessionId) ? t.TmuxPane : t.SessionId;
 
     public Server(Func<TurnPayload, Task<(string, bool, int, string)>> runTurn, Action onReady)
     {
@@ -73,6 +81,11 @@ public sealed class Server
                 await Respond(ctx, 200, LiveStatus.Json());
                 return;
             }
+            if (req.HttpMethod == "GET" && path == "/sessions")
+            {
+                await Respond(ctx, 200, Sessions.Json());
+                return;
+            }
 
             string body;
             using (var r = new StreamReader(req.InputStream, Encoding.UTF8))
@@ -96,17 +109,24 @@ public sealed class Server
                     await Respond(ctx, 400, "{\"ok\":false,\"error\":\"bad turn payload\"}");
                     return;
                 }
+                var id = SessionKey(turn);
+                Sessions.Queued(id, turn.Label ?? "", turn.Project);
                 Interlocked.Increment(ref _queued);
                 if (_turnGate.CurrentCount == 0)   // another turn is active → this one waits
                     Notifier.Notify("Parley", $"Projekt {turn.SpokenLabel} wartet auf Antwort");
                 await _turnGate.WaitAsync();   // FIFO-ish serialization; hook connection stays open
-                (string transcript, bool park, int wait, string resume) r;
+                (string transcript, bool park, int wait, string resume) r = ("", false, 0, "");
                 try
                 {
                     Interlocked.Decrement(ref _queued);
+                    Sessions.Activate(id);
                     r = await _runTurn(turn);
                 }
-                finally { _turnGate.Release(); }
+                finally
+                {
+                    Sessions.Finished(id, r.transcript, r.park, r.wait);
+                    _turnGate.Release();
+                }
                 await Respond(ctx, 200, TurnJson(r.transcript, r.park, r.wait, r.resume));
                 return;
             }
@@ -120,16 +140,51 @@ public sealed class Server
                 var pending = "";
                 if (turn is not null)
                 {
-                    var key = RouteKey(turn);
+                    var key = SessionKey(turn);
                     var p = _parked.GetOrAdd(key, _ => new Parked());
                     p.Label = turn.SpokenLabel;
                     p.Project = turn.Project;
                     p.LastSeen = DateTime.UtcNow;
                     pending = Interlocked.Exchange(ref p.Pending, null) ?? "";
+                    Sessions.WakePoll(key, turn.Label ?? "", turn.Project, pending.Length > 0);
                     Prune();
                     NotifyParked();
                 }
                 await Respond(ctx, 200, TurnJson(pending, false, 0, ""));
+                return;
+            }
+
+            // /presence — the mod's heartbeat from every Claude Code session (~5 s).
+            if (req.HttpMethod == "POST" && path == "/presence")
+            {
+                var presence = PresencePayload.Decode(body);
+                if (presence is null || string.IsNullOrEmpty(presence.SessionId))
+                {
+                    await Respond(ctx, 400, "{\"ok\":false,\"error\":\"bad presence payload\"}");
+                    return;
+                }
+                var project = string.IsNullOrEmpty(presence.Project)
+                    ? Path.GetFileName((presence.Cwd ?? "").TrimEnd('/', '\\'))
+                    : presence.Project;
+                Sessions.Presence(presence.SessionId, presence.Label ?? "", project, presence.State == "working");
+                await Respond(ctx, 200, "{}");
+                return;
+            }
+
+            // /resume — same as the tray's "fortsetzen", addressed by session_id. Only a parked
+            // session can be resumed; its next /wake poll (≤3s) picks the instruction up.
+            if (req.HttpMethod == "POST" && path == "/resume")
+            {
+                var id = ResumePayload.Decode(body)?.Id ?? "";
+                if (id.Length == 0 || !Sessions.IsParked(id))
+                {
+                    await Respond(ctx, 404, "{\"ok\":false}");
+                    return;
+                }
+                var p = _parked.GetOrAdd(id, _ => new Parked());
+                p.Pending = ResumeInstruction;
+                p.LastSeen = DateTime.UtcNow;
+                await Respond(ctx, 200, "{\"ok\":true}");
                 return;
             }
 
@@ -196,6 +251,7 @@ public static class LiveStatus
     private static readonly float[] Levels = new float[32];
 
     public static void Begin(string session) { lock (Gate) { _session = session; _phase = "speaking"; } }
+    public static string Phase() { lock (Gate) return _phase; }
     public static void Set(string phase) { lock (Gate) _phase = phase; }
     public static void Push(float level)
     {

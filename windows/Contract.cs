@@ -24,3 +24,31 @@ public sealed class TurnPayload
         catch { return null; }
     }
 }
+
+// POST /presence — the Claude Code mod's heartbeat (~5 s per session). state: working|idle.
+public sealed class PresencePayload
+{
+    [JsonPropertyName("session_id")] public string SessionId { get; set; } = "";
+    [JsonPropertyName("label")] public string? Label { get; set; }
+    [JsonPropertyName("project")] public string? Project { get; set; }
+    [JsonPropertyName("cwd")] public string? Cwd { get; set; }
+    [JsonPropertyName("state")] public string? State { get; set; }
+
+    public static PresencePayload? Decode(string body)
+    {
+        try { return JsonSerializer.Deserialize<PresencePayload>(body); }
+        catch { return null; }
+    }
+}
+
+// POST /resume — wake a parked session by its session_id (as listed by GET /sessions).
+public sealed class ResumePayload
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+
+    public static ResumePayload? Decode(string body)
+    {
+        try { return JsonSerializer.Deserialize<ResumePayload>(body); }
+        catch { return null; }
+    }
+}

@@ -33,14 +33,23 @@ final class ControlServer: @unchecked Sendable {
     private var replyActive = false
 
     // Parked (paused-but-resumable) sessions. Their Stop hook short-polls /wake; we hand
-    // back a pending instruction to wake them — no keystrokes needed. Keyed by route key.
+    // back a pending instruction to wake them — no keystrokes needed. Keyed by session key.
     private struct Parked { var label: String; var project: String; var cwd: String; var pending: String?; var lastSeen: Date }
     private var parked: [String: Parked] = [:]
 
-    static func routeKey(pane: String, session: String) -> String { pane.isEmpty ? session : pane }
+    // Every session and its state (GET /sessions, POST /resume, the announcement).
+    let sessions: SessionRegistry
 
-    init(port: UInt16 = 8787) {
+    // What the tray / menu / POST /resume hand a parked session to continue.
+    static let resumeInstruction = "Wir machen weiter."
+
+    // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
+    static func sessionKey(session: String, pane: String) -> String { session.isEmpty ? pane : session }
+    static func sessionKey(_ turn: TurnPayload) -> String { sessionKey(session: turn.session_id, pane: turn.tmux_pane) }
+
+    init(port: UInt16 = 8787, sessions: SessionRegistry = SessionRegistry()) {
         self.port = NWEndpoint.Port(rawValue: port)!
+        self.sessions = sessions
     }
 
     func start() {
@@ -85,32 +94,34 @@ final class ControlServer: @unchecked Sendable {
                 send(400, #"{"ok":false,"error":"bad turn payload"}"#, on: conn)
                 return
             }
+            sessions.queued(id: Self.sessionKey(turn), label: turn.label ?? "", project: turn.project)
             enqueueReply(turn) { [weak self] reply in
                 self?.send(200, Self.turnJSON(reply), on: conn)
             }
             return
         }
-        // /wake — a parked session's Stop hook short-polls this. Answer immediately with
-        // any pending resume instruction (consuming it), else empty; either way (re)register
-        // so the session stays listed as resumable.
-        if req.method == "POST", req.path == "/wake" {
-            let turn = Contract.decodeTurn(req.body)
-            let key = Self.routeKey(pane: turn?.tmux_pane ?? "", session: turn?.session_id ?? "")
-            var p = parked[key] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date())
-            p.label = turn?.spokenLabel ?? p.label
-            p.project = turn?.project ?? p.project
-            p.cwd = turn?.cwd ?? p.cwd
-            p.lastSeen = Date()
-            let pending = p.pending
-            p.pending = nil
-            parked[key] = p
-            pruneParked()
-            notifyParked()
-            send(200, Self.turnJSON(TurnReply(transcript: pending ?? "", park: false)), on: conn)
-            return
-        }
         let (status, json) = handle(req)
         send(status, json, on: conn)
+    }
+
+    // /wake — a parked session's Stop hook short-polls this. Answer immediately with any
+    // pending resume instruction (consuming it), else empty; either way (re)register so the
+    // session stays listed as resumable.
+    private func wakePoll(_ body: Data) -> String {
+        let w = Contract.decodeWake(body)
+        let key = Self.sessionKey(session: w?.session_id ?? "", pane: w?.tmux_pane ?? "")
+        var p = parked[key] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date())
+        p.label = w?.spokenLabel ?? p.label
+        p.project = w?.project ?? p.project
+        p.cwd = w?.cwd ?? p.cwd
+        p.lastSeen = Date()
+        let pending = p.pending
+        p.pending = nil
+        parked[key] = p
+        sessions.wakePoll(id: key, label: w?.label ?? "", project: w?.project ?? "", resumed: pending != nil)
+        pruneParked()
+        notifyParked()
+        return Self.turnJSON(TurnReply(transcript: pending ?? "", park: false))
     }
 
     // MARK: - parked-session control (called from AppController)
@@ -128,6 +139,11 @@ final class ControlServer: @unchecked Sendable {
 
     func parkedList() -> [ParkedInfo] {
         queue.sync { livingParked() }
+    }
+
+    // True if any session besides `id` is alive (any state but stopped) → announce the turn.
+    func othersAlive(except id: String) -> Bool {
+        queue.sync { sessions.othersAlive(except: id) }
     }
 
     private func livingParked() -> [ParkedInfo] {
@@ -162,15 +178,21 @@ final class ControlServer: @unchecked Sendable {
         guard let provider = replyProvider else {
             // No pipeline wired — answer everything empty so hooks don't hang.
             let waiting = replyQueue; replyQueue.removeAll()
-            for (_, respond) in waiting { respond(TurnReply(transcript: "", park: false)) }
+            for (turn, respond) in waiting {
+                let reply = TurnReply(transcript: "", park: false)
+                sessions.finished(id: Self.sessionKey(turn), reply: reply)
+                respond(reply)
+            }
             return
         }
         replyActive = true
         let (turn, respond) = replyQueue.removeFirst()
+        sessions.activate(id: Self.sessionKey(turn))
         onTurn?(turn)
         provider(turn) { [weak self] reply in
             guard let self else { return }
             self.queue.async {
+                self.sessions.finished(id: Self.sessionKey(turn), reply: reply)
                 respond(reply)
                 self.replyActive = false
                 self.pumpReplies()
@@ -210,6 +232,29 @@ final class ControlServer: @unchecked Sendable {
             }
             onReady?(ready)
             return (200, #"{"ok":true}"#)
+        case ("POST", "/wake"):
+            return (200, wakePoll(req.body))
+        case ("POST", "/presence"):
+            // The mod's heartbeat from every Claude Code session (~5 s).
+            guard let p = Contract.decodePresence(req.body), !p.session_id.isEmpty else {
+                return (400, #"{"ok":false,"error":"bad presence payload"}"#)
+            }
+            let project = p.project?.isEmpty == false ? p.project! : ((p.cwd ?? "") as NSString).lastPathComponent
+            sessions.presence(id: p.session_id, label: p.label ?? "", project: project, working: p.state == "working")
+            return (200, "{}")
+        case ("GET", "/sessions"):
+            return (200, sessions.json())
+        case ("POST", "/resume"):
+            // Same as the tray's "Fortsetzen", addressed by session_id. Only a parked session
+            // can be resumed; its next /wake poll (≤3 s) picks the instruction up.
+            guard let id = Contract.decodeResume(req.body)?.id, sessions.isParked(id) else {
+                return (404, #"{"ok":false}"#)
+            }
+            var p = parked[id] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date())
+            p.pending = Self.resumeInstruction
+            p.lastSeen = Date()
+            parked[id] = p
+            return (200, #"{"ok":true}"#)
         default:
             return (404, #"{"ok":false,"error":"not found"}"#)
         }
@@ -228,6 +273,7 @@ enum LiveStatus {
     static func begin(session id: String) { lock.withLock { session = id; phase = "speaking" } }
     static func set(phase p: String) { lock.withLock { phase = p } }
     static func push(_ level: Float) { lock.withLock { levels.removeFirst(); levels.append(max(0, min(1, level))) } }
+    static func currentPhase() -> String { lock.withLock { phase } }
 
     static func json() -> String {
         lock.withLock {
