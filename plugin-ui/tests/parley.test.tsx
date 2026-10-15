@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { bgLabel, details, ease, parseSpeak, ringSvg, timer, todayLine, wave, waveSvg } from '../hooks/register'
+import { bgLabel, ease, facts, parseSpeak, ringSvg, timer, todayParts, wave, waveSvg } from '../hooks/register'
 
 const BAND = {
   plugin: 'parley-ui',
@@ -184,11 +184,12 @@ test('details + today: stats per tile behind a toggle; idle resumes; the app\'s 
   expect(calls.some(c => c.includes('/presence') && c.includes('"contextPercent":60') && c.includes('"costUsd":1.5'))).toBe(true)
 
   const desk = await $.ui.mount({ plugin: 'parley-ui', surface: 'desktop', component: 'Pane', requestId: 'parley', props: {} as never })
-  expect(await desk.find({ type: 'Text', text: /Heute \$12\.80 · 23 Updates · 23 min gesprochen · 5-h-Limit 42 %/ })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: /Heute\s+\$12\.80 Kosten\s+·\s+23 Updates\s+·\s+23 min gesprochen\s+·\s+42 % 5-h-Limit/ })).toBeDefined()
   expect(await desk.find({ type: 'Text', text: /Kontext/ })).toBeUndefined()
   await desk.press({ key: 'info-b' })
   expect(await desk.find({ type: 'Text', text: 'Kontext 62 %' })).toBeDefined()
-  expect(await desk.find({ type: 'Text', text: /Läuft seit 2 h 14 min/ })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: 'Laufzeit 2 h 14 min' })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: '„Tests grün, Sir.“' })).toBeDefined()
   await desk.press({ key: 'resume-b' })
   expect(calls.some(c => c.startsWith('POST /resume') && c.includes('"id":"b"'))).toBe(true)
   await desk.unmount()
@@ -200,12 +201,12 @@ test('details + today: stats per tile behind a toggle; idle resumes; the app\'s 
   expect(prompts.length).toBe(1) // handed out once
 })
 
-test('details and today line read well', async () => {
+test('facts and today parts read well', async () => {
   const s = { id: 'x', label: 'X', project: 'x', state: 'idle', since: 0, until: null, voice: false,
     stats: { startedAt: 0, contextPercent: null, costUsd: null, turns: 2, replies: 1, lastLine: null } } as const
-  expect(details(s, 45 * 60000)).toEqual(['Läuft seit 45 min', '2 Updates · 1 Antworten'])
-  expect(todayLine({ costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: [{ kind: 'seven_day', percentUsed: 18.4, resetsAt: null }] }))
-    .toBe('Heute $0.00 · 0 Updates · 0 min gesprochen · Woche 18 %')
+  expect(facts(s, 45 * 60000)).toEqual([['Laufzeit', '45 min'], ['Updates', '2 · 1 Antw.']])
+  expect(todayParts({ costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: [{ kind: 'seven_day', percentUsed: 18.4, resetsAt: null }] }))
+    .toEqual([['$0.00', 'Kosten'], ['0', 'Updates'], ['0 min', 'gesprochen'], ['18 %', 'Woche']])
 })
 
 test('background: a Stop with running background work reports "background"; a new turn is "working" again', async ($, on) => {
