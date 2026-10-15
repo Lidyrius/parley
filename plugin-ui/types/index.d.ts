@@ -8,8 +8,8 @@ declare module 'claude-code' {
       line: string
       history: Line[]
       tick: number
-      /** Live audio levels 0…1 from the app's GET /status; null → no live data, animate. */
-      levels: number[] | null
+      /** Eased live volume 0…1 from the app's GET /status; null → no live data. */
+      level: number | null
       isHidden: boolean
     }
   }
