@@ -48,6 +48,13 @@ final class TTSPlayer {
 
     func start() throws {
         carry.removeAll(keepingCapacity: true)   // fresh playback; drop any stale odd byte
+        // Output level for GET /status (same dB→0…1 mapping as the mic).
+        engine.mainMixerNode.removeTap(onBus: 0)
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { buf, _ in
+            guard let ch = buf.floatChannelData else { return }
+            let db = Level.dB(Level.rms(Array(UnsafeBufferPointer(start: ch[0], count: Int(buf.frameLength)))))
+            LiveStatus.push((db + 55) / 45)
+        }
         if !engine.isRunning { try engine.start() }
         node.play()
     }
@@ -112,6 +119,7 @@ final class TTSPlayer {
     }
 
     func stop() {
+        engine.mainMixerNode.removeTap(onBus: 0)
         node.stop()
         engine.stop()
         carry.removeAll()

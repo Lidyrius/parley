@@ -68,6 +68,11 @@ public sealed class Server
                 await Respond(ctx, 200, "{\"ok\":true}");
                 return;
             }
+            if (req.HttpMethod == "GET" && path == "/status")
+            {
+                await Respond(ctx, 200, LiveStatus.Json());
+                return;
+            }
 
             string body;
             using (var r = new StreamReader(req.InputStream, Encoding.UTF8))
@@ -178,5 +183,37 @@ public sealed class Server
         ctx.Response.ContentLength64 = bytes.Length;
         await ctx.Response.OutputStream.WriteAsync(bytes);
         ctx.Response.Close();
+    }
+}
+
+// Live turn state for GET /status, 1:1 with macOS: the phase of the turn being voiced and
+// a rolling window of audio levels (TTS out while speaking, mic in while listening), 0…1.
+// Polled ~10×/s by the Claude Code mod to draw a real level meter.
+public static class LiveStatus
+{
+    private static readonly object Gate = new();
+    private static string _phase = "idle", _session = "";
+    private static readonly float[] Levels = new float[32];
+
+    public static void Begin(string session) { lock (Gate) { _session = session; _phase = "speaking"; } }
+    public static void Set(string phase) { lock (Gate) _phase = phase; }
+    public static void Push(float level)
+    {
+        lock (Gate)
+        {
+            Array.Copy(Levels, 1, Levels, 0, Levels.Length - 1);
+            Levels[^1] = Math.Clamp(level, 0f, 1f);
+        }
+    }
+
+    public static string Json()
+    {
+        lock (Gate)
+            return JsonSerializer.Serialize(new
+            {
+                phase = _phase,
+                session = _session,
+                levels = Levels.Select(l => MathF.Round(l, 2)),
+            });
     }
 }

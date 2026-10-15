@@ -89,6 +89,21 @@ final class ServerHandleTests: XCTestCase {
         XCTAssertEqual(body, #"{"ok":true}"#)
     }
 
+    func testStatusReportsPhaseAndLevels() throws {
+        LiveStatus.begin(session: "s1")
+        LiveStatus.set(phase: "listening")
+        LiveStatus.push(0.5)
+        let (status, body) = ControlServer().handle(HTTPRequest(method: "GET", path: "/status", body: Data()))
+        XCTAssertEqual(status, 200)
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(obj["phase"] as? String, "listening")
+        XCTAssertEqual(obj["session"] as? String, "s1")
+        let levels = try XCTUnwrap(obj["levels"] as? [Double])
+        XCTAssertEqual(levels.count, 32)
+        XCTAssertEqual(levels.last, 0.5)
+        LiveStatus.set(phase: "idle")
+    }
+
     func testTurnFiresCallback() {
         let s = ControlServer()
         var spoken: TurnPayload?
