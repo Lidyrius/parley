@@ -215,7 +215,7 @@ final class SessionRegistry {
         }.map { e in
             Row(id: e.id, label: e.label, project: e.project, state: e.state, since: Self.ms(e.since),
                 until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil, voice: e.id == activeId,
-                resumable: Self.resumable(e), tasks: e.tasks, host: e.host,
+                resumable: Self.resumable(e), tasks: e.tasks, host: e.host ?? DesktopSessions.host(for: e.id),
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
         }
@@ -324,5 +324,42 @@ final class SessionRegistry {
         entries[id] = e
         refresh()
         if e.label != before, !e.label.isEmpty { onLabel?(e.label) }
+    }
+}
+
+// The Claude desktop app's own record of its Code sessions, one file per session:
+// Application Support/Claude/claude-code-sessions/<org>/<user>/local_<id>.json holding
+// `cliSessionId` (the id our hooks and the mod know) and `sessionId` (the desktop's local_…).
+// It lets a tile deep-link to any desktop session, whatever mod version that session runs.
+// ponytail: rescans at most every 10 s; a handful of small files.
+enum DesktopSessions {
+    nonisolated(unsafe) private static var cache: (at: Date, map: [String: String]) = (.distantPast, [:])
+
+    static var root: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Claude/claude-code-sessions", isDirectory: true)
+    }
+
+    static func host(for cliId: String) -> String? {
+        if Date().timeIntervalSince(cache.at) > 10 { cache = (Date(), load(root)) }
+        return cache.map[cliId]
+    }
+
+    static func load(_ root: URL) -> [String: String] {
+        struct File: Decodable { let sessionId: String?; let cliSessionId: String? }
+        var map: [String: String] = [:]
+        let fm = FileManager.default
+        for org in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+            for user in (try? fm.contentsOfDirectory(at: org, includingPropertiesForKeys: nil)) ?? [] {
+                for f in (try? fm.contentsOfDirectory(at: user, includingPropertiesForKeys: nil)) ?? []
+                where f.lastPathComponent.hasPrefix("local_") && f.pathExtension == "json" {
+                    guard let data = try? Data(contentsOf: f),
+                          let d = try? JSONDecoder().decode(File.self, from: data),
+                          let cli = d.cliSessionId, let id = d.sessionId, id.hasPrefix("local_") else { continue }
+                    map[cli] = id
+                }
+            }
+        }
+        return map
     }
 }

@@ -277,7 +277,7 @@ public sealed class SessionRegistry
                     voice = e.Id == active,
                     resumable = Resumable(e),
                     tasks = e.Tasks,
-                    host = e.Host,
+                    host = e.Host ?? DesktopSessions.Host(e.Id),
                     stats = new
                     {
                         startedAt = (long?)Ms(e.StartedAt ?? e.FirstSeen),
@@ -376,5 +376,49 @@ public sealed class SessionRegistry
             if (e.Label != before && e.Label.Length > 0) changedLabel = e.Label;
         }
         if (changedLabel is not null) OnLabel?.Invoke(changedLabel);
+    }
+}
+
+// The Claude desktop app's own record of its Code sessions, one file per session:
+// %APPDATA%\Claude\claude-code-sessions\<org>\<user>\local_<id>.json holding `cliSessionId`
+// (the id our hooks and the mod know) and `sessionId` (the desktop's local_…). Lets a tile
+// deep-link to any desktop session, whatever mod version it runs. 1:1 with macOS.
+// ponytail: rescans at most every 10 s; a handful of small files.
+public static class DesktopSessions
+{
+    private static readonly object Gate = new();
+    private static DateTime _at = DateTime.MinValue;
+    private static Dictionary<string, string> _map = new();
+
+    public static string Root => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude-code-sessions");
+
+    public static string? Host(string cliId)
+    {
+        lock (Gate)
+        {
+            if ((DateTime.UtcNow - _at).TotalSeconds > 10) { _map = Load(Root); _at = DateTime.UtcNow; }
+            return _map.TryGetValue(cliId, out var id) ? id : null;
+        }
+    }
+
+    public static Dictionary<string, string> Load(string root)
+    {
+        var map = new Dictionary<string, string>();
+        if (!Directory.Exists(root)) return map;
+        foreach (var file in Directory.EnumerateFiles(root, "local_*.json", SearchOption.AllDirectories))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                var r = doc.RootElement;
+                if (r.TryGetProperty("cliSessionId", out var cli) && cli.ValueKind == JsonValueKind.String
+                    && r.TryGetProperty("sessionId", out var sid) && sid.ValueKind == JsonValueKind.String
+                    && sid.GetString() is { } id && id.StartsWith("local_") && cli.GetString() is { } c)
+                    map[c] = id;
+            }
+            catch (Exception) { /* a half-written or foreign file: skip it */ }
+        }
+        return map;
     }
 }
