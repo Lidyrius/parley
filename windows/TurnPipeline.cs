@@ -28,6 +28,13 @@ public sealed class TurnPipeline
 
     public async Task<(string transcript, bool park, int wait, string resume)> Run(TurnPayload turn)
     {
+        LiveStatus.Begin(turn.SessionId);
+        try { return await RunTurn(turn); }
+        finally { LiveStatus.Set("idle"); }
+    }
+
+    private async Task<(string transcript, bool park, int wait, string resume)> RunTurn(TurnPayload turn)
+    {
         var config = Config.Load();
         SessionTracker.Touch(turn.Project);
         Log.Write($"turn start project={turn.Project} listen={turn.WantsListen}");
@@ -102,13 +109,15 @@ public sealed class TurnPipeline
             await AudioOut.PlayBeep();
             await Task.Delay(100);
 
+            LiveStatus.Set("listening");
             Log.Write("record start");
             ShowPill(true);
-            _mic.OnLevel = level => _pill?.BeginInvoke(() => _pill.Push(level));
+            _mic.OnLevel = level => { LiveStatus.Push(level); _pill?.BeginInvoke(() => _pill.Push(level)); };
             wav = await _mic.Record();
             _mic.OnLevel = null;
             ShowPill(false);
             Log.Write($"record done bytes={wav.Length}");
+            LiveStatus.Set("transcribing");
 
             text = wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
             Log.Write($"transcribe done chars={text.Length}");

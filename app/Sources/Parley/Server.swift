@@ -195,6 +195,8 @@ final class ControlServer: @unchecked Sendable {
         switch (req.method, req.path) {
         case ("GET", "/health"):
             return (200, #"{"ok":true}"#)
+        case ("GET", "/status"):
+            return (200, LiveStatus.json())
         case ("POST", "/turn"):
             // Sync fallback (tests / no live connection): validate + notify only.
             guard let turn = Contract.decodeTurn(req.body) else {
@@ -210,6 +212,29 @@ final class ControlServer: @unchecked Sendable {
             return (200, #"{"ok":true}"#)
         default:
             return (404, #"{"ok":false,"error":"not found"}"#)
+        }
+    }
+}
+
+// Live turn state for GET /status: the phase of the turn being voiced and a rolling window
+// of audio levels (TTS out while speaking, mic in while listening), 0…1. Polled ~10×/s by
+// the Claude Code mod to draw a real level meter. Written from audio threads → locked.
+enum LiveStatus {
+    nonisolated(unsafe) private static var phase = "idle"
+    nonisolated(unsafe) private static var session = ""
+    nonisolated(unsafe) private static var levels = [Float](repeating: 0, count: 32)
+    private static let lock = NSLock()
+
+    static func begin(session id: String) { lock.withLock { session = id; phase = "speaking" } }
+    static func set(phase p: String) { lock.withLock { phase = p } }
+    static func push(_ level: Float) { lock.withLock { levels.removeFirst(); levels.append(max(0, min(1, level))) } }
+
+    static func json() -> String {
+        lock.withLock {
+            struct Wire: Encodable { let phase: String; let session: String; let levels: [Float] }
+            let rounded = levels.map { ($0 * 100).rounded() / 100 }
+            let data = try? JSONEncoder().encode(Wire(phase: phase, session: session, levels: rounded))
+            return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"phase":"idle"}"#
         }
     }
 }

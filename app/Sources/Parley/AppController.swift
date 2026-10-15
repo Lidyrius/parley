@@ -90,6 +90,8 @@ final class AppController: ObservableObject {
     // Claude session. No terminal/tmux coupling.
     private func runTurn(_ turn: TurnPayload) async -> TurnReply {
         let key = routeKey(turn.tmux_pane, turn.session_id)
+        LiveStatus.begin(session: turn.session_id)
+        defer { LiveStatus.set(phase: "idle") }
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
         let config = AppConfig.load()
         resumeGen += 1   // a new turn began → cancel any pending debounced media resume
@@ -496,6 +498,7 @@ final class AppController: ObservableObject {
     private func record() async -> Data {
         hud.show()
         mic.onLevel = { [weak self] level in
+            LiveStatus.push(level)
             Task { @MainActor in self?.hud.push(level) }
         }
         let wav = await withCheckedContinuation { cont in
@@ -559,6 +562,7 @@ final class AppController: ObservableObject {
     }
 
     private func setStatus(_ id: String, _ status: String) {
+        LiveStatus.set(phase: status)
         guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[i].status = status
     }

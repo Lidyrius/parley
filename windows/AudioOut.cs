@@ -68,7 +68,11 @@ public static class AudioOut
         using var output = new NAudio.Wave.WasapiOut(NAudio.CoreAudioApi.AudioClientShareMode.Shared, 100);
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         output.PlaybackStopped += (_, _) => done.TrySetResult();
-        output.Init(provider);
+        // Output level for GET /status (same dB→0…1 mapping as the mic), ~40 updates/s.
+        var meter = new NAudio.Wave.SampleProviders.MeteringSampleProvider(provider.ToSampleProvider(), sampleRate / 40);
+        meter.StreamVolume += (_, e) =>
+            LiveStatus.Push((20f * MathF.Log10(Math.Max(e.MaxSampleValues[0], 1e-6f)) + 55f) / 45f);
+        output.Init(meter);
         using var cancellation = cancellationToken.Register(() =>
         {
             try { output.Stop(); } catch { }
