@@ -58,9 +58,10 @@ test('ease rises fast, falls slowly, and settles', async () => {
   let v = 1
   for (let i = 0; i < 40; i++) v = ease(v, 0)
   expect(v).toBeLessThan(0.05)
-  const svg = waveSvg(0.5, 0, '#D97757', 1234)
+  const svg = waveSvg('speaking', '#D97757')
   expect(svg.match(/<line /g)?.length).toBe(28)
-  expect(svg).toContain('begin="-1.23s"') // wave phase follows the clock across redraws
+  expect(svg).toBe(waveSvg('speaking', '#D97757')) // same source every redraw: the desktop never reloads it
+  expect(svg).not.toBe(waveSvg('listening', '#E5484D'))
 })
 
 test('live /status drives phase; desktop draws the SVG wave, terminal the glyph wave', async ($, on) => {
@@ -81,7 +82,11 @@ test('live /status drives phase; desktop draws the SVG wave, terminal the glyph 
   expect(await term.find({ type: 'Text', text: /● hört zu/ })).toBeDefined()
   expect(await term.find({ type: 'Text', text: /^[▁▂▃▄▅▆▇█]{24}$/ })).toBeDefined()
   expect(await term.find({ type: 'Svg' })).toBeUndefined()
-  expect(await desk.find({ type: 'Svg' })).toBeDefined()
+  const first = (await desk.find({ type: 'Svg' })) as { props: { source: string } } | undefined
+  expect(first).toBeDefined()
+  await clock.advance(500) // more /status polls, new levels
+  const later = (await desk.find({ type: 'Svg' })) as { props: { source: string } } | undefined
+  expect(later?.props.source).toBe(first?.props.source) // no reload → no flicker
 
   release()
   await stop

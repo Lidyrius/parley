@@ -57,27 +57,29 @@ export function wave(p: number, n: number, vol: number): string {
   return s
 }
 
-// Desktop: rounded bars as SVG. The wave runs as SMIL in the surface (smooth at its frame
-// rate, phase kept across redraws by a clock-based negative `begin`); a redraw only eases
-// the height from the last drawn volume to the new one.
+// Desktop: rounded bars as SVG that animates itself (SMIL): the overlay's travelling wave
+// plus a slow breathing of its height. The source depends on the phase alone — the desktop
+// reloads an Svg whenever its source changes, and a reload per level update flickered.
 const PERIOD = 2.4 // s per wave cycle; the overlay's ~1.2 s halved for a calmer inline band
+const BREATH = { speaking: { gains: [0.62, 0.85, 0.7, 0.95, 0.66, 0.8, 0.62], dur: 3.7 },
+                 listening: { gains: [0.22, 0.34, 0.26, 0.4, 0.24, 0.3, 0.22], dur: 2.9 } }
 export const WAVE = { width: 168, height: 28 }
-export function waveSvg(vol: number, from: number, color: string, nowMs: number): string {
-  const n = 28, K = 24, { width: w, height: h } = WAVE
-  const slot = w / n, sw = slot * 0.5, begin = -((nowMs / 1000) % PERIOD)
+export function waveSvg(mode: keyof typeof BREATH, color: string): string {
+  const n = 28, K = 24, { width: w, height: h } = WAVE, { gains, dur } = BREATH[mode]
+  const slot = w / n, sw = slot * 0.5
   let bars = ''
   for (let i = 0; i < n; i++) {
     const ys = Array.from({ length: K + 1 }, (_, k) => ((bar(i, n, (k / K) * 2 * Math.PI) * (h - sw)) / 2).toFixed(1))
     const anim = (attr: string, sign: string) =>
-      `<animate attributeName="${attr}" values="${ys.map(y => sign + y).join(';')}" dur="${PERIOD}s" begin="${begin.toFixed(2)}s" repeatCount="indefinite"/>`
+      `<animate attributeName="${attr}" values="${ys.map(y => sign + y).join(';')}" dur="${PERIOD}s" repeatCount="indefinite"/>`
     const x = (slot * (i + 0.5)).toFixed(1)
     bars += `<line x1="${x}" x2="${x}" y1="-${ys[0]}" y2="${ys[0]}">${anim('y1', '-')}${anim('y2', '')}</line>`
   }
-  const g = gain(vol).toFixed(3)
+  const ease = gains.slice(1).map(() => '0.45 0 0.55 1').join(';')
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
     + `<style>line{vector-effect:non-scaling-stroke}</style>`
-    + `<g transform="translate(0 ${h / 2})"><g transform="scale(1 ${g})">`
-    + `<animateTransform attributeName="transform" type="scale" from="1 ${gain(from).toFixed(3)}" to="1 ${g}" dur="0.2s" fill="freeze"/>`
+    + `<g transform="translate(0 ${h / 2})"><g transform="scale(1 ${gains[0]})">`
+    + `<animateTransform attributeName="transform" type="scale" values="${gains.map(g => `1 ${g}`).join(';')}" dur="${dur}s" calcMode="spline" keySplines="${ease}" repeatCount="indefinite"/>`
     + `<g stroke="${color}" stroke-opacity="0.9" stroke-width="${sw}" stroke-linecap="round">${bars}</g></g></g></svg>`
 }
 
@@ -224,7 +226,6 @@ async function log($: EngineInterface, who: Line["who"], text: string) {
 
 export const register: Register = on => {
   let label = ''
-  let shown = 0 // volume the desktop wave last drew; its next redraw eases from here
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'parley', description: 'Parley: Sessions und Gesprächsverlauf als Pane öffnen' })
@@ -322,7 +323,10 @@ export const register: Register = on => {
 
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
-    const lv = await read($, level)
+    // Only the terminal reads the live level (glyph wave, ●/○): on the desktop that read would
+    // redraw the band ten times a second for nothing.
+    const term = e.surface === 'terminal' || !('Svg' in els) // the terminal hands out Svg as an empty fragment
+    const lv = term ? await read($, level) : null
     const said = await read($, line)
     const last = (await read($, history)).at(-1)
     const width = Math.max(20, e.props.bodyColumns - 2)
@@ -332,10 +336,9 @@ export const register: Register = on => {
     const vol = lv ?? (p === 'speaking' ? 0.5 : 0.2)
     let viz = null
     if (p === 'speaking' || p === 'listening') {
-      if ('Svg' in els && e.surface !== 'terminal') { // the terminal hands out Svg as an empty fragment
+      if (!term && 'Svg' in els) {
         const { Svg } = els
-        const svg = waveSvg(vol, shown, COLOR[p], await $.clock.now())
-        shown = vol
+        const svg = waveSvg(p, COLOR[p])
         viz = <Svg key="wave" source={svg} alt={p === 'speaking' ? 'Parley spricht' : 'Parley hört zu'} width={WAVE.width} height={WAVE.height} isInteractive />
       } else {
         viz = <Text color={p === 'speaking' ? 'claude' : 'error'}>{wave((await read($, tick)) * 0.35, 24, vol)}</Text>
@@ -343,7 +346,7 @@ export const register: Register = on => {
     }
     const chip =
       p === 'speaking' ? <Text color="claude" bold>🔊 spricht</Text>
-      : p === 'listening' ? <Text color="error" bold>{lv !== null && lv > 0.35 ? '●' : '○'} hört zu</Text>
+      : p === 'listening' ? <Text color="error" bold>{term && lv !== null && lv <= 0.35 ? '○' : '●'} hört zu</Text>
       : p === 'transcribing' ? <Text color="warning" bold>✎ transkribiert…</Text>
       : p === 'queued' ? <Text color="warning">⧗ wartet, anderes Projekt spricht</Text>
       : p === 'heard' ? <Text color="success" bold>✓ eingespeist</Text>
