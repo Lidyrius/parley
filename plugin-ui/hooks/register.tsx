@@ -119,7 +119,7 @@ const STATE: Record<SessState, { label: string; tone: string; hex: string; glyph
   background: { label: 'Agent im Hintergrund', tone: 'permission', hex: '#9B87F5', glyph: '◍' },
   waiting: { label: 'pausiert', tone: 'warning', hex: '#D9A43B', glyph: '◔' },
   parked: { label: 'geparkt', tone: 'inactive', hex: '#8B8A85', glyph: '⏸' },
-  idle: { label: 'bereit', tone: 'inactive', hex: '#8B8A85', glyph: '○' },
+  idle: { label: 'bereit', tone: 'success', hex: '#4EBA65', glyph: '○' },
   stopped: { label: 'gestoppt', tone: 'inactive', hex: '#8B8A85', glyph: '■' },
 }
 
@@ -149,27 +149,26 @@ export function ringSvg(s: Sess, from: number, at: number): string {
     : s.state === 'working' ? spin(0.28, 1.6)
     : s.state === 'queued' ? spin(0.12, 4)
     : s.state === 'background'
-      ? `<g><circle cx="20" cy="5" r="3.5" fill="${col}"/><animateTransform attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" dur="2.4s" repeatCount="indefinite"/></g><circle cx="20" cy="20" r="4" fill="${col}" fill-opacity="0.5"/>`
+      ? `${arc(1).replace('stroke-width="3"', 'stroke-width="3" stroke-opacity="0.35"')}<g><circle cx="20" cy="5" r="3.5" fill="${col}"/><animateTransform attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" dur="2.4s" repeatCount="indefinite"/></g><circle cx="20" cy="20" r="4" fill="${col}"/>`
     : s.state === 'waiting' && s.until
       ? arc(from, `<animate attributeName="stroke-dasharray" from="${(c * from).toFixed(2)} ${c}" to="0 ${c}" dur="${Math.max(0.1, (s.until - at) / 1000).toFixed(1)}s" fill="freeze"/>`)
     : s.state === 'parked' ? `<rect x="14" y="13" width="4" height="14" rx="1.5" fill="${col}"/><rect x="22" y="13" width="4" height="14" rx="1.5" fill="${col}"/>`
-    : s.state === 'idle' ? `<circle cx="20" cy="20" r="3.5" fill="${col}"/>`
+    : s.state === 'idle' ? `${arc(1).replace('stroke-width="3"', 'stroke-width="3" stroke-opacity="0.45"')}<circle cx="20" cy="20" r="5" fill="${col}"/>`
     : `<rect x="15" y="15" width="10" height="10" rx="2" fill="${col}"/>`
   return `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">`
     + `<circle cx="20" cy="20" r="${r}" fill="none" stroke="${col}" stroke-opacity="0.18" stroke-width="3"/>${inner}</svg>`
 }
 
-// What a tile's "Details" shows: what you would ask about a session at a glance.
-export function details(s: Sess, at: number): string[] {
+// What a tile's details show: the figures you'd ask about a session at a glance, as
+// label/value pairs for a two-column grid (the last line and background tasks go below).
+export function facts(s: Sess, at: number): [string, string][] {
   const st = s.stats
   if (!st) return []
-  const out: string[] = []
-  if (st.startedAt != null) out.push(`Läuft seit ${span(at - st.startedAt)}`)
-  if (st.contextPercent != null) out.push(`Kontext ${Math.round(st.contextPercent)} %`)
-  if (st.costUsd != null) out.push(`Kosten $${st.costUsd.toFixed(2)}`)
-  out.push(`${st.turns} Updates · ${st.replies} Antworten`)
-  for (const t of s.tasks ?? []) out.push(`◍ ${t.description}`)
-  if (st.lastLine) out.push(`Zuletzt: „${st.lastLine}“`)
+  const out: [string, string][] = []
+  if (st.startedAt != null) out.push(['Laufzeit', span(at - st.startedAt)])
+  if (st.contextPercent != null) out.push(['Kontext', `${Math.round(st.contextPercent)} %`])
+  if (st.costUsd != null) out.push(['Kosten', `$${st.costUsd.toFixed(2)}`])
+  out.push(['Updates', `${st.turns} · ${st.replies} Antw.`])
   return out
 }
 // "Agent im Hintergrund" for subagents/workflows, "Job im Hintergrund" for shells etc.
@@ -185,10 +184,15 @@ const span = (ms: number) => {
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`
 }
 const LIMIT: Record<string, string> = { five_hour: '5-h-Limit', seven_day: 'Woche' }
-export function todayLine(d: Today): string {
-  const parts = [`Heute $${d.costUsd.toFixed(2)}`, `${d.turns} Updates`, `${Math.round(d.spokenSeconds / 60)} min gesprochen`]
-  for (const r of d.rateLimits) if (LIMIT[r.kind]) parts.push(`${LIMIT[r.kind]} ${Math.round(r.percentUsed)} %`)
-  return parts.join(' · ')
+// Today's totals as value/label pairs: values bold, labels dim.
+export function todayParts(d: Today): [string, string][] {
+  const parts: [string, string][] = [[`$${d.costUsd.toFixed(2)}`, 'Kosten'], [`${d.turns}`, 'Updates'],
+    [`${Math.round(d.spokenSeconds / 60)} min`, 'gesprochen']]
+  for (const r of d.rateLimits) {
+    const name = LIMIT[r.kind]
+    if (name) parts.push([`${Math.round(r.percentUsed)} %`, name])
+  }
+  return parts
 }
 
 async function readLabel($: EngineInterface, cwd: string): Promise<string> {
@@ -226,10 +230,12 @@ async function log($: EngineInterface, who: Line["who"], text: string) {
 
 export const register: Register = on => {
   let label = ''
+  let selfId = '' // this session's id: its own tile says "hier" and offers no "Fortsetzen"
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'parley', description: 'Parley: Sessions und Gesprächsverlauf als Pane öffnen' })
     const sid = await $.session.id()
+    selfId = sid
     // Only once this session talks through Parley (phase leaves 'off'): report to the app
     // every 2 s (alive, working, usage figures; the reply may hand back a resume
     // instruction), and fetch every session's state each second for the overview.
@@ -387,37 +393,62 @@ export const register: Register = on => {
     const open = await read($, expanded)
     const hhmm = (at: number) => new Date(at).toTimeString().slice(0, 5)
 
+    const resume = (id: string) => void $.http.fetch(`${APP}/resume`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    }).catch(() => null)
+    const toggle = (id: string) => update($, expanded, ids => (ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]))
+
+    // Design C: ring, name, "state · time" up top; details (two-column figures, last line,
+    // background tasks) behind a chevron; "Fortsetzen" as the tile's one action.
     const tile = (s: Sess) => {
-      const st = STATE[s.state], off = s.state === 'stopped'
+      const st = STATE[s.state], off = s.state === 'stopped', mine = s.id === selfId, isOpen = open.includes(s.id)
       let ring = <Text color={st.tone} bold>{st.glyph}</Text>
       if ('Svg' in els && e.surface !== 'terminal') { // the terminal hands out Svg as an empty fragment
         const { Svg } = els
         const key = `${s.id}:${s.until}`
         if (s.until && !drawnFrom.has(key)) drawnFrom.set(key, Math.max(0, Math.min(1, (s.until - at) / (s.until - s.since || 1))))
-        ring = <Svg key={`ring-${s.id}`} source={ringSvg(s, drawnFrom.get(key) ?? 1, at)} alt={st.label} width={40} height={40} isInteractive />
+        ring = <Svg key={`ring-${s.id}`} source={ringSvg(s, drawnFrom.get(key) ?? 1, at)} alt={st.label} width={32} height={32} isInteractive />
       }
+      const grid = facts(s, at)
+      const pairs: [string, string][][] = []
+      for (let i = 0; i < grid.length; i += 2) pairs.push(grid.slice(i, i + 2))
       return (
-        <Box key={s.id} flexDirection="row" alignItems="center" gap={1} width="50%" flexShrink={1} paddingX={1}
+        <Box key={s.id} flexDirection="column" width="50%" flexShrink={1} minWidth={0} overflow="hidden" paddingX={1}
           borderStyle="round" borderColor={s.voice ? 'claude' : 'subtle'}
           backgroundColor={s.voice && e.surface !== 'terminal' ? 'rgba(217,119,87,0.10)' : undefined}>
-          {ring}
-          <Box flexDirection="column" flexGrow={1}>
-            <Text bold dimColor={off} wrap="truncate-end">{s.label || s.project}</Text>
-            <Text color={off ? undefined : st.tone} dimColor={off}>{bgLabel(s) ?? st.label}</Text>
-            <Text dimColor>{timer(s, at)}</Text>
-            {open.includes(s.id) ? details(s, at).map((d, i) => <Text key={`d${i}`} dimColor wrap="truncate-end">{d}</Text>) : null}
-            <Box flexDirection="row" gap={1}>
-              {s.resumable ?? s.state === 'parked'
-                ? <Button key={`resume-${s.id}`} label="Fortsetzen" onPress={() => void $.http.fetch(`${APP}/resume`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id }),
-                  }).catch(() => null)} />
-                : null}
-              {s.stats
-                ? <Button key={`info-${s.id}`} plain dimColor label={open.includes(s.id) ? 'Weniger' : 'Details'}
-                    onPress={() => update($, expanded, ids => (ids.includes(s.id) ? ids.filter(x => x !== s.id) : [...ids, s.id]))} />
-                : null}
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            {ring}
+            <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+              <Text bold dimColor={off} wrap="truncate-end">
+                {s.label || s.project}{mine ? <Text dimColor> · hier</Text> : null}
+              </Text>
+              <Text wrap="truncate-end">
+                <Text color={off ? undefined : st.tone} dimColor={off}>{bgLabel(s) ?? st.label}</Text>
+                <Text dimColor> · {timer(s, at)}</Text>
+              </Text>
             </Box>
+            {s.stats ? <Button key={`info-${s.id}`} plain dimColor label={isOpen ? '▴' : '▾'} onPress={() => toggle(s.id)} /> : null}
           </Box>
+          {isOpen ? (
+            <Box flexDirection="column" marginTop={1}>
+              {pairs.map((row, r) => (
+                <Box key={`f${r}`} flexDirection="row">
+                  {row.map(([k, v]) => (
+                    <Box key={k} width="50%" minWidth={0}>
+                      <Text wrap="truncate-end"><Text dimColor>{k} </Text>{v}</Text>
+                    </Box>
+                  ))}
+                </Box>
+              ))}
+              {(s.tasks ?? []).map((t, i) => <Text key={`t${i}`} color="permission" wrap="truncate-end">◍ {t.description}</Text>)}
+              {s.stats?.lastLine ? <Text italic dimColor wrap="truncate-end">„{s.stats.lastLine}“</Text> : null}
+            </Box>
+          ) : null}
+          {(s.resumable ?? s.state === 'parked') && !mine ? (
+            <Box flexDirection="row" marginTop={1}>
+              <Button key={`resume-${s.id}`} label="Fortsetzen" onPress={() => resume(s.id)} />
+            </Box>
+          ) : null}
         </Box>
       )
     }
@@ -430,7 +461,14 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" gap={1}>
         <Text bold dimColor>SESSIONS · {alive} aktiv</Text>
-        {day ? <Text dimColor wrap="truncate-end">{todayLine(day)}</Text> : null}
+        {day ? (
+          <Text wrap="truncate-end">
+            <Text dimColor>Heute  </Text>
+            {todayParts(day).map(([v, k], i) => (
+              <Text key={`h${i}`}>{i ? <Text dimColor>  ·  </Text> : null}<Text bold>{v}</Text><Text dimColor> {k}</Text></Text>
+            ))}
+          </Text>
+        ) : null}
         {all === null ? <Text dimColor>Parley-App nicht erreichbar.</Text> : null}
         {rows.map((pair, r) => (
           <Box key={`row${r}`} flexDirection="row" gap={1}>
