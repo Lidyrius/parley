@@ -1,0 +1,103 @@
+import Foundation
+import Testing
+@testable import ParleyMobile
+
+struct FrameTests {
+    /// What the macOS host's GET /sessions encodes (app/Sources/Parley/Sessions.swift), plus `t` and `at`.
+    let full = """
+    {"t":"sessions","at":1760000000000,
+     "sessions":[
+      {"id":"s1","label":"Parley","project":"vloude","state":"waiting","since":1759999950000,"until":1760000252000,
+       "voice":false,"resumable":true,"tasks":[{"type":"subagent","description":"Tests"}],"host":"local_abc",
+       "stats":{"startedAt":1759996400000,"contextPercent":41.6,"costUsd":3.1234,"turns":14,"replies":6,"lastLine":"Fertig."}},
+      {"id":"s2","label":"Shirts","project":"ds-shirts","state":"working","since":1759999866000,"until":null,
+       "voice":true,"resumable":false,"tasks":[],"host":null,
+       "stats":{"startedAt":null,"contextPercent":null,"costUsd":null,"turns":0,"replies":0,"lastLine":null}}
+     ],
+     "today":{"costUsd":13.61,"turns":65,"spokenSeconds":754,
+              "rateLimits":[{"kind":"five_hour","percentUsed":42.4,"resetsAt":"2026-10-16T18:00:00Z"},{"kind":null,"percentUsed":null,"resetsAt":null}]}}
+    """
+
+    @Test func decodesAFullSessionsFrame() throws {
+        guard case .sessions(let snap)? = Frame.decode(full) else { Issue.record("not a sessions frame"); return }
+        #expect(snap.at == 1_760_000_000_000)
+        #expect(snap.sessions.map(\.id) == ["s1", "s2"])
+
+        let s = snap.sessions[0]
+        #expect(s.label == "Parley" && s.project == "vloude")
+        #expect(s.state == .waiting)
+        #expect(s.since == 1_759_999_950_000 && s.until == 1_760_000_252_000)
+        #expect(s.resumable == true && s.voice == false)
+        #expect(s.tasks == [BackgroundTask(type: "subagent", description: "Tests")])
+        #expect(s.host == "local_abc")
+        #expect(s.stats == Stats(startedAt: 1_759_996_400_000, contextPercent: 41.6, costUsd: 3.1234, turns: 14, replies: 6, lastLine: "Fertig."))
+
+        #expect(snap.sessions[1].until == nil)
+        #expect(snap.sessions[1].stats?.startedAt == nil)
+
+        let today = try #require(snap.today)
+        #expect(today.costUsd == 13.61 && today.turns == 65 && today.spokenSeconds == 754)
+        #expect(today.rateLimits.count == 2)
+        #expect(today.rateLimits[0] == RateLimit(kind: "five_hour", percentUsed: 42.4, resetsAt: "2026-10-16T18:00:00Z"))
+    }
+
+    @Test func decodesAMinimalFrame() throws {
+        guard case .sessions(let snap)? = Frame.decode(#"{"t":"sessions","sessions":[{"id":"x"}]}"#) else {
+            Issue.record("not a sessions frame"); return
+        }
+        #expect(snap.at == nil && snap.today == nil)
+        #expect(snap.sessions == [Session(id: "x")])
+        #expect(snap.sessions[0].name == "x")
+        #expect(snap.sessions[0].canResume == false)
+    }
+
+    @Test func emptyFrameStillDecodes() {
+        #expect(Frame.decode(#"{"t":"sessions"}"#) == .sessions(Snapshot()))
+    }
+
+    @Test func toleratesWrongTypesAndUnknownValues() throws {
+        let text = #"""
+        {"t":"sessions","at":"soon","today":{"turns":"many","rateLimits":7},
+         "sessions":[{"id":"a","state":"dancing","since":"x","voice":"yes","tasks":[{"type":1},"junk"],"stats":[]},
+                     {"label":"no id"}, 42, {"id":"b","state":"parked","future":{"x":1}}]}
+        """#
+        guard case .sessions(let snap)? = Frame.decode(text) else { Issue.record("not a sessions frame"); return }
+        #expect(snap.at == nil)
+        #expect(snap.today == Today())
+        #expect(snap.sessions.map(\.id) == ["a", "b"])       // rows without an id are dropped
+        #expect(snap.sessions[0].state == .idle)             // unknown state reads as idle
+        #expect(snap.sessions[0].voice == false)
+        #expect(snap.sessions[0].tasks == [BackgroundTask()]) // a junk element is skipped
+        #expect(snap.sessions[0].stats == nil)
+        #expect(snap.sessions[1].canResume)                  // parked without `resumable`
+    }
+
+    @Test func decodesPeer() {
+        #expect(Frame.decode(#"{"t":"peer","host":true}"#) == .peer(host: true))
+        #expect(Frame.decode(#"{"t":"peer","host":false}"#) == .peer(host: false))
+        #expect(Frame.decode(#"{"t":"peer"}"#) == .peer(host: false))
+    }
+
+    @Test func unknownTypesAreKeptAsOther() {
+        #expect(Frame.decode(#"{"t":"audio-start","codec":"opus"}"#) == .other("audio-start"))
+    }
+
+    @Test(arguments: ["pong", "", "[]", #"{"type":"sessions"}"#, #"{"t":5}"#])
+    func ignoresNonMessages(_ text: String) {
+        #expect(Frame.decode(text) == nil)
+    }
+
+    @Test func encodesOutgoingMessages() {
+        #expect(Outgoing.hello(device: "iPhone") == #"{"device":"iPhone","t":"hello"}"#)
+        #expect(Outgoing.resume(id: "abc/1") == #"{"id":"abc/1","t":"resume"}"#)
+    }
+
+    @Test func demoFrameDecodes() throws {
+        guard case .sessions(let snap)? = Frame.decode(Demo.frame(now: .now)) else { Issue.record("demo frame broken"); return }
+        #expect(snap.sessions.count == 8)
+        #expect(Set(snap.sessions.map(\.state)).count == 8)
+        #expect(snap.sessions.contains { $0.state == .waiting && $0.until != nil })
+        #expect(snap.sessions.contains { $0.state == .background && !$0.tasks.isEmpty })
+        #expect(snap.today?.rateLimits.count == 2)
+    }
+}

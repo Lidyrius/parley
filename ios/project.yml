@@ -1,0 +1,67 @@
+# Generate the Xcode project with `xcodegen generate` (the .xcodeproj is git-ignored).
+name: ParleyMobile
+options:
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: de
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: 384887N3UL
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  ParleyMobile:
+    type: application
+    platform: iOS
+    sources: [ParleyMobile]
+    info:
+      path: ParleyMobile/Info.plist
+      properties:
+        CFBundleDisplayName: Parley
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSCameraUsageDescription: Parley nutzt die Kamera, um den QR-Code zum Verbinden mit deinem Mac zu scannen.
+        CFBundleURLTypes:
+          - CFBundleURLName: de.developaway.parley.mobile
+            CFBundleURLSchemes: [parley]
+        # Debug builds may pair with a relay running under `wrangler dev` on this Mac (ws://localhost).
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.developaway.parley.mobile
+        PRODUCT_NAME: ParleyMobile
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_PREVIEWS: YES
+  ParleyMobileTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [ParleyMobileTests]
+    dependencies:
+      - target: ParleyMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.developaway.parley.mobile.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  ParleyMobile:
+    build:
+      targets:
+        ParleyMobile: all
+        ParleyMobileTests: [test]
+    test:
+      config: Debug
+      targets: [ParleyMobileTests]
+    run:
+      config: Debug
