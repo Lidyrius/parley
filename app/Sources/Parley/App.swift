@@ -30,4 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             OnboardingPresenter.shared.showIfNeeded()   // first-run visual onboarding
         }
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { AppController.shared.stopRelay() }
+    }
 }

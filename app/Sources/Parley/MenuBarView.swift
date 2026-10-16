@@ -58,6 +58,13 @@ struct MenuBarView: View {
                 }
 
                 Divider()
+                Button("iPhone verbinden…") { controller.pairIPhone() }
+                if let up = controller.relayConnected {
+                    Text(up ? "iPhone: verbunden mit Relay" : "iPhone: Relay nicht erreichbar")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+
+                Divider()
                 Menu("Entwickler") {
                     Button("Zurücksetzen (Onboarding testen) — Statistiken bleiben") { DevTools.resetKeepingStats() }
                     Button("Onboarding zeigen") { DevTools.showOnboarding() }

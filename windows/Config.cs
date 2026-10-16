@@ -18,6 +18,9 @@ public sealed class Config
     public bool? ClaudeCodeEnabled { get; init; }
     public bool? CodexEnabled { get; init; }
     public string SourceDir { get; init; } = "";
+    public string RelayUrl { get; init; } = "";      // iPhone relay base URL (docs/IPHONE.md); empty = no iPhone connection
+    public string RelayRoom { get; init; } = "";     // the relay room (16 random bytes, base64url), created on first pairing
+    public string RelaySecret { get; init; } = "";   // the room's secret (32 random bytes, base64url)
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
@@ -63,12 +66,36 @@ public sealed class Config
                 ClaudeCodeEnabled = B("claudeCodeEnabled"),
                 CodexEnabled = B("codexEnabled"),
                 SourceDir = S("sourceDir"),
+                RelayUrl = S("relayUrl"),
+                RelayRoom = S("relayRoom"),
+                RelaySecret = S("relaySecret"),
             };
         }
         catch
         {
             return new Config();
         }
+    }
+
+    // Merge string values into credentials.json (indented, like the settings forms); every other
+    // key survives as it was. False if an existing file can't be read — it stays untouched.
+    public static bool Merge(IReadOnlyDictionary<string, string> values)
+    {
+        Dictionary<string, JsonElement> d = new();
+        try
+        {
+            if (File.Exists(CredentialsPath))
+                d = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(CredentialsPath)) ?? new();
+        }
+        catch (Exception e)
+        {
+            Log.Write($"credentials.json unreadable, left as is: {e.Message}");
+            return false;
+        }
+        foreach (var kv in values) d[kv.Key] = JsonSerializer.SerializeToElement(kv.Value);
+        Directory.CreateDirectory(Dir);
+        File.WriteAllText(CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
+        return true;
     }
 }
 

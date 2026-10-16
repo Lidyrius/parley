@@ -181,13 +181,11 @@ public sealed class Server
             // for that session behind any running turn. Only parked / idle-with-mod sessions.
             if (req.HttpMethod == "POST" && path == "/resume")
             {
-                var id = ResumePayload.Decode(body)?.Id ?? "";
-                if (id.Length == 0 || !Sessions.TryQueueResume(id))   // atomic: a double click gets 404
+                if (!StartResume(ResumePayload.Decode(body)?.Id ?? ""))
                 {
                     await Respond(ctx, 404, "{\"ok\":false}");
                     return;
                 }
-                _ = Task.Run(() => RunResumeDialog(id));
                 await Respond(ctx, 200, "{\"ok\":true}");
                 return;
             }
@@ -220,6 +218,15 @@ public sealed class Server
         }
         else Sessions.SetPending(id, instruction);
         NotifyParked();
+    }
+
+    // POST /resume and the relay's `resume` frame (docs/IPHONE.md): the voice dialog for a
+    // resumable session. False = unknown or not resumable (atomic: a double click gets false).
+    public bool StartResume(string id)
+    {
+        if (id.Length == 0 || !Sessions.TryQueueResume(id)) return false;
+        _ = Task.Run(() => RunResumeDialog(id));
+        return true;
     }
 
     // The POST /resume dialog (pre-recorded line → beep → record → transcribe) waits at the

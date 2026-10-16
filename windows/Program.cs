@@ -21,6 +21,8 @@ internal sealed class TrayApp : ApplicationContext
     private readonly TurnPipeline _pipeline;
     private readonly Server _server;
     private readonly PillOverlay _pill = new();
+    private readonly ToolStripMenuItem _relayStatus = new() { Enabled = false, Visible = false };
+    private RelayClient? _relay;
 
     public TrayApp()
     {
@@ -39,7 +41,7 @@ internal sealed class TrayApp : ApplicationContext
 
         var menu = new ContextMenuStrip();
         // Resumable sessions (parked, or idle with the mod running) are inserted at the top on open.
-        menu.Opening += (_, _) => RefreshParkedMenu(menu);
+        menu.Opening += (_, _) => { RefreshParkedMenu(menu); RefreshRelayStatus(); };
         var mute = new ToolStripMenuItem("Stumm schalten") { CheckOnClick = true };
         mute.CheckedChanged += (_, _) =>
         {
@@ -47,6 +49,11 @@ internal sealed class TrayApp : ApplicationContext
             _tray!.Text = mute.Checked ? "Parley (stumm)" : "Parley";
         };
         menu.Items.Add(mute);
+        // iPhone (docs/IPHONE.md): pairing opens the relay's QR page; the status line is set on open.
+        var pair = new ToolStripMenuItem("iPhone verbinden…");
+        pair.Click += (_, _) => PairIPhone();
+        menu.Items.Add(pair);
+        menu.Items.Add(_relayStatus);
         var stats = new ToolStripMenuItem("Statistiken…");
         stats.Click += (_, _) => new StatsForm().Show();
         menu.Items.Add(stats);
@@ -74,7 +81,7 @@ internal sealed class TrayApp : ApplicationContext
 
         menu.Items.Add(new ToolStripSeparator());
         var quit = new ToolStripMenuItem("Beenden");
-        quit.Click += (_, _) => { _tray!.Visible = false; Application.Exit(); };
+        quit.Click += (_, _) => { _relay?.Stop(); _tray!.Visible = false; Application.Exit(); };
         menu.Items.Add(quit);
 
         _tray = new NotifyIcon
@@ -96,6 +103,45 @@ internal sealed class TrayApp : ApplicationContext
             Log.Write($"server start failed: {e.Message}");
             MessageBox.Show($"Parley konnte Port 8787 nicht öffnen: {e.Message}", "Parley");
         }
+        StartRelay();
+    }
+
+    // "iPhone verbinden…": with a relay configured, make sure room + secret exist, connect, and
+    // open the relay's pairing page (QR code) in the browser; without one, say how to set it.
+    private void PairIPhone()
+    {
+        var config = RelayConfig.Pair();
+        if (config is null) { ShowRelayHint(); return; }
+        StartRelay();
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(RelayLink.PairPage(config)) { UseShellExecute = true }); }
+        catch (Exception e) { Log.Write($"relay: could not open the pairing page: {e.Message}"); }
+    }
+
+    // Connect to the relay when it is configured (launch, pairing); a no-op on unchanged settings.
+    private void StartRelay()
+    {
+        var config = RelayConfig.Load();
+        if (_relay is not null && _relay.Config == config) return;
+        _relay?.Stop();
+        _relay = RelayClient.Create(config, () => _server.Sessions.Json(), id => _server.StartResume(id));
+        _relay?.Start();
+    }
+
+    private void RefreshRelayStatus()
+    {
+        _relayStatus.Visible = _relay is not null;
+        _relayStatus.Text = _relay?.Connected == true ? "iPhone: verbunden mit Relay" : "iPhone: Relay nicht erreichbar";
+    }
+
+    private static void ShowRelayHint()
+    {
+        var answer = MessageBox.Show(
+            "Fürs iPhone braucht Parley die Adresse deines Relays. Trag sie in credentials.json ein, z. B. " +
+            "\"relayUrl\": \"https://parley-relay.<konto>.workers.dev\", und wähle dann erneut „iPhone verbinden…“.\n\n" +
+            Config.CredentialsPath + "\n\nOrdner jetzt öffnen?",
+            "Relay nicht eingerichtet", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+        if (answer != DialogResult.Yes) return;
+        try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{Config.CredentialsPath}\""); } catch { }
     }
 
     // Rebuild the dynamic "▶ <project> fortsetzen" items (mouse fallback for the voice

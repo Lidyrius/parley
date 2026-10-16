@@ -162,6 +162,24 @@ final class ControlServer: @unchecked Sendable {
         pumpReplies()
     }
 
+    // POST /resume and the relay's `resume` frame (docs/IPHONE.md): the voice dialog for a
+    // resumable session. On `queue`; false = unknown or not resumable.
+    private func startResume(_ id: String) -> Bool {
+        guard sessions.canResume(id) else { return false }
+        enqueueResume(id)
+        return true
+    }
+
+    // A phone pressed Fortsetzen (relay `resume` frame) — the POST /resume path.
+    func resumeFromRelay(id: String) {
+        queue.async { _ = self.startResume(id) }
+    }
+
+    // GET /sessions for the relay, read on the server queue.
+    func sessionsJSON() -> String {
+        queue.sync { sessions.json() }
+    }
+
     // Book-keeping once a queue item is answered: a hook turn's reply, or the resume dialog's
     // transcript handed to its session.
     private func complete(_ turn: TurnPayload, _ reply: TurnReply) {
@@ -287,10 +305,9 @@ final class ControlServer: @unchecked Sendable {
         case ("POST", "/resume"):
             // The mod's resume button: answer at once, then run the short voice dialog for
             // that session through the turn queue. Only parked / idle-with-mod sessions.
-            guard let id = Contract.decodeResume(req.body)?.id, sessions.canResume(id) else {
+            guard let id = Contract.decodeResume(req.body)?.id, startResume(id) else {
                 return (404, #"{"ok":false}"#)
             }
-            enqueueResume(id)
             return (200, #"{"ok":true}"#)
         default:
             return (404, #"{"ok":false,"error":"not found"}"#)

@@ -27,9 +27,12 @@ enum Keychain {
         case claudeCodeEnabled
         case codexEnabled
         case sourceDir      // checkout containing the client integration scripts
+        case relayUrl       // iPhone relay base URL (docs/IPHONE.md); empty = no iPhone connection
+        case relayRoom      // the relay room (16 random bytes, base64url), created on first pairing
+        case relaySecret    // the room's secret (32 random bytes, base64url)
     }
 
-    private static var fileURL: URL {
+    static var fileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Parley", isDirectory: true)
         try? FileManager.default.createDirectory(

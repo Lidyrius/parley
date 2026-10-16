@@ -19,6 +19,7 @@ final class AppController: ObservableObject {
     @Published var parked: [ParkedInfo] = []   // resumable sessions: parked (see /wake) or idle
     @Published var lastError: String?
     @Published var muted = false   // manual mute toggle (menu)
+    @Published var relayConnected: Bool?   // iPhone relay: nil = not configured, else reachable
 
     // Muted when the user toggled it OR the Mac is in a Focus / Do-Not-Disturb mode.
     var effectivelyMuted: Bool { muted || FocusStatus.doNotDisturbActive() }
@@ -34,6 +35,8 @@ final class AppController: ObservableObject {
     // ~10s across retries. The player is a local in each playback func, alive for its span.
     private var started = false
     private var onboardingPlayer: TTSPlayer?
+    private var relay: RelayClient?
+    private var relayGen = 0   // drops state reports of a replaced relay client
 
     func start() {
         guard !started else { return }   // idempotent: launch + menu .task may both call
@@ -73,6 +76,7 @@ final class AppController: ObservableObject {
             }
         }
         server.start()
+        startRelay()
     }
 
     // MARK: - /ready greeting
@@ -586,6 +590,64 @@ final class AppController: ObservableObject {
             lastError = "STT: \(error.localizedDescription)"
             Notifier.notify(title: "Parley — Fehler", body: "Groq nicht erreichbar (Netzwerk/VPN?).")
             return ""
+        }
+    }
+
+    // MARK: - iPhone relay (docs/IPHONE.md)
+
+    // "iPhone verbinden…": with a relay configured, make sure room + secret exist, connect, and
+    // open the relay's pairing page (QR code) in the browser; without one, say how to set it.
+    func pairIPhone() {
+        guard let config = RelayConfig.pair(), let page = RelayLink.pairPage(config) else {
+            showRelayHint()
+            return
+        }
+        startRelay()
+        NSWorkspace.shared.open(page)
+    }
+
+    // Connect to the relay when it is configured (launch, pairing); a no-op on unchanged settings.
+    func startRelay() {
+        let config = RelayConfig.load()
+        guard relay?.config != config else { return }
+        stopRelay()
+        let server = self.server
+        guard let client = RelayClient(config: config, sessions: { server.sessionsJSON() },
+                                       resume: { server.resumeFromRelay(id: $0) }) else { return }
+        relayGen += 1
+        let gen = relayGen
+        client.onState = { [weak self] up in
+            Task { @MainActor in
+                guard let self, self.relayGen == gen else { return }
+                self.relayConnected = up
+            }
+        }
+        relay = client
+        relayConnected = false
+        client.start()
+    }
+
+    func stopRelay() {
+        relay?.stop()
+        relay = nil
+        relayConnected = nil
+    }
+
+    private func showRelayHint() {
+        let alert = NSAlert()
+        alert.messageText = "Relay nicht eingerichtet"
+        alert.informativeText = """
+            Fürs iPhone braucht Parley die Adresse deines Relays. Trag sie in credentials.json ein, \
+            z. B. "relayUrl": "https://parley-relay.<konto>.workers.dev", und wähle dann erneut \
+            „iPhone verbinden…“.
+
+            \(Keychain.fileURL.path)
+            """
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Im Finder zeigen")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([Keychain.fileURL])
         }
     }
 
