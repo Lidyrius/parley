@@ -351,6 +351,6 @@ public sealed class Delivery
         // The Zentrale is Parley itself — it takes the job on, it doesn't pass it on.
         return result == DispatchResult.Failed
             ? "Das konnte ich leider nicht anstoßen, Sir."
-            : TakeOver[Random.Shared.Next(TakeOver.Length)];
+            : Zentrale.TakeOver[Random.Shared.Next(Zentrale.TakeOver.Length)];
     }
 }
