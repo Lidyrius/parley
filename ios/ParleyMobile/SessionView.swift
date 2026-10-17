@@ -472,7 +472,7 @@ struct SessionView: View {
                 } label: {
                     Image(systemName: "arrow.up")
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.onAccent)
                         .frame(width: 38, height: 38)
                         .background(Circle().fill(Theme.claude.opacity(canSend ? 1 : 0.45)))
                 }

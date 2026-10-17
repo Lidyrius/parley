@@ -29,6 +29,31 @@ enum OrbStyle: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// The orb's knobs (Einstellungen → Entwickler → JARVIS-Regler). The defaults are the shipped
+/// look; size, voice gain and glow apply to every style, the rest shapes JARVIS.
+struct OrbTuning: Codable, Equatable, Sendable {
+    var shells = 3            // nested shells, 1…5
+    var shellGap = 0.24       // each shell this much smaller (of the outer radius)
+    var particles = 560       // points on the outer shell; inner ones scale with their size
+    var innerFade = 0.85      // brightness kept per shell inward
+    var twist = 0.9           // each shell's lattice turned this much (radians) against the last
+    var size = 0.40           // radius / view size
+    var dotSize = 1.3
+    var rim = 1.1             // how much a shell's outline outshines its face
+    var spin = 0.32           // turn speed (radians a second)
+    var tilt = 0.38           // tilt towards you (radians)
+    var reactivity = 1.6      // voice gain
+    var quiver = 0.12         // how deep the voice ripples the shells
+    var waves = 3.0           // ripple lobes around the globe
+    var waveSpeed = 5.0
+    var breathe = 0.02        // the idle wobble of each point
+    var sparks = 0.12         // how far a lifted point drifts
+    var sparkEvery = 23       // every n-th point can lift off
+    var glow = 1.0            // the soft light behind
+
+    static let shipped = OrbTuning()
+}
+
 /// The orb. `energy` is the voice level, 0…1 (eased per display frame here).
 struct ParticleOrb: View {
     let style: OrbStyle
@@ -42,10 +67,11 @@ struct ParticleOrb: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60, paused: paused)) { context in
             let t = paused ? 12.0 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 10_000)
-            let e = smoother.next(min(1, energy(context.date) * 1.6), at: context.date.timeIntervalSinceReferenceDate)
+            let tuning = Appearance.shared.orbTuning
+            let e = smoother.next(min(1, energy(context.date) * tuning.reactivity), at: context.date.timeIntervalSinceReferenceDate)
             Canvas { ctx, canvas in
                 // On dark, overlapping particles add up to light — the hologram's glow.
-                Self.draw(style, in: &ctx, size: canvas, orb: size, t: t, energy: e, color: color,
+                Self.draw(style, in: &ctx, size: canvas, orb: size, t: t, energy: e, color: color, tuning: tuning,
                           dense: size >= 100, glows: scheme == .dark)
             }
             .frame(width: size * 1.7, height: size * 1.7)   // the glow and the sparks reach past the orb
@@ -76,15 +102,15 @@ struct ParticleOrb: View {
     }
 
     nonisolated static func draw(_ style: OrbStyle, in ctx: inout GraphicsContext, size: CGSize, orb: CGFloat, t: Double,
-                                 energy e: Double, color: Color, dense: Bool, glows: Bool) {
+                                 energy e: Double, color: Color, tuning k: OrbTuning, dense: Bool, glows: Bool) {
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        let R = orb * 0.4 * (1 + 0.06 * e)
+        let R = orb * k.size * (1 + 0.06 * e)
         let unit = orb / 168
 
         // The glow behind: brighter while speaking.
         let glow = R * (1.25 + 0.35 * e)
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - glow, y: c.y - glow, width: 2 * glow, height: 2 * glow)),
-                 with: .radialGradient(Gradient(colors: [color.opacity(0.22 + 0.25 * e), color.opacity(0)]),
+                 with: .radialGradient(Gradient(colors: [color.opacity((0.22 + 0.25 * e) * k.glow), color.opacity(0)]),
                                        center: c, startRadius: 0, endRadius: glow))
 
         if glows { ctx.blendMode = .plusLighter }
@@ -103,25 +129,26 @@ struct ParticleOrb: View {
         case .jarvis:
             // Nested shells of light points turning as one, like JARVIS's globe: each inner shell a
             // little smaller and dimmer, its lattice turned a little against the others. The voice
-            // makes every shell quiver the same way; a few points lift off, but stay close.
-            let shells: [(radius: Double, count: Int, alpha: Double, twist: Double)] = dense
-                ? [(1.0, 560, 1.0, 0), (0.76, 360, 0.85, 0.9), (0.52, 220, 0.75, 1.7)]
-                : [(1.0, 200, 1.0, 0), (0.7, 100, 0.8, 0.9)]
-            let yaw = t * 0.32, tilt = 0.38
-            for shell in shells {
-                for i in 0..<shell.count {
-                    let p = rotate(sphere(i, of: shell.count), yaw: shell.twist, tilt: shell.twist * 0.5)
+            // makes every shell quiver the same way; a few points lift off, but stay close. Points
+            // near a shell's outline glow most (rim-lit, like a hologram), so each shell reads as
+            // its own ring of light.
+            let yaw = t * k.spin, tilt = k.tilt
+            for s in 0..<max(1, k.shells) {
+                let radius = max(0.05, 1 - Double(s) * k.shellGap)
+                let count = max(12, Int(Double(k.particles) * pow(radius, 1.6) * (dense ? 1 : 0.36)))
+                let alpha = pow(k.innerFade, Double(s))
+                let twist = Double(s) * k.twist
+                for i in 0..<count {
+                    let p = rotate(sphere(i, of: count), yaw: twist, tilt: twist * 0.5)
                     let lat = asin(p.y), lon = atan2(p.z, p.x)
-                    var r = 1 + 0.02 * sin(t * 1.3 + Double(i)) + e * 0.12 * sin(3 * lat + 2 * lon + t * 5)
-                    if i % 23 == 0 {
-                        r += e * 0.12 * (t * 0.6 + rand(i, 1)).truncatingRemainder(dividingBy: 1)
+                    var r = 1 + k.breathe * sin(t * 1.3 + Double(i)) + e * k.quiver * sin(k.waves * lat + 2 * lon + t * k.waveSpeed)
+                    if k.sparkEvery > 0, i % k.sparkEvery == 0 {
+                        r += e * k.sparks * (t * 0.6 + rand(i, 1)).truncatingRemainder(dividingBy: 1)
                     }
-                    // Rim-lit like a hologram: points near a shell's outline glow most, so each
-                    // shell reads as its own ring of light.
                     let q = rotate(p, yaw: yaw, tilt: tilt)
                     let rim = 1 - abs(q.z)
-                    dot(q * (r * shell.radius), size: 1.3 + rand(i, 2) * 0.6,
-                        alpha: shell.alpha * (0.2 + 1.1 * rim * rim) * (0.85 + 0.35 * e))
+                    dot(q * (r * radius), size: k.dotSize + rand(i, 2) * 0.6,
+                        alpha: alpha * (0.2 + k.rim * rim * rim) * (0.85 + 0.35 * e))
                 }
             }
         case .nebula:

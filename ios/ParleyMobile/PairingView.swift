@@ -104,7 +104,7 @@ private struct Step: View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text("\(n)")
                 .font(.subheadline.bold())
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.onAccent)
                 .frame(width: 26, height: 26)
                 .background(Circle().fill(Theme.claude))
                 .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
@@ -118,7 +118,7 @@ struct AppMark: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
             .fill(LinearGradient(colors: [Theme.claudeLight, Theme.claude], startPoint: .top, endPoint: .bottom))
-            .overlay(Image(systemName: "waveform").font(.system(size: 40, weight: .semibold)).foregroundStyle(.white))
+            .overlay(Image(systemName: "waveform").font(.system(size: 40, weight: .semibold)).foregroundStyle(Theme.onAccent))
             .shadow(color: Theme.claude.opacity(0.35), radius: 14, y: 6)
             .accessibilityHidden(true)
     }

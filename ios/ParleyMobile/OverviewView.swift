@@ -272,7 +272,7 @@ private struct CallParleyButton: View {
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(canCall ? Theme.claude : .secondary)
                         .frame(width: iconSize, height: iconSize)
-                        .background(Circle().fill(canCall ? AnyShapeStyle(.white) : AnyShapeStyle(Theme.background)))
+                        .background(Circle().fill(canCall ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(Theme.background)))
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Parley anrufen").font(.title3.bold())
                         Text(canCall ? "oder „Hey Siri, Parley anrufen“" : "Geht, sobald der Mac verbunden ist")
@@ -281,7 +281,7 @@ private struct CallParleyButton: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .foregroundStyle(canCall ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                .foregroundStyle(canCall ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.secondary))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)

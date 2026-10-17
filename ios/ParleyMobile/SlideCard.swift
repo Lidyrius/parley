@@ -49,7 +49,7 @@ struct SlideCard: View {
         HStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.footnote.weight(.bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.onAccent)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(Theme.claude.gradient))
             Text(slide.title ?? kindName).font(.headline).lineLimit(2)

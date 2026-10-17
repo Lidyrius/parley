@@ -120,6 +120,7 @@ struct SessionCard: View {
         } label: {
             Label("Fortsetzen", systemImage: "play.fill")
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.onAccent)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)

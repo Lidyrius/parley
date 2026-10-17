@@ -13,6 +13,11 @@ enum Theme {
     static let stroke = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(white: 1, alpha: 0.08) : UIColor(white: 0, alpha: 0.07) })
     static var danger: Color { palette.red.color }
+    /// Text and symbols on an accent fill: black on a light accent (Schwarzweiß dark), else white.
+    static var onAccent: Color { palette.accent.onColor }
+    /// Switches and other controls drawn in the accent: a near-white accent turns grey, so the
+    /// white knob still shows.
+    static var control: Color { palette.accent.controlColor }
     /// The accent a touch lighter: the top of the accent's gradients.
     static var claudeLight: Color { palette.accent.mixed(with: Shade(0xFFFFFF), 0.15).color }
 
@@ -58,6 +63,12 @@ final class Appearance {
                 window.overrideUserInterfaceStyle = palette.alwaysDark ? .dark : scheme.style
             }
         }
+    }
+
+    /// The orb's knobs (developer mode), remembered.
+    var orbTuning = (try? JSONDecoder().decode(OrbTuning.self, from: UserDefaults.standard.data(forKey: "orbTuning") ?? Data()))
+        ?? .shipped {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(orbTuning), forKey: "orbTuning") }
     }
 
     /// What Parley looks like in a call.
@@ -109,6 +120,22 @@ struct Shade: Equatable, Sendable {
     var color: Color { Color(light: light, dark: dark) }
     /// As text: a darker shade in light mode, so it stays readable on white.
     var ink: Color { Color(light: Self.mix(light, 0x000000, 0.22), dark: dark) }
+
+    /// Black or white, whichever reads on this colour in each mode.
+    var onColor: Color { Color(light: Self.luminance(light) > 0.5 ? 0x000000 : 0xFFFFFF,
+                               dark: Self.luminance(dark) > 0.5 ? 0x000000 : 0xFFFFFF) }
+
+    var controlColor: Color { Color(light: Self.luminance(light) > 0.8 ? 0x8E8E93 : light,
+                                    dark: Self.luminance(dark) > 0.8 ? 0x8E8E93 : dark) }
+
+    /// Relative luminance (WCAG), 0 black … 1 white.
+    static func luminance(_ c: UInt32) -> Double {
+        func lin(_ v: UInt32) -> Double {
+            let x = Double(v & 0xFF) / 255
+            return x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * lin(c >> 16) + 0.7152 * lin(c >> 8) + 0.0722 * lin(c)
+    }
 
     func mixed(with other: Shade, _ f: Double = 0.5) -> Shade {
         Shade(Self.mix(light, other.light, f), Self.mix(dark, other.dark, f))

@@ -6,6 +6,9 @@ struct SettingsView: View {
     @State private var confirmsUnpair = false
     @AppStorage(CallController.speakerKey) private var speakerByDefault = true
     @AppStorage(CallController.autoHangUpKey) private var autoHangUp = false
+    /// Unlocked by tapping "Version" five times.
+    @AppStorage("developer") private var developer = false
+    @State private var versionTaps = 0
 
     var body: some View {
         @Bindable var model = model
@@ -94,8 +97,27 @@ struct SettingsView: View {
                         Text("Entfernt den Schlüssel von diesem iPhone. Zum erneuten Koppeln den QR-Code in Parley auf dem Mac scannen.")
                     }
                 }
+                if developer {
+                    Section {
+                        NavigationLink {
+                            OrbTuner()
+                        } label: {
+                            Label("JARVIS-Regler", systemImage: "slider.horizontal.3")
+                        }
+                        Toggle(isOn: $developer) {
+                            Label("Entwicklermodus", systemImage: "hammer.fill")
+                        }
+                    } header: {
+                        Text("Entwickler")
+                    }
+                }
                 Section {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            versionTaps += 1
+                            if versionTaps >= 5 { withAnimation { developer = true }; versionTaps = 0 }
+                        }
                 }
             }
             .navigationTitle("Einstellungen")
@@ -112,6 +134,7 @@ struct SettingsView: View {
                 Text("Das iPhone sieht deine Sessions erst wieder, wenn du es neu koppelst.")
             }
         }
+        .tint(Theme.control)   // switches on every settings page: a near-white accent turns grey
     }
 }
 
@@ -395,5 +418,84 @@ private struct TestCall: ViewModifier {
             .onChange(of: model.call.phase) { _, phase in
                 if phase == .none { showing = false }
             }
+    }
+}
+
+/// Einstellungen → Entwickler → JARVIS-Regler: every knob of the orb, with a live preview.
+struct OrbTuner: View {
+    private let appearance = Appearance.shared
+    @State private var talking = true
+    @State private var voice = 0.5
+
+    var body: some View {
+        @Bindable var a = appearance
+        Form {
+            Section {
+                ParticleOrb(style: .jarvis, color: Theme.claude, size: 220) { date in
+                    guard talking else { return voice }
+                    let t = date.timeIntervalSinceReferenceDate
+                    return t.truncatingRemainder(dividingBy: 6) < 4 ? 0.3 + 0.35 * abs(sin(t * 7.3)) * abs(cos(t * 3.1)) : 0
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 250)
+                Toggle("Sprechen simulieren", isOn: $talking)
+                if !talking { slider("Stimme", $voice, 0...1) }
+            }
+            Section("Schalen") {
+                slider("Anzahl", int($a.orbTuning.shells), 1...5, step: 1, format: "%.0f")
+                slider("Abstand", $a.orbTuning.shellGap, 0.04...0.45)
+                slider("Verdrehung", $a.orbTuning.twist, 0...2)
+                slider("Helligkeit innen", $a.orbTuning.innerFade, 0.1...1)
+            }
+            Section("Teilchen") {
+                slider("Anzahl außen", int($a.orbTuning.particles), 80...1500, step: 20, format: "%.0f")
+                slider("Punktgröße", $a.orbTuning.dotSize, 0.3...3)
+                slider("Randleuchten", $a.orbTuning.rim, 0...2.5)
+                slider("Schein", $a.orbTuning.glow, 0...2.5)
+                slider("Größe", $a.orbTuning.size, 0.2...0.5)
+            }
+            Section("Bewegung") {
+                slider("Drehtempo", $a.orbTuning.spin, 0...1.5)
+                slider("Neigung", $a.orbTuning.tilt, -1...1.5)
+                slider("Atmen in Ruhe", $a.orbTuning.breathe, 0...0.1, format: "%.3f")
+            }
+            Section("Stimme") {
+                slider("Empfindlichkeit", $a.orbTuning.reactivity, 0...4)
+                slider("Beben", $a.orbTuning.quiver, 0...0.45)
+                slider("Wellen", $a.orbTuning.waves, 0...8, format: "%.1f")
+                slider("Wellentempo", $a.orbTuning.waveSpeed, 0...14, format: "%.1f")
+                slider("Funken: Weite", $a.orbTuning.sparks, 0...0.6)
+                slider("Funken: jeder n-te Punkt", int($a.orbTuning.sparkEvery), 0...80, step: 1, format: "%.0f")
+            }
+            Section {
+                Button("Standardwerte") { withAnimation { a.orbTuning = .shipped } }
+                    .disabled(a.orbTuning == .shipped)
+            } footer: {
+                Text("Wirkt sofort auf Parley im Anruf; Größe, Empfindlichkeit und Schein auch auf die anderen Kugeln. Mit „Probeanruf“ oben rechts siehst du es im Anruf-Bildschirm.")
+            }
+        }
+        .navigationTitle("JARVIS-Regler")
+        .navigationBarTitleDisplayMode(.inline)
+        .testCall()
+    }
+
+    private func slider(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>,
+                        step: Double? = nil, format: String = "%.2f") -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(String(format: format, value.wrappedValue)).monospacedDigit().foregroundStyle(.secondary)
+            }
+            if let step {
+                Slider(value: value, in: range, step: step)
+            } else {
+                Slider(value: value, in: range)
+            }
+        }
+    }
+
+    private func int(_ b: Binding<Int>) -> Binding<Double> {
+        Binding(get: { Double(b.wrappedValue) }, set: { b.wrappedValue = Int($0.rounded()) })
     }
 }

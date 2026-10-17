@@ -220,6 +220,17 @@ struct FrameTests {
         #expect(SlideCard.format(24) == "24")
     }
 
+    @Test func textOnAccentReadsAndTuningKeeps() throws {
+        #expect(Shade.luminance(0xFFFFFF) > 0.99 && Shade.luminance(0x000000) < 0.01)
+        #expect(Shade.luminance(0xD97757) < 0.5)            // Claude: white text on terracotta
+        #expect(Shade.luminance(0xFFFFFF) > 0.5)            // Schwarzweiß dark: black text on white
+        var t = OrbTuning.shipped
+        t.shells = 2
+        t.shellGap = 0.3
+        let back = try JSONDecoder().decode(OrbTuning.self, from: JSONEncoder().encode(t))
+        #expect(back == t && back != .shipped)
+    }
+
     @Test func orbParticlesSitOnTheSphere() {
         for i in [0, 1, 400, 819] {
             let p = ParticleOrb.sphere(i, of: 820)

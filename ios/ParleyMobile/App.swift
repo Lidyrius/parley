@@ -11,7 +11,7 @@ struct ParleyMobileApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
-                .tint(Theme.claude)
+                .tint(Theme.control)   // the accent; a near-white one (Schwarzweiß dark) greys so switches show
         }
     }
 }
