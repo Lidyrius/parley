@@ -26,6 +26,8 @@ public sealed class TurnPayload
     [JsonPropertyName("listen")] public bool? Listen { get; set; }
     // Predicted answers (<reply on="…">), each with its spoken reaction.
     [JsonPropertyName("replies")] public List<Reply>? Replies { get; set; }
+    // <slide …/> markers for a phone call (docs/CALL-SLIDES.md).
+    [JsonPropertyName("slides")] public List<SlideSpec>? Slides { get; set; }
 
     [JsonIgnore] public bool WantsListen => Listen ?? true;
     [JsonIgnore] public string SpokenLabel => string.IsNullOrEmpty(Label) ? Project : Label!;

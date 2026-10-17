@@ -263,6 +263,7 @@ enum Transcript {
     /// `<speak>` / `<speak-end>` line returned on its own.
     static func split(_ text: String) -> (body: String, spoken: String?) {
         var body = text.replacingOccurrences(of: #"(?m)^\s*<reply\b[^>]*>.*?</reply>\s*$\n?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"<slide\b[^>]*>\s?"#, with: "", options: .regularExpression)
         var spoken: String?
         // The LAST tag, closed at the very end (or never): earlier mentions are prose.
         if let last = body.range(of: "<speak", options: .backwards),

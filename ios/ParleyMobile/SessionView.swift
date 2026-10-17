@@ -507,13 +507,13 @@ private struct DiffBadge: View {
     }
 }
 
-private struct ZoomedImage: Identifiable {
+struct ZoomedImage: Identifiable {
     let id: String
     let image: UIImage
 }
 
 /// Full screen, pinch to zoom, double-tap, ✕ to close.
-private struct ImageViewer: View {
+struct ImageViewer: View {
     let image: UIImage
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1

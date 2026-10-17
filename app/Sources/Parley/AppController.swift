@@ -246,7 +246,8 @@ final class AppController: ObservableObject {
 
         Log.write("speak start (listen=\(turn.wantsListen))")
         let prefetchedPCM: Data? = prefetch == nil ? nil : await prefetch!.value
-        await speakAndBeep(turn.speak, config: config, prefetched: prefetchedPCM, beep: turn.wantsListen)
+        await speakAndBeep(turn.speak, config: config, prefetched: prefetchedPCM, beep: turn.wantsListen,
+                           slides: turn.slides ?? [], session: ControlServer.sessionKey(turn))
         Log.write("speak done")
 
         // speak-only turn (<speak-end>): no mic, no pill. Resume media (queue permitting),
@@ -651,15 +652,19 @@ final class AppController: ObservableObject {
     // turn + explicit release + a short settle avoids that device contention.
     // During a call the line goes to the phone; if the call ends first, the part not yet heard
     // (and the beep) plays on the Mac.
-    private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil, beep: Bool = true) async {
+    private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil, beep: Bool = true,
+                              slides: [SlideSpec] = [], session: String = "") async {
         if phone.callActive {
             let voice = PhoneVoice(link: phone, rate: config.speakingRate)
             var captioned = false
             await synthesize(text, config: config, prefetched: prefetched) { pcm in
-                // Live captions: word times from the (whole, Google) line, just before its first frame.
-                if !captioned, config.useGoogle,
-                   let t = Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate) {
-                    phone.reply(Captions.frame(t))
+                // Live captions: word times from the (whole, Google) line, just before its first
+                // frame — and the line's slides at the times of their words, images after.
+                if !captioned {
+                    let t = config.useGoogle
+                        ? Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate) : nil
+                    if let t { phone.reply(Captions.frame(t)) }
+                    if !slides.isEmpty { sendSlides(slides, timed: t, session: session) }
                 }
                 captioned = true
                 voice.enqueue(pcm)
@@ -792,6 +797,21 @@ final class AppController: ObservableObject {
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return 0 }
             return Classifier.parseWait(data)
         } catch { return 0 }
+    }
+
+    // A line's slides to the phone: the timed list now, each image as it is ready.
+    private func sendSlides(_ specs: [SlideSpec], timed: Captions.Timed?, session: String) {
+        let items = Slides.items(specs, timed: timed, prefix: "slide-\(UUID().uuidString.prefix(8))")
+        phone.reply(Slides.frame(items))
+        Log.write("phone: \(items.count) slide(s) for this line")
+        let phone = self.phone
+        let images = zip(specs, items).compactMap { s, o in s.image.map { (o.id, $0) } }
+        guard !images.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            for (id, source) in images {
+                phone.reply(Transcript.imageFrame(key: id, jpeg: Slides.image(source, session: session)))
+            }
+        }
     }
 
     // Speak a one-off line (no beep, no listen) — used for the wait confirmation. Settles

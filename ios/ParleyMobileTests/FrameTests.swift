@@ -209,5 +209,15 @@ struct FrameTests {
         #expect(long.chunks == [0..<12, 12..<15])
         #expect(Demo.caption.words.count == Demo.caption.starts.count)
     }
+
+    @Test func slidesFrameAndTiming() {
+        let f = Frame.decode(#"{"t":"slides","items":[{"id":"a","at":0.4,"kind":"chart","chart":"bar","labels":["Mo"],"values":[3]},{"id":"b","at":2.0,"kind":"image","title":"Export"},{"kind":"text"}]}"#)
+        guard case .slides(let s) = f else { Issue.record("no slides"); return }
+        #expect(s.map(\.id) == ["a", "b"])                   // the one without id/at is dropped
+        #expect(Slide.current(s, at: 0.1) == nil)
+        #expect(Slide.current(s, at: 1)?.id == "a")
+        #expect(Slide.current(s, at: 5)?.id == "b")
+        #expect(SlideCard.format(24) == "24")
+    }
 }
 

@@ -144,4 +144,14 @@ wait "$srv" 2>/dev/null || true
 [ "$(jq -r 'has("replies")' < "$bodyfile")" = "false" ] || fail "unexpected replies key"
 echo "PASS: no replies -> no key"
 
+# --- Test 8: <slide/> markers leave the spoken text and keep their word index ---
+start_listener
+in8='{"last_assistant_message":"<speak>Der Export ist drin, Sir. <slide image=\"last\" title=\"Export\"/> So sieht er aus. <slide chart=\"bar\" labels=\"Grün,Rot\" values=\"24,2\" title=\"Tests\"/>Fast alles grün.</speak>","cwd":"/tmp/p","session_id":"s8"}'
+printf '%s' "$in8" | PARLEY_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+[ "$(jq -r '.speak' < "$bodyfile")" = "Der Export ist drin, Sir. So sieht er aus. Fast alles grün." ] || fail "slides speak: $(jq -r '.speak' < "$bodyfile")"
+[ "$(jq -c '.slides' < "$bodyfile")" = '[{"word":5,"image":"last","title":"Export"},{"word":9,"chart":"bar","labels":"Grün,Rot","values":"24,2","title":"Tests"}]' ] \
+  || fail "slides: $(jq -c '.slides' < "$bodyfile")"
+echo "PASS: slide markers"
+
 echo "ALL HOOK TESTS PASSED"

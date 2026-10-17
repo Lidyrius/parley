@@ -32,6 +32,8 @@ final class CallController {
     private(set) var speaker = false
     /// Live captions of the line being spoken (v3), timed against the frames actually played.
     private(set) var caption: Caption?
+    /// The line's slides (docs/CALL-SLIDES.md), on the captions' clock.
+    private(set) var slides: [Slide] = []
     @ObservationIgnored private var captionBase = 0
     @ObservationIgnored private var captionAt = Date.now
     /// "Hey Parley" was heard and sent; cleared when the host leaves idle.
@@ -215,9 +217,15 @@ final class CallController {
     /// A `caption` frame: it arrives just before its line's first audio frame.
     func captionReceived(_ c: Caption) {
         caption = c
+        slides = []   // a new line: its slides (if any) come right after
         captionBase = audio.received
         captionAt = .now
     }
+
+    func slidesReceived(_ s: [Slide]) { slides = s }
+
+    /// The slide to show now, if the line has one due.
+    func slide(at date: Date) -> Slide? { slides.isEmpty ? nil : Slide.current(slides, at: captionTime(at: date)) }
 
     /// Seconds of the caption's line played so far (demo: wall clock).
     func captionTime(at date: Date) -> Double {
@@ -416,7 +424,10 @@ final class CallController {
             phase = .active(since: .now.addingTimeInterval(-167))
             hostAudio = HostAudio(rawValue: state.rawValue) ?? .idle
             wakeSent = state == .listening
-            if state == .speaking { captionReceived(Demo.caption) }
+            if state == .speaking {
+                captionReceived(Demo.caption)
+                slidesReceived(Demo.slides)
+            }
         }
         showsScreen = true
     }

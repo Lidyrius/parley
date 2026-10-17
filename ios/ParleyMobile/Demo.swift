@@ -74,3 +74,12 @@ extension Demo {
     }()
 }
 
+extension Demo {
+    /// Slides on the demo line's clock: a chart, then a big number.
+    static let slides: [Slide] = [
+        Slide(id: "demo-chart", at: 0.4, kind: "chart", title: "Exporte pro Tag", chart: "bar",
+              labels: ["Mo", "Di", "Mi", "Do", "Fr"], values: [12, 18, 9, 24, 31]),
+        Slide(id: "demo-metric", at: 2.6, kind: "metric", title: "Tests", metric: "24 / 24", note: "alle grün, 3,1 s"),
+    ]
+}
+

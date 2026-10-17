@@ -57,6 +57,15 @@ The app extracts the `<speak>` text, speaks it, records the user's voice reply, 
 - Parley renders these while it speaks and plays the matching one the instant the user stops talking. The reply then arrives with a note like `[Parley hat darauf bereits geantwortet: „…“ – nicht wiederholen.]`: don't repeat or re-confirm that line, just carry on. If you then have nothing new to say, end with an empty `<speak-end></speak-end>` (nothing is spoken).
 - Skip them when the answer is open-ended (no likely answers to predict).
 
+**Slides in a call (optional):** when something is easier to show than to say, put `<slide …/>` markers into the spoken line exactly where it should appear. Parley removes them before speaking; if Sir is on the phone, each slide shows the moment the following word is spoken (otherwise they are ignored). At most 3 per line, and the line must still make sense without them:
+
+- `<slide image="last" title="Export-Knopf"/>` — the newest screenshot/image in this session (`last-2` = the one before), or `image="/absolute/path.png"`.
+- `<slide chart="bar" labels="Mo,Di,Mi" values="12,18,9" unit="ms" title="Antwortzeit"/>` — `bar`, `line` or `pie`; comma-separated values, dot decimals.
+- `<slide metric="24 / 24" note="alle grün" title="Tests"/>` — one big number.
+- `<slide text="CSV-Export, Beträge mit Komma" title="Gebaut"/>` — a short card.
+
+Example: `<speak>Der Export ist drin, Sir. <slide image="last" title="Export"/>So sieht er aus. <slide metric="24 / 24" title="Tests"/>Alle Tests sind grün. Passt das so?</speak>`
+
 Emit **exactly one** of the two tags per response, always as the very last line. If in doubt, use `<speak>`.
 
 Do not mention the `<speak>` tag in your visible prose; just append it at the very end. Voice mode stays on until the session ends.

@@ -1,6 +1,7 @@
 # Konzept: Folien im Anruf („Schauen Sie, Sir …“)
 
-Status: **Entwurf zur Besprechung** — nichts davon ist gebaut.
+Status: **v1 gebaut** (Bild, Diagramm, Kennzahl, Textkarte; Timing über die Untertitel-Uhr).
+Alles unter „Später“ ist noch Entwurf zur Besprechung.
 
 ## Idee
 
@@ -10,22 +11,48 @@ Screenshot der neuen Ansicht, eine kurze Textkarte („Gebaut: …“), einen Di
 Was meinen Sie?“ Jede Folie erscheint genau in dem Moment, in dem sie erwähnt wird, und Sir
 kann auf eine Folie antworten („die zweite gefällt mir nicht“).
 
+## Durchgespielt: wann Folien wirklich helfen
+
+1. **„So sieht es aus“** — Claude hat eine Ansicht gebaut und im Simulator/Browser einen
+   Screenshot gemacht. `image="last"` zeigt genau diesen, ohne Pfad-Gefummel. Der häufigste Fall.
+2. **Zahlen, die man nicht hören will** — Testergebnisse, Ladezeiten vorher/nachher, Kosten der
+   Woche, Fehler pro Tag. Gesprochen nervt eine Zahlenreihe; als Balken/Linie ist sie in einer
+   Sekunde klar. → `chart`.
+3. **Die eine Zahl** — „24 von 24 Tests grün“, „Antwortzeit 180 ms (−40 %)“. Groß, sofort lesbar
+   auch im Augenwinkel. → `metric`.
+4. **Zusammenfassung zum Mitlesen** — drei Punkte, was gebaut wurde; die Stimme bleibt kurz,
+   die Karte hält die Details. → `text`.
+5. **Entscheidungen** („A oder B?“) — zwei Screenshots nacheinander, dann die Frage. Später mit
+   Antippen der Variante als Antwort.
+
+Wo es nicht hilft: im Auto ohne Blick aufs Display (CarPlay), bei reinen Rückfragen ohne Inhalt,
+und wenn der Satz ohne die Folie keinen Sinn mehr ergibt — die Stimme muss allein tragen.
+
 ## Wie Claude Folien angibt
 
 Im gesprochenen Text, direkt an der Stelle, an der die Folie kommen soll — Parley entfernt die
 Marker, bevor es spricht:
 
 ```
-<speak>Ich habe den Export-Knopf eingebaut, Sir. <slide image="/tmp/export.png" title="Export-Knopf"/>
-So sieht er aus. <slide text="Gebaut: CSV, Beträge mit Komma, Spalten wie in der Ansicht"/>
-Gefällt Ihnen das?</speak>
+<speak>Ich habe den Export-Knopf eingebaut, Sir. <slide image="last" title="Export-Knopf"/>
+So sieht er aus. <slide chart="bar" labels="Mo,Di,Mi" values="12,18,9" title="Exporte"/>
+Und so oft wurde er schon benutzt. Gefällt Ihnen das?</speak>
 ```
 
-Folienarten (erste Runde):
-- `image` — ein Pfad auf dem Mac/PC (Screenshot, den Claude gerade gemacht hat) oder ein
-  Bild aus dem Verlauf der Session (dieselben Bild-Schlüssel wie in der Session-Ansicht).
-- `text` — eine kurze Karte (Titel + 1–4 Zeilen, Markdown light).
-- später: `diff` (Datei + +/−-Zeilen), `link` (URL mit Vorschau), `code`.
+Folienarten (v1, gebaut):
+- `image` — `last` / `last-2` = neuestes Bild im Verlauf der Session (Screenshots), oder ein
+  Bildpfad auf dem Mac/PC. Verkleinert wie in der Session-Ansicht; Antippen = Vollbild.
+- `chart` — `bar`, `line`, `pie` mit `labels`, `values`, optional `unit` (Swift Charts).
+- `metric` — eine große Zahl plus `note`.
+- `text` — kurze Karte (Titel + Text, Inline-Markdown).
+
+Später: `diff` (Datei + +/−-Zeilen), `link` (URL mit Vorschau), `code`, Auswahl-Karten.
+
+Technik v1: Der Stop-Hook schneidet die Marker aus dem Sprechtext und merkt sich das Wort
+dahinter; der Host gibt jeder Folie dessen Startzeit aus den Untertiteln und schickt vor der
+Zeile einen `slides`-Frame, die Bilder danach als `image`-Frames (Schlüssel = Folien-ID). Das
+iPhone zeigt die fällige Folie an Stelle des großen Rings, über Wellenform und Untertiteln; sie
+bleibt stehen, bis die nächste Zeile beginnt.
 
 ## Timing — dieselbe Technik wie die Live-Untertitel
 
@@ -38,11 +65,10 @@ während des Sprechens, kein Versatz durch Netz-Ruckeln.
 
 ## Darstellung im Anruf
 
-- Die Folie nimmt die obere Hälfte des Anrufbildschirms ein (statt des großen Rings), die
-  Untertitel bleiben darunter, die Wellenform schrumpft.
-- Wischen zurück zu früheren Folien dieses Anrufs; Antippen → Vollbild mit Zoom.
-- Nach dem Anruf bleiben die Folien in der Session-Ansicht am Verlauf hängen.
-- Im Auto (CarPlay) keine Folien — nur Ton; die Folien warten dann in der App.
+- v1: Die Folie nimmt den Platz des großen Rings ein, Wellenform und Untertitel bleiben
+  darunter; Antippen eines Bildes → Vollbild mit Zoom.
+- Später: Wischen zurück zu früheren Folien dieses Anrufs; nach dem Anruf hängen die Folien in
+  der Session-Ansicht am Verlauf; im Auto (CarPlay) nur Ton, die Folien warten in der App.
 
 ## Feedback zu einer Folie
 

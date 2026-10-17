@@ -98,6 +98,27 @@ struct Caption: Equatable, Sendable {
     }
 }
 
+/// One slide of a spoken line (`slides` frame, docs/CALL-SLIDES.md): shown from `at` seconds
+/// into the line. Kinds: image (pixels in an `image` frame keyed by `id`), chart, metric, text.
+struct Slide: Identifiable, Equatable, Sendable, Decodable {
+    var id: String
+    var at: Double
+    var kind: String
+    var title: String?
+    var text: String?
+    var chart: String?
+    var labels: [String]?
+    var values: [Double]?
+    var unit: String?
+    var metric: String?
+    var note: String?
+
+    /// The slide due `t` seconds into the line: the last one whose time has come.
+    static func current(_ slides: [Slide], at t: Double) -> Slide? {
+        slides.filter { $0.at <= t }.max { $0.at < $1.at }
+    }
+}
+
 /// What the host is doing with the call audio (`audio` frame, v2).
 enum HostAudio: String, Sendable, CaseIterable {
     case speaking, listening, idle
@@ -118,6 +139,8 @@ enum Frame: Equatable, Sendable {
     case image(key: String, data: Data?)
     /// v3: live captions for the line about to play.
     case caption(Caption)
+    /// v3: slides for the line about to play.
+    case slides([Slide])
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
 
     /// nil for anything that is not a JSON message with a `t` (e.g. the relay's `pong`).
@@ -135,6 +158,9 @@ enum Frame: Equatable, Sendable {
         case "history":
             guard let h = try? decoder.decode(HistoryWire.self, from: data) else { return .other(head.t) }
             return .history(id: h.id, items: h.items.items, before: h.before, more: h.more ?? false)
+        case "slides":
+            guard let w = try? decoder.decode(SlidesWire.self, from: data) else { return .other(head.t) }
+            return .slides(w.items.items)
         case "caption":
             guard let w = try? decoder.decode(CaptionWire.self, from: data), w.words.count == w.at.count, !w.words.isEmpty
             else { return .other(head.t) }
@@ -155,6 +181,7 @@ enum Frame: Equatable, Sendable {
     private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
     private struct CaptionWire: Decodable { let words: [String]; let at: [Double]; let end: Double }
+    private struct SlidesWire: Decodable { let items: Lossy<Slide> }
 
     private struct Head: Decodable {
         let t: String

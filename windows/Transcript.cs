@@ -325,6 +325,7 @@ public static class Transcript
     // ---- text ------------------------------------------------------------------------
 
     private static readonly Regex ReplyLine = new(@"(?m)^\s*<reply\b[^>]*>.*?</reply>\s*$\n?");
+    private static readonly Regex SlideTag = new(@"<slide\b[^>]*>\s?");
     private static readonly Regex SpeakTail = new(@"<speak(?:-end)?>(?:(?!</speak)[\s\S])*(?:</speak(?:-end)?>)?\s*$");
     private static readonly Regex SpeakTag = new(@"</?speak(?:-end)?>");
 
@@ -332,7 +333,7 @@ public static class Transcript
     // <speak-end> line returned on its own.
     public static (string Body, string? Spoken) Split(string text)
     {
-        var body = ReplyLine.Replace(text, "");
+        var body = SlideTag.Replace(ReplyLine.Replace(text, ""), "");
         string? spoken = null;
         var last = body.LastIndexOf("<speak", StringComparison.Ordinal);   // earlier mentions are prose
         if (last >= 0 && SpeakTail.Match(body, last) is { Success: true } m)

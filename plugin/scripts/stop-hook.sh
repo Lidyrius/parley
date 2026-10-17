@@ -70,13 +70,36 @@ parsed="$(printf '%s' "$msg" | perl -0777 -ne '
     s/[\t\n]+/ /g, s/^\s+|\s+$//g for $on, $say;
     unshift @r, "$l\t$on\t$say" if defined $on && length $say;
   }
-  if (defined $text) { $text =~ s/^\s+|\s+$//g; print "$listen\n" . scalar(@r) . "\n" . join("", map { "$_\n" } @r) . $text; }
+  # Slides for a phone call: <slide image="last" title="…"/> markers inside the spoken text,
+  # removed before it is spoken; each keeps the index of the word it precedes. One per line:
+  # word<TAB>key=value<TAB>key=value…
+  my @s;
+  if (defined $text) {
+    my ($clean, $rest) = ("", $text);
+    while (@s < 6 && $rest =~ /<slide\b([^>]*?)\/?>/s) {
+      my ($pre, $attrs) = (substr($rest, 0, $-[0]), $1); $rest = substr($rest, $+[0]);
+      $clean .= $pre;
+      my @w = split " ", $clean;
+      my @kv;
+      while ($attrs =~ /(\w+)="([^"]*)"/g) { my ($k, $v) = ($1, $2); $v =~ s/[\t\n]+/ /g; push @kv, "$k=$v"; }
+      push @s, join("\t", scalar(@w), @kv) if @kv;
+    }
+    $text = $clean . $rest;
+    $text =~ s/<slide\b[^>]*>//g;
+    $text =~ s/[ \t]{2,}/ /g;
+  }
+  if (defined $text) { $text =~ s/^\s+|\s+$//g; print "$listen\n" . scalar(@r) . "\n" . join("", map { "$_\n" } @r) . scalar(@s) . "\n" . join("", map { "$_\n" } @s) . $text; }
 ')"
 listen="$(printf '%s' "$parsed" | head -1)"
 nr="$(printf '%s' "$parsed" | sed -n 2p)"; nr="${nr:-0}"
 replies="$(printf '%s\n' "$parsed" | head -n $((2 + nr)) | tail -n +3 | jq -R -s -c \
   'split("\n") | map(select(length > 0) | split("\t") | {on: .[1], say: .[2], listen: (.[0] == "1")})')"
-speak="$(printf '%s' "$parsed" | tail -n +$((3 + nr)))"
+ns="$(printf '%s' "$parsed" | sed -n "$((3 + nr))p")"; ns="${ns:-0}"
+slides="$(printf '%s\n' "$parsed" | head -n $((3 + nr + ns)) | tail -n +$((4 + nr)) | jq -R -s -c \
+  'split("\n") | map(select(length > 0) | split("\t") | {word: (.[0] | tonumber)}
+     + ([.[1:][] | {key: .[:index("=")], value: .[index("=") + 1:]}] | from_entries))')"
+[ "$ns" -gt 0 ] 2>/dev/null || slides="[]"
+speak="$(printf '%s' "$parsed" | tail -n +$((4 + nr + ns)))"
 
 [ -z "$speak" ] && finish
 [ "$listen" = "false" ] || listen=true
@@ -102,8 +125,10 @@ payload="$(jq -n \
   --arg label "$label" \
   --argjson listen "$listen" \
   --argjson replies "${replies:-[]}" \
+  --argjson slides "${slides:-[]}" \
   '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label, listen:$listen}
-   + (if ($replies | length) > 0 then {replies:$replies} else {} end)')"
+   + (if ($replies | length) > 0 then {replies:$replies} else {} end)
+   + (if ($slides | length) > 0 then {slides:$slides} else {} end)')"
 
 # Blocks while the turn is queued + spoken + recorded + transcribed. With many parallel
 # projects a turn can wait long in the queue before it is its turn to

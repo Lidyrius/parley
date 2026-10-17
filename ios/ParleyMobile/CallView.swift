@@ -47,6 +47,7 @@ struct CallLook: Equatable {
 struct CallView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var zoomed: ZoomedImage?
 
     var body: some View {
         let call = model.call
@@ -62,7 +63,18 @@ struct CallView: View {
             VStack(spacing: 0) {
                 topBar(call)
                 Spacer(minLength: 12)
-                identity(call, look: look, name: call.label ?? voiced?.name ?? "Parley")
+                // A slide (docs/CALL-SLIDES.md) takes the ring's place while Parley talks about it.
+                TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                    if let slide = call.slide(at: context.date) {
+                        SlideCard(slide: slide, image: model.images[slide.id]) { zoomed = ZoomedImage(id: slide.id, image: $0) }
+                            .padding(.horizontal, 4)
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                            .id(slide.id)
+                    } else {
+                        identity(call, look: look, name: call.label ?? voiced?.name ?? "Parley")
+                    }
+                }
+                .animation(.snappy, value: call.slides)
                 Spacer(minLength: 20)
                 Waveform(mood: look.mood, color: look.color, paused: reduceMotion) { call.level(at: $0) }
                     .frame(height: 96)
@@ -76,7 +88,7 @@ struct CallView: View {
                     }
                 }
                 .frame(minHeight: 72, alignment: .top)
-                    .padding(.top, 18)
+                .padding(.top, 18)
                 Spacer(minLength: 20)
                 controls(call)
             }
@@ -86,6 +98,7 @@ struct CallView: View {
         .sensoryFeedback(.impact(weight: .light), trigger: call.muted)
         .sensoryFeedback(.impact(weight: .light), trigger: call.speaker)
         .sensoryFeedback(.success, trigger: call.wakeSent) { _, new in new }
+        .fullScreenCover(item: $zoomed) { z in ImageViewer(image: z.image) }
     }
 
     private func topBar(_ call: CallController) -> some View {
