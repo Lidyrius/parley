@@ -1,0 +1,488 @@
+import AVFAudio
+import CallKit
+import Foundation
+import UIKit
+
+/// Where the call stands.
+enum CallPhase: Equatable, Sendable {
+    case none
+    case ringing                    // incoming, not answered yet
+    case dialing                    // outgoing, waiting for the Mac and the audio session
+    case connecting                 // answered, waiting for the Mac and the audio session
+    case active(since: Date)
+
+    var isActive: Bool { if case .active = self { true } else { false } }
+}
+
+/// The phone's call with Parley (docs/IPHONE.md → Protocol v2, phone behaviour): a CallKit call
+/// whose audio runs over the relay. Outgoing ("Parley anrufen", Siri) and incoming (VoIP push,
+/// `ring` frame) take the same path: once the relay reaches the host and CallKit has activated
+/// the audio session, the engine starts and `call start` goes out; `call end` when it ends.
+///
+/// The simulator has no working CallKit: there the call runs without it, on an audio session
+/// activated by hand, so the pipeline can still be exercised against a local relay.
+@MainActor @Observable
+final class CallController {
+    private(set) var phase: CallPhase = .none
+    /// The host's last `audio` state; the wake word is listened for only while `idle`.
+    private(set) var hostAudio: HostAudio = .idle
+    /// The project this call is about: the push/ring label, or what an `audio` frame named.
+    private(set) var label: String?
+    private(set) var muted = false
+    private(set) var speaker = false
+    /// "Hey Parley" was heard and sent; cleared when the host leaves idle.
+    private(set) var wakeSent = false
+    /// The call screen is up (it can be minimised to the overview during a call).
+    var showsScreen = false
+    /// Why the last call failed, for an alert.
+    var failure: String?
+    let meter = AudioMeter()
+    let isDemo: Bool
+
+    /// Dial the relay if it is idle (the app may have been woken in the background).
+    @ObservationIgnored var ensureRelay: () -> Void = {}
+    @ObservationIgnored var onEnded: () -> Void = {}
+
+    @ObservationIgnored private let relay: Relay
+    @ObservationIgnored private let wake = WakeListener()
+    @ObservationIgnored private let audio: CallAudio
+    @ObservationIgnored private var provider: CXProvider?
+    @ObservationIgnored private var providerDelegate: ProviderDelegate?
+    @ObservationIgnored private let callKit = CXCallController(queue: .main)
+    @ObservationIgnored private var uuid: UUID?
+    @ObservationIgnored private var audioActive = false
+    @ObservationIgnored private var wakeArmed = true
+    @ObservationIgnored private var connectTimeout: Task<Void, Never>?
+    @ObservationIgnored private var lossTimeout: Task<Void, Never>?
+    @ObservationIgnored private var rearm: Task<Void, Never>?
+
+    init(relay: Relay, demo: Bool) {
+        self.relay = relay
+        isDemo = demo
+        let out = relay.audioOut
+        audio = CallAudio(meter: meter, speech: wake.feed, send: { out.send($0) })
+        wake.onWake = { [weak self] in self?.wakeHeard() }
+        #if !targetEnvironment(simulator)
+        if !demo { setUpCallKit() }
+        #endif
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.routeChanged() }
+        }
+    }
+
+    var isBusy: Bool { phase != .none }
+    var usesCallKit: Bool { provider != nil }
+    var wakeWordAvailable: Bool { isDemo || wake.isAvailable }
+
+    /// Microphone and speech recognition, asked up front so the prompts never land mid-call.
+    static func requestPermissions() async {
+        if AVAudioApplication.shared.recordPermission == .undetermined {
+            _ = await AVAudioApplication.requestRecordPermission()
+        }
+        _ = await WakeListener.requestAuthorization()
+    }
+
+    // MARK: - Outgoing
+
+    /// "Parley anrufen" (button, Siri, Shortcuts). Throws when CallKit refuses the call.
+    func startOutgoing() async throws {
+        guard phase == .none else { showsScreen = true; return }
+        if isDemo { startDemo(.speaking); return }
+        let id = UUID()
+        uuid = id
+        label = nil
+        phase = .dialing
+        showsScreen = true
+        guard provider != nil else {
+            try startWithoutCallKit()
+            return
+        }
+        do {
+            try await request(CXStartCallAction(call: id, handle: Self.handle))
+        } catch {
+            reset()
+            throw error
+        }
+        provider?.reportCall(with: id, updated: Self.update(label: nil))
+    }
+
+    fileprivate func performStart(_ action: CXStartCallAction) {
+        guard action.callUUID == uuid else { action.fail(); return }
+        try? Self.configureSession()
+        provider?.reportOutgoingCall(with: action.callUUID, startedConnectingAt: .now)
+        dial()
+        action.fulfill()
+    }
+
+    // MARK: - Incoming
+
+    /// A VoIP push (`reported` is PushKit's completion: it runs once CallKit has the call) or a
+    /// `ring` frame (`reported` nil).
+    func reportIncoming(label: String?, reported: (() -> Void)? = nil) {
+        // CallKit calls back on its own queue; PushKit's completion may run there.
+        let isPush = reported != nil
+        nonisolated(unsafe) let reported = reported ?? {}
+        if isDemo { reported(); return }
+        if phase != .none {
+            // Already ringing or in a call: the push and the ring frame are twins. A push still
+            // reports (the same call: CallKit refuses it without a second call UI, and an active
+            // call is what PushKit checks for); a ring frame just stops here.
+            if isPush, let provider, let uuid {
+                provider.reportNewIncomingCall(with: uuid, update: Self.update(label: label)) { _ in reported() }
+            } else {
+                reported()
+            }
+            return
+        }
+        let id = UUID()
+        uuid = id
+        self.label = label
+        phase = .ringing
+        ensureRelay()  // be ready by the time it is answered
+        guard let provider else {
+            showsScreen = true  // no CallKit (simulator): the in-app screen rings
+            reported()
+            return
+        }
+        provider.reportNewIncomingCall(with: id, update: Self.update(label: label)) { error in
+            reported()
+            guard error != nil else { return }
+            Task { @MainActor [weak self] in
+                if self?.uuid == id { self?.reset() }  // e.g. Do Not Disturb, blocked
+            }
+        }
+    }
+
+    /// The in-app "Annehmen" (CallKit's own answer UI goes straight to `performAnswer`).
+    func answer() {
+        guard phase == .ringing else { return }
+        if isDemo { phase = .active(since: .now); return }
+        guard let uuid else { return }
+        showsScreen = true
+        guard provider != nil else {
+            try? startWithoutCallKit(answering: true)
+            return
+        }
+        Task {
+            do { try await request(CXAnswerCallAction(call: uuid)) } catch { fail("Der Anruf ließ sich nicht annehmen.") }
+        }
+    }
+
+    fileprivate func performAnswer(_ action: CXAnswerCallAction) {
+        guard action.callUUID == uuid, phase == .ringing else { action.fail(); return }
+        try? Self.configureSession()
+        phase = .connecting
+        if UIApplication.shared.applicationState == .active { showsScreen = true }
+        dial()
+        action.fulfill()
+    }
+
+    // MARK: - In call
+
+    func hangUp() {
+        guard phase != .none else { return }
+        guard let uuid, provider != nil, !isDemo else {
+            finish()
+            if !isDemo { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+            return
+        }
+        Task {
+            do { try await request(CXEndCallAction(call: uuid)) } catch { finish() }
+        }
+    }
+
+    func setMuted(_ on: Bool) {
+        guard let uuid, provider != nil, !isDemo else { applyMuted(on); return }
+        Task {
+            do { try await request(CXSetMutedCallAction(call: uuid, muted: on)) } catch { applyMuted(on) }
+        }
+    }
+
+    func setSpeaker(_ on: Bool) {
+        speaker = on
+        guard !isDemo else { return }
+        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(on ? .speaker : .none)
+    }
+
+    /// A binary frame from the host: Parley's voice.
+    func play(_ frame: Data) {
+        guard phase.isActive else { return }
+        audio.play(frame)
+    }
+
+    /// An `audio` frame.
+    func hostAudioChanged(_ state: HostAudio, label: String?) {
+        if let label { self.label = label }
+        guard state != hostAudio else { return }
+        hostAudio = state
+        if state != .idle {
+            wakeArmed = true
+            wakeSent = false
+            rearm?.cancel()
+        }
+        updateWake()
+    }
+
+    /// The relay opened, closed, or the host came or went.
+    func relayChanged() {
+        switch phase {
+        case .dialing, .connecting:
+            begin()
+        case .active:
+            if relay.canSend {
+                lossTimeout?.cancel()
+                lossTimeout = nil
+            } else if lossTimeout == nil {
+                // The relay redials by itself; give it a moment before calling the call lost.
+                lossTimeout = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(25))
+                    guard !Task.isCancelled else { return }
+                    self?.fail("Die Verbindung zu Parley auf dem Mac ist abgebrochen.")
+                }
+            }
+        case .none, .ringing:
+            break
+        }
+    }
+
+    /// The level the waveform shows: the host's voice while it speaks, else the mic.
+    func level(at date: Date) -> Float {
+        if isDemo { return Demo.level(hostAudio, at: date) }
+        return hostAudio == .speaking ? meter.out : meter.mic
+    }
+
+    // MARK: - Lifecycle
+
+    /// Relay + audio session ready → engine, `call start`.
+    private func begin() {
+        guard phase == .dialing || phase == .connecting, relay.canSend, audioActive else { return }
+        let outgoing = phase == .dialing
+        connectTimeout?.cancel()
+        do {
+            try audio.start()
+        } catch {
+            fail("Das Mikrofon ließ sich nicht starten.")
+            return
+        }
+        audio.muted = muted
+        relay.send(Outgoing.call(started: true))
+        phase = .active(since: .now)
+        if outgoing, let uuid { provider?.reportOutgoingCall(with: uuid, connectedAt: .now) }
+        updateWake()
+    }
+
+    /// Reach the host, or give up after a while.
+    private func dial() {
+        ensureRelay()
+        connectTimeout?.cancel()
+        connectTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled, let self, phase == .dialing || phase == .connecting else { return }
+            fail("Parley auf dem Mac ist gerade nicht erreichbar.")
+        }
+        begin()
+    }
+
+    private func startWithoutCallKit(answering: Bool = false) throws {
+        do {
+            try Self.configureSession()
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            reset()
+            throw error
+        }
+        if answering { phase = .connecting }
+        audioActive = true
+        dial()
+    }
+
+    fileprivate func audioSessionActivated() {
+        audioActive = true
+        if phase.isActive { audio.restart() } else { begin() }
+    }
+
+    fileprivate func audioSessionDeactivated() {
+        audioActive = false
+        audio.stop()
+    }
+
+    fileprivate func applyMuted(_ on: Bool) {
+        muted = on
+        audio.muted = on
+        updateWake()
+    }
+
+    private func fail(_ message: String) {
+        guard phase != .none else { return }
+        failure = message
+        if let provider, let uuid { provider.reportCall(with: uuid, endedAt: .now, reason: .failed) }
+        finish()
+        if provider == nil, !isDemo { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+    }
+
+    /// Hung up, declined, failed or ended by the system.
+    fileprivate func finish() {
+        guard phase != .none else { return }
+        // Also for a declined call: the host stops waiting and voices on the Mac again.
+        relay.send(Outgoing.call(started: false))
+        reset()
+        onEnded()
+    }
+
+    private func reset() {
+        connectTimeout?.cancel()
+        lossTimeout?.cancel()
+        lossTimeout = nil
+        rearm?.cancel()
+        wake.stop()
+        audio.stop()
+        phase = .none
+        uuid = nil
+        label = nil
+        hostAudio = .idle
+        muted = false
+        audio.muted = false
+        speaker = false
+        audioActive = false
+        wakeArmed = true
+        wakeSent = false
+        showsScreen = false
+    }
+
+    // MARK: - Wake word
+
+    private func updateWake() {
+        if phase.isActive, hostAudio == .idle, !muted, wakeArmed, !isDemo { wake.start() } else { wake.stop() }
+    }
+
+    private func wakeHeard() {
+        guard phase.isActive, hostAudio == .idle, wakeArmed else { return }
+        wakeArmed = false
+        wakeSent = true
+        relay.send(Outgoing.wake)
+        updateWake()
+        // Paused until the host leaves idle; should it never (an older host, a lost frame),
+        // listen again after a while instead of going deaf for the rest of the call.
+        rearm?.cancel()
+        rearm = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self, hostAudio == .idle else { return }
+            wakeArmed = true
+            wakeSent = false
+            updateWake()
+        }
+    }
+
+    // MARK: - Demo
+
+    func startDemo(_ state: Demo.CallState) {
+        switch state {
+        case .incoming:
+            label = "Tippfrei"
+            phase = .ringing
+        case .connecting:
+            phase = .dialing
+        case .speaking, .listening, .idle:
+            phase = .active(since: .now.addingTimeInterval(-167))
+            hostAudio = HostAudio(rawValue: state.rawValue) ?? .idle
+            wakeSent = state == .listening
+        }
+        showsScreen = true
+    }
+
+    // MARK: - CallKit
+
+    private static let handle = CXHandle(type: .generic, value: "Parley")
+
+    private static func update(label: String?) -> CXCallUpdate {
+        let u = CXCallUpdate()
+        u.remoteHandle = handle
+        u.localizedCallerName = PushPayload.callerName(label)
+        u.hasVideo = false
+        u.supportsHolding = false
+        u.supportsGrouping = false
+        u.supportsUngrouping = false
+        u.supportsDTMF = false
+        return u
+    }
+
+    private func setUpCallKit() {
+        let config = CXProviderConfiguration()
+        config.supportsVideo = false
+        config.maximumCallGroups = 1
+        config.maximumCallsPerCallGroup = 1
+        config.supportedHandleTypes = [.generic]
+        config.includesCallsInRecents = false
+        config.iconTemplateImageData = UIImage(systemName: "waveform", withConfiguration: UIImage.SymbolConfiguration(pointSize: 40, weight: .semibold))?.pngData()
+        let provider = CXProvider(configuration: config)
+        let delegate = ProviderDelegate(call: self)
+        provider.setDelegate(delegate, queue: .main)
+        self.provider = provider
+        providerDelegate = delegate
+    }
+
+    private func request(_ action: CXCallAction) async throws {
+        try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+            callKit.request(CXTransaction(action: action)) { error in
+                if let error { done.resume(throwing: error) } else { done.resume() }
+            }
+        }
+    }
+
+    /// `.playAndRecord` + `.voiceChat` (voice processing, Bluetooth HFP); CarPlay and the car's
+    /// mic come with the CallKit call's route.
+    private static func configureSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        if CallAudio.usesMicrophone {
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+        } else {
+            try session.setCategory(.playback, mode: .spokenAudio)  // simulator without a mic
+        }
+        try? session.setPreferredIOBufferDuration(0.02)
+    }
+
+    private func routeChanged() {
+        guard phase != .none, !isDemo else { return }
+        speaker = AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .builtInSpeaker }
+    }
+}
+
+/// CallKit calls back on the main queue (`setDelegate(_:queue: .main)`).
+@MainActor
+private final class ProviderDelegate: NSObject, @preconcurrency CXProviderDelegate {
+    weak var call: CallController?
+
+    init(call: CallController) {
+        self.call = call
+    }
+
+    func providerDidReset(_ provider: CXProvider) {
+        call?.finish()
+    }
+
+    func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        if let call { call.performStart(action) } else { action.fail() }
+    }
+
+    func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        if let call { call.performAnswer(action) } else { action.fail() }
+    }
+
+    func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        call?.finish()
+        action.fulfill()
+    }
+
+    func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        call?.applyMuted(action.isMuted)
+        action.fulfill()
+    }
+
+    func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        call?.audioSessionActivated()
+    }
+
+    func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        call?.audioSessionDeactivated()
+    }
+}

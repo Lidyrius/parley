@@ -11,7 +11,7 @@ settings:
     DEVELOPMENT_TEAM: 384887N3UL
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "2"
 targets:
   ParleyMobile:
     type: application
@@ -31,6 +31,10 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: Parley nutzt die Kamera, um den QR-Code zum Verbinden mit deinem Mac zu scannen.
+        NSMicrophoneUsageDescription: Parley nutzt das Mikrofon während eines Anrufs, damit du mit Parley auf deinem Mac sprechen kannst.
+        NSSpeechRecognitionUsageDescription: Parley erkennt während eines Anrufs „Hey Parley“ – die Spracherkennung läuft dafür nach Möglichkeit direkt auf dem iPhone.
+        # A call keeps running with the screen locked (audio); VoIP pushes ring the phone (voip).
+        UIBackgroundModes: [audio, voip]
         CFBundleURLTypes:
           - CFBundleURLName: de.developaway.parley.mobile
             CFBundleURLSchemes: [parley]
@@ -45,6 +49,12 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_PREVIEWS: YES
+      # Push (VoIP via PushKit): APNs sandbox for Debug, production for Release.
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: ParleyMobile/ParleyMobile-Debug.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: ParleyMobile/ParleyMobile-Release.entitlements
   ParleyMobileTests:
     type: bundle.unit-test
     platform: iOS

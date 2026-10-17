@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var confirmsUnpair = false
 
     var body: some View {
+        @Bindable var model = model
         NavigationStack {
             Form {
                 Section("Verbindung") {
@@ -17,6 +18,15 @@ struct SettingsView: View {
                     if model.demo {
                         Text("Demo-Modus: Beispieldaten, keine Verbindung.").foregroundStyle(.secondary)
                     }
+                }
+                Section {
+                    Toggle(isOn: $model.away) {
+                        Label("Unterwegs-Modus", systemImage: "car.fill")
+                    }
+                } header: {
+                    Text("Anrufe")
+                } footer: {
+                    Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“.")
                 }
                 if model.pairing != nil {
                     Section {

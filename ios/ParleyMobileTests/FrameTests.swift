@@ -82,6 +82,51 @@ struct FrameTests {
         #expect(Frame.decode(#"{"t":"audio-start","codec":"opus"}"#) == .other("audio-start"))
     }
 
+    // MARK: - Protocol v2
+
+    @Test(arguments: HostAudio.allCases)
+    func decodesAudioStates(_ state: HostAudio) {
+        #expect(Frame.decode(#"{"t":"audio","state":"\#(state.rawValue)"}"#) == .audio(state, label: nil))
+    }
+
+    @Test func audioFrameIsLenient() {
+        // An optional label (not in the contract) is taken when a host sends one.
+        #expect(Frame.decode(#"{"t":"audio","state":"speaking","label":" Tippfrei "}"#) == .audio(.speaking, label: "Tippfrei"))
+        #expect(Frame.decode(#"{"t":"audio","state":"idle","label":""}"#) == .audio(.idle, label: nil))
+        #expect(Frame.decode(#"{"t":"audio","state":"idle","label":5,"x":[1]}"#) == .audio(.idle, label: nil))
+        // A state it does not know (or none) is ignored rather than guessed.
+        #expect(Frame.decode(#"{"t":"audio","state":"singing"}"#) == .other("audio"))
+        #expect(Frame.decode(#"{"t":"audio"}"#) == .other("audio"))
+        #expect(Frame.decode(#"{"t":"audio","state":3}"#) == .other("audio"))
+    }
+
+    @Test func decodesRing() {
+        #expect(Frame.decode(#"{"t":"ring","label":"Shirts"}"#) == .ring(label: "Shirts"))
+        #expect(Frame.decode(#"{"t":"ring","label":"  "}"#) == .ring(label: nil))
+        #expect(Frame.decode(#"{"t":"ring"}"#) == .ring(label: nil))
+        #expect(Frame.decode(#"{"t":"ring","label":null}"#) == .ring(label: nil))
+    }
+
+    @Test func encodesCallControl() {
+        #expect(Outgoing.call(started: true) == #"{"state":"start","t":"call"}"#)
+        #expect(Outgoing.call(started: false) == #"{"state":"end","t":"call"}"#)
+        #expect(Outgoing.wake == #"{"t":"wake"}"#)
+        #expect(Outgoing.away(true) == #"{"on":true,"t":"away"}"#)
+        #expect(Outgoing.away(false) == #"{"on":false,"t":"away"}"#)
+        #expect(Outgoing.push(token: "00ffab", env: .production) == #"{"env":"production","t":"push","token":"00ffab"}"#)
+        #expect(Outgoing.push(token: "01", env: .development) == #"{"env":"development","t":"push","token":"01"}"#)
+    }
+
+    /// What the phone sends must read back the same through a generic JSON parser (the host's).
+    @Test func outgoingIsValidJSON() throws {
+        let away = try #require(JSONSerialization.jsonObject(with: Data(Outgoing.away(true).utf8)) as? [String: Any])
+        #expect(away["t"] as? String == "away" && away["on"] as? Bool == true)
+        let push = try #require(JSONSerialization.jsonObject(with: Data(Outgoing.push(token: "ab", env: .development).utf8)) as? [String: Any])
+        #expect(push["env"] as? String == "development" && push["token"] as? String == "ab")
+        let hello = try #require(JSONSerialization.jsonObject(with: Data(Outgoing.hello(device: "Sydney’s \"iPhone\"").utf8)) as? [String: Any])
+        #expect(hello["device"] as? String == "Sydney’s \"iPhone\"")
+    }
+
     @Test(arguments: ["pong", "", "[]", #"{"type":"sessions"}"#, #"{"t":5}"#])
     func ignoresNonMessages(_ text: String) {
         #expect(Frame.decode(text) == nil)

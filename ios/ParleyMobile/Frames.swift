@@ -1,6 +1,6 @@
 import Foundation
 
-// Relay protocol v1 (docs/IPHONE.md). Decoding is lenient on purpose: a host newer or older
+// Relay protocol v1 + v2 (docs/IPHONE.md). Decoding is lenient on purpose: a host newer or older
 // than this app may add, drop or retype fields, and that must never blank the overview.
 
 enum SessionState: String, Sendable, CaseIterable {
@@ -58,10 +58,20 @@ struct Snapshot: Equatable, Sendable {
     var at: Double?
 }
 
+/// What the host is doing with the call audio (`audio` frame, v2).
+enum HostAudio: String, Sendable, CaseIterable {
+    case speaking, listening, idle
+}
+
 enum Frame: Equatable, Sendable {
     case sessions(Snapshot)
     case peer(host: Bool)
-    case other(String)              // unknown `t`: ignored (forward compatible)
+    /// v2: the host's call-audio state. `label` is optional and not in the contract: a host may
+    /// name the project it is voicing; without it the phone uses the session that holds the voice.
+    case audio(HostAudio, label: String?)
+    /// v2: an update wants the phone (the push's twin for a phone that is open in the foreground).
+    case ring(label: String?)
+    case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
 
     /// nil for anything that is not a JSON message with a `t` (e.g. the relay's `pong`).
     static func decode(_ text: String) -> Frame? {
@@ -71,28 +81,63 @@ enum Frame: Equatable, Sendable {
         switch head.t {
         case "sessions": return (try? decoder.decode(Snapshot.self, from: data)).map(Frame.sessions)
         case "peer": return .peer(host: head.host ?? false)
+        case "audio":
+            guard let state = head.state.flatMap(HostAudio.init(rawValue:)) else { return .other(head.t) }
+            return .audio(state, label: head.label.flatMap(Self.clean))
+        case "ring": return .ring(label: head.label.flatMap(Self.clean))
         default: return .other(head.t)
         }
+    }
+
+    /// A label worth showing: trimmed, not empty.
+    static func clean(_ label: String) -> String? {
+        let s = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? nil : s
     }
 
     private struct Head: Decodable {
         let t: String
         let host: Bool?
-        enum K: String, CodingKey { case t, host }
+        let state: String?
+        let label: String?
+        enum K: String, CodingKey { case t, host, state, label }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: K.self)
             t = try c.decode(String.self, forKey: .t)
             host = c.lenient(.host)
+            state = c.lenient(.state)
+            label = c.lenient(.label)
         }
     }
 }
 
-/// Phone → host messages.
+/// Phone → host messages (keys sorted, so the text is stable for tests and logs).
 enum Outgoing {
-    static func hello(device: String) -> String { encode(["t": "hello", "device": device]) }
-    static func resume(id: String) -> String { encode(["t": "resume", "id": id]) }
+    static func hello(device: String) -> String { encode(["t": .s("hello"), "device": .s(device)]) }
+    static func resume(id: String) -> String { encode(["t": .s("resume"), "id": .s(id)]) }
+    /// v2: the phone's CallKit call connected (`true`) or ended (`false`).
+    static func call(started: Bool) -> String { encode(["t": .s("call"), "state": .s(started ? "start" : "end")]) }
+    /// v2: the wake word was heard while the host was idle.
+    static let wake = encode(["t": .s("wake")])
+    /// v2: the VoIP push token (hex) and its APNs environment.
+    static func push(token: String, env: PushEnvironment) -> String {
+        encode(["t": .s("push"), "token": .s(token), "env": .s(env.rawValue)])
+    }
+    /// v2: Unterwegs-Modus on or off.
+    static func away(_ on: Bool) -> String { encode(["t": .s("away"), "on": .b(on)]) }
 
-    private static func encode(_ body: [String: String]) -> String {
+    private enum Value: Encodable {
+        case s(String), b(Bool)
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .s(let v): try c.encode(v)
+            case .b(let v): try c.encode(v)
+            }
+        }
+    }
+
+    private static func encode(_ body: [String: Value]) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return String(decoding: (try? encoder.encode(body)) ?? Data(), as: UTF8.self)

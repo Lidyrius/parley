@@ -13,13 +13,20 @@ struct OverviewView: View {
     }
 
     var body: some View {
+        @Bindable var model = model
         let relay = model.relay
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    StatusHeader(relay: relay)
+                    StatusHeader(relay: relay, away: $model.away)
+                    if let failure = model.call.failure {
+                        CallFailureBanner(text: failure) { model.call.failure = nil }
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    CallParleyButton(call: model.call, canCall: relay.canSend, action: model.callParley)
                     content(relay)
                 }
+                .animation(.snappy, value: model.call.failure)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 32)
             }
@@ -121,21 +128,26 @@ struct OverviewView: View {
     }
 }
 
-/// Connection pill and today's totals ("**$13.61** Kosten · **65** Updates · …").
+/// Connection pill, the Unterwegs-Modus switch, and today's totals ("**$13.61** Kosten · …").
 private struct StatusHeader: View {
     let relay: Relay
+    @Binding var away: Bool
 
     var body: some View {
         let status = relay.status
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Circle().fill(status.color).frame(width: 8, height: 8)
-                Text(status.label).font(.subheadline.weight(.semibold))
+            // Side by side; stacked when large text no longer fits one line.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    pill(status)
+                    Spacer(minLength: 8)
+                    awayToggle
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    pill(status)
+                    awayToggle
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(status.color.opacity(0.14)))
-            .accessibilityElement(children: .combine)
 
             if let today = relay.snapshot?.today, status == .connected || status == .connecting {
                 Text(Self.line(today))
@@ -143,6 +155,25 @@ private struct StatusHeader: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func pill(_ status: ConnectionStatus) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(status.color).frame(width: 8, height: 8)
+            Text(status.label).font(.subheadline.weight(.semibold))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(status.color.opacity(0.14)))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var awayToggle: some View {
+        Toggle(isOn: $away) {
+            Label("Unterwegs", systemImage: "car.fill")
+        }
+        .toggleStyle(PillToggleStyle())
+        .accessibilityHint("Updates klingeln als Anruf auf dem iPhone")
     }
 
     /// Breaks only between the pairs: each value stays glued to its label.
@@ -184,4 +215,127 @@ extension Notice where Actions == EmptyView {
 
 #Preview("Demo") {
     RootView().environment(AppModel(arguments: ["-demo"]))
+}
+
+/// "Parley anrufen" — the overview's one big action; during a call, the way back to it.
+private struct CallParleyButton: View {
+    let call: CallController
+    let canCall: Bool
+    let action: () -> Void
+    @ScaledMetric(relativeTo: .title3) private var iconSize: CGFloat = 44
+
+    var body: some View {
+        if call.isBusy {
+            Button { call.showsScreen = true } label: {
+                HStack(spacing: 14) {
+                    RingView(session: Session(id: "call", state: call.phase.isActive ? .speaking : .queued), skew: 0, size: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(call.phase == .ringing ? "Eingehender Anruf" : "Anruf läuft").font(.headline)
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(Self.subtitle(call.phase, at: context.date))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Text("Zurück").font(.subheadline.weight(.semibold)).foregroundStyle(SessionState.idle.ink)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(SessionState.idle.color.opacity(0.14)))
+                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(SessionState.idle.color.opacity(0.45)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Öffnet den Anruf")
+        } else {
+            Button(action: action) {
+                HStack(spacing: 14) {
+                    Image(systemName: "phone.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(canCall ? Theme.claude : .secondary)
+                        .frame(width: iconSize, height: iconSize)
+                        .background(Circle().fill(canCall ? AnyShapeStyle(.white) : AnyShapeStyle(Theme.background)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Parley anrufen").font(.title3.bold())
+                        Text(canCall ? "oder „Hey Siri, Parley anrufen“" : "Geht, sobald der Mac verbunden ist")
+                            .font(.subheadline)
+                            .opacity(canCall ? 0.85 : 1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(canCall ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    if canCall {
+                        shape.fill(LinearGradient(colors: [Color(hex: 0xE38A6B), Theme.claude], startPoint: .top, endPoint: .bottom))
+                            .shadow(color: Theme.claude.opacity(0.3), radius: 12, y: 5)
+                    } else {
+                        shape.fill(Theme.card).overlay(shape.strokeBorder(Theme.stroke))
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canCall)
+            .sensoryFeedback(.impact(weight: .medium), trigger: call.phase) { old, new in old == .none && new != .none }
+        }
+    }
+
+    private static func subtitle(_ phase: CallPhase, at date: Date) -> String {
+        switch phase {
+        case .active(let since): "mit Parley · " + Fmt.clock(date.timeIntervalSince(since) * 1000)
+        case .ringing: "Tippe, um ranzugehen"
+        default: "Verbinde…"
+        }
+    }
+}
+
+/// A failed call, said once on the overview.
+private struct CallFailureBanner: View {
+    let text: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "phone.down.fill").foregroundStyle(Color(hex: 0xE5484D))
+            Text(text).font(.subheadline).frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: dismiss) {
+                Image(systemName: "xmark").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("Schließen")
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(hex: 0xE5484D).opacity(0.10)))
+        .task {
+            try? await Task.sleep(for: .seconds(8))
+            dismiss()
+        }
+    }
+}
+
+/// A capsule switch for the header (the Unterwegs-Modus): filled in Claude orange when on.
+struct PillToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            configuration.label
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(configuration.isOn ? .white : .secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(configuration.isOn ? Theme.claude : Theme.card))
+                .overlay(Capsule().strokeBorder(configuration.isOn ? .clear : Theme.stroke))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .animation(.snappy(duration: 0.2), value: configuration.isOn)
+        .sensoryFeedback(.selection, trigger: configuration.isOn)
+        .accessibilityValue(configuration.isOn ? "an" : "aus")
+        .accessibilityAddTraits(.isToggle)
+    }
 }

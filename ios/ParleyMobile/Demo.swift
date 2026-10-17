@@ -5,6 +5,26 @@ import Foundation
 enum Demo {
     static let expanded: Set<String> = ["demo-relay"]
 
+    /// `-demoCall <state>`: the call screen without a call, for screenshots.
+    enum CallState: String, CaseIterable, Sendable {
+        case speaking, listening, idle, incoming, connecting
+    }
+
+    /// A speech-like level (syllables in phrases) for the demo waveform.
+    static func level(_ state: HostAudio, at date: Date) -> Float {
+        let t = date.timeIntervalSinceReferenceDate
+        switch state {
+        case .speaking:
+            let syllables = 0.5 + 0.5 * sin(t * 9.1) * sin(t * 3.7 + 1)
+            let phrase = 0.65 + 0.35 * sin(t * 0.9)
+            return Float(0.35 + 0.6 * syllables * phrase)
+        case .listening:
+            return Float(0.25 + 0.3 * (0.5 + 0.5 * sin(t * 6.3) * sin(t * 2.2)))
+        case .idle:
+            return 0.04
+        }
+    }
+
     static func frame(now: Date) -> String {
         let t = Int64(now.ms)
         func ago(_ s: Int64) -> Int64 { t - s * 1000 }

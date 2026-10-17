@@ -2,7 +2,15 @@ import Foundation
 import Observation
 import UIKit
 
-/// The phone's side of relay protocol v1: one WebSocket to the room, kept alive and redialled.
+/// What the relay tells the rest of the app (the call, the away/push state).
+enum RelayEvent {
+    case opened                     // a socket opened (hello sent): resend per-connection state
+    case closed
+    case frame(Frame)               // every decoded frame except `sessions`
+    case audio(Data)                // a binary frame: call audio from the host
+}
+
+/// The phone's side of the relay protocol: one WebSocket to the room, kept alive and redialled.
 @MainActor @Observable
 final class Relay {
     enum Link: Equatable { case idle, connecting, connected }
@@ -23,6 +31,9 @@ final class Relay {
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var lastHeard = Date.distantPast
     @ObservationIgnored private var bestSkew: Double?
+    @ObservationIgnored var onEvent: (RelayEvent) -> Void = { _ in }
+    /// The mic thread's way to the open socket.
+    let audioOut = AudioOut()
 
     var status: ConnectionStatus {
         isDemo ? .connected : Self.status(link: link, hostOnline: hostOnline, failure: failure)
@@ -54,8 +65,11 @@ final class Relay {
         loop?.cancel()
         loop = nil
         socket = nil
+        audioOut.use(nil)
+        let wasOpen = link == .connected
         link = .idle
         hostOnline = nil
+        if wasOpen { onEvent(.closed) }
     }
 
     func forget() {
@@ -74,8 +88,14 @@ final class Relay {
 
     /// "Fortsetzen": same as `POST /resume` on the host.
     func resume(_ id: String) {
+        send(Outgoing.resume(id: id))
+    }
+
+    /// A text message to the host, if a socket is open (dropped otherwise: everything the phone
+    /// sends is either a user action or state that is sent again on the next open).
+    func send(_ text: String) {
         guard !isDemo, link == .connected, let ws = socket else { return }
-        Task { try? await ws.send(.string(Outgoing.resume(id: id))) }
+        ws.send(.string(text)) { _ in }
     }
 
     // MARK: - Connection
@@ -110,6 +130,8 @@ final class Relay {
                 link = .connected
                 failure = nil
                 lastHeard = .now
+                audioOut.use(ws)
+                onEvent(.opened)
                 let pinger = Task { await keepAlive(ws) }
                 defer { pinger.cancel() }
                 while true { apply(try await ws.receive()) }
@@ -122,8 +144,10 @@ final class Relay {
         ws.cancel(with: .goingAway, reason: nil)
         if socket === ws, !Task.isCancelled {
             socket = nil
+            audioOut.use(nil)
             link = .connecting  // the loop dials again after its backoff
             hostOnline = nil
+            if opened { onEvent(.closed) }
         }
         return opened
     }
@@ -144,7 +168,13 @@ final class Relay {
 
     private func apply(_ message: URLSessionWebSocketTask.Message) {
         lastHeard = .now
-        guard case .string(let text) = message, let frame = Frame.decode(text) else { return }
+        let text: String
+        switch message {
+        case .data(let audio): onEvent(.audio(audio)); return
+        case .string(let t): text = t
+        @unknown default: return
+        }
+        guard let frame = Frame.decode(text) else { return }
         switch frame {
         case .sessions(let s):
             if let at = s.at, let next = Self.skew(sample: at - Date.now.ms, best: bestSkew) {
@@ -152,11 +182,13 @@ final class Relay {
                 if next != skew { skew = next }
             }
             snapshot = s
+            return
         case .peer(let host):
             hostOnline = host
-        case .other:
+        case .audio, .ring, .other:
             break
         }
+        onEvent(.frame(frame))
     }
 
     private static func failure(of ws: URLSessionWebSocketTask) -> Failure {
@@ -190,5 +222,17 @@ final class Relay {
     nonisolated static func skew(sample: Double, best: Double?) -> Double? {
         guard abs(sample) < 120_000 else { return best }
         return max(best ?? sample, sample)
+    }
+}
+
+/// Sends call audio from the mic's thread straight to the open socket, without a hop through
+/// the main actor for every 20 ms frame. Sends keep their order.
+final class AudioOut: @unchecked Sendable {
+    private let socket = Locked<URLSessionWebSocketTask?>(nil)
+
+    func use(_ ws: URLSessionWebSocketTask?) { socket.value = ws }
+
+    func send(_ frame: Data) {
+        socket.value?.send(.data(frame)) { _ in }
     }
 }
