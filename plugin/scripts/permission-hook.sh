@@ -29,9 +29,9 @@ no_decision() {
   exit 0
 }
 
-payload="$(printf '%s' "$input" | jq -c '{
+payload="$(printf '%s' "$input" | jq -c --arg pd "${CLAUDE_PROJECT_DIR:-}" '{
   session_id: (.session_id // ""),
-  cwd:        (.cwd // ""),
+  cwd:        (if $pd != "" then $pd else (.cwd // "") end),
   tool_name:  (.tool_name // ""),
   tool_input: (.tool_input // {})
 }' 2>/dev/null)" || no_decision

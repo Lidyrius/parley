@@ -408,9 +408,9 @@ final class AppController: ObservableObject {
             server.deliverRouted(id: id, instruction: text)
             confirmation = "Verstanden, ich gebe das an \(target.label) weiter."
         } else {
-            confirmation = deliverToZentrale(text)
-                ? "Verstanden. Ich starte die Zentrale und gebe es weiter."
-                : "Verstanden, ich gebe das an die Zentrale weiter."
+            // The Zentrale is Parley itself — it takes the job on, it doesn't pass it on.
+            _ = deliverToZentrale(text)
+            confirmation = Zentrale.takeOver.randomElement()!
         }
         Log.write("wake: \"\(text.prefix(80))\" → \(target.label)")
         await speakLine(confirmation, config: config)

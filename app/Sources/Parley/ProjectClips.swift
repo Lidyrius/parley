@@ -113,7 +113,11 @@ actor ProjectClips {
 
     // {name} = the project's spoken label.
     static func phrase(name: String, language: String) -> String {
-        (templates[language] ?? templates["Deutsch"]!).replacingOccurrences(of: "{name}", with: name)
+        // The Zentrale is Parley itself: "an update from the Zentrale", not "on" it.
+        if name.caseInsensitiveCompare(Zentrale.label) == .orderedSame {
+            return zentraleTemplates[language] ?? zentraleTemplates["Deutsch"]!
+        }
+        return (templates[language] ?? templates["Deutsch"]!).replacingOccurrences(of: "{name}", with: name)
     }
 
     static func resumePhrases(name: String, language: String) -> [String] {
@@ -164,6 +168,15 @@ actor ProjectClips {
         "Español": "Actualización sobre {name}",
         "Italiano": "Aggiornamento su {name}",
         "Nederlands": "Update over {name}",
+    ]
+
+    private static let zentraleTemplates: [String: String] = [
+        "Deutsch": "Ein Update aus der Zentrale",
+        "English": "An update from headquarters",
+        "Français": "Des nouvelles de la centrale",
+        "Español": "Novedades de la central",
+        "Italiano": "Un aggiornamento dalla centrale",
+        "Nederlands": "Een update van de centrale",
     ]
 
     private static let resumeTemplates: [String: [String]] = [

@@ -67,7 +67,9 @@ speak="$(printf '%s' "$parsed" | tail -n +2)"
 [ -z "$speak" ] && finish
 [ "$listen" = "false" ] || listen=true
 
-cwd="$(printf '%s' "$input" | jq -r '.cwd // ""')"
+# The session's own folder. `.cwd` follows every `cd` the session makes — a session that
+# wandered into another project would be announced under that project's name.
+cwd="${CLAUDE_PROJECT_DIR:-$(printf '%s' "$input" | jq -r '.cwd // ""')}"
 session_id="$(printf '%s' "$input" | jq -r '.session_id // ""')"
 project="$(basename "${cwd:-unknown}")"
 

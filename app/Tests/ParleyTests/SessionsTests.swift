@@ -437,6 +437,7 @@ final class SessionsTests: XCTestCase {
     func testAnnouncementAndResumePhrases() {
         XCTAssertEqual(ProjectClips.phrase(name: "Parley", language: "Deutsch"), "Update zu Parley")
         XCTAssertEqual(ProjectClips.phrase(name: "Parley", language: "English"), "Update on Parley")
+        XCTAssertEqual(ProjectClips.phrase(name: "zentrale", language: "Deutsch"), "Ein Update aus der Zentrale")
         XCTAssertEqual(ProjectClips.phrase(name: "Parley", language: "Klingonisch"), "Update zu Parley")
         let de = ProjectClips.resumePhrases(name: "Demo", language: "Deutsch")
         XCTAssertEqual(de.count, 3)

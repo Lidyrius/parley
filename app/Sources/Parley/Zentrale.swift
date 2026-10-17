@@ -23,6 +23,12 @@ struct ZentraleSettings: Equatable {
 
 enum Zentrale {
     static let label = "Zentrale"
+    /// Spoken when a wake request lands in the Zentrale.
+    static let takeOver = [
+        "Ich kümmere mich darum, Sir.",
+        "Ich nehme mich der Sache an, Sir.",
+        "Alles klar, Sir. Ich habe gleich Infos für Sie.",
+    ]
 
     /// "~" expanded, "." / ".." / duplicate and trailing slashes removed — the one form every
     /// cwd is compared in.

@@ -123,7 +123,18 @@ public static class Clips
     });
 
     // {name} = the project's spoken label.
-    public static string AnnouncementPhrase(string name, string language) => (language switch
+    // The Zentrale is Parley itself: "an update from the Zentrale", not "on" it.
+    public static string AnnouncementPhrase(string name, string language) => string.Equals(name.Trim(), Routing.ZentraleName, StringComparison.OrdinalIgnoreCase)
+        ? language switch
+        {
+            "English" => "An update from headquarters",
+            "Français" => "Des nouvelles de la centrale",
+            "Español" => "Novedades de la central",
+            "Italiano" => "Un aggiornamento dalla centrale",
+            "Nederlands" => "Een update van de centrale",
+            _ => "Ein Update aus der Zentrale",
+        }
+        : (language switch
     {
         "English" => "Update on {name}",
         "Français" => "Mise à jour sur {name}",

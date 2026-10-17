@@ -176,6 +176,14 @@ public static class Zentrale
 {
     public const string FirstPrompt = "/parley:voice";
 
+    // Spoken when a wake request lands in the Zentrale.
+    public static readonly string[] TakeOver =
+    {
+        "Ich kümmere mich darum, Sir.",
+        "Ich nehme mich der Sache an, Sir.",
+        "Alles klar, Sir. Ich habe gleich Infos für Sie.",
+    };
+
     public static string Dir(Config c) => CwdPath.Normalize(c.ZentraleDir);
 
     // A session is the Zentrale by its spoken name or by working in its folder.
@@ -340,8 +348,9 @@ public sealed class Delivery
             }
         }
         Log.Write($"route: → Zentrale ({result.ToString().ToLowerInvariant()})");
+        // The Zentrale is Parley itself — it takes the job on, it doesn't pass it on.
         return result == DispatchResult.Failed
-            ? "Die Zentrale konnte ich leider nicht starten, Sir."
-            : "Verstanden, ich gebe das an die Zentrale weiter.";
+            ? "Das konnte ich leider nicht anstoßen, Sir."
+            : TakeOver[Random.Shared.Next(TakeOver.Length)];
     }
 }
