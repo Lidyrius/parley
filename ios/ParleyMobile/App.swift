@@ -372,6 +372,9 @@ final class AppModel {
             call.captionReceived(c)
         case .frame(.slides(let s)):
             call.slidesReceived(s)
+        case .frame(.palette(let p)):
+            Appearance.shared.adopt(p)
+            relay.send(Outgoing.paletteSaved(p.name))
         case .frame(.image(let key, let data)):
             if let data, let image = UIImage(data: data) { images[key] = image }
         case .frame(.ring(let label)):

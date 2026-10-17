@@ -22,7 +22,7 @@ final class PhoneFrameTests: XCTestCase {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"image","id":"s1","key":"u#0"}"#), .image(id: "s1", key: "u#0"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"say","id":"s1","text":"  Mach weiter. "}"#), .say(id: "s1", text: "Mach weiter."))
         for junk in [#"{"t":"call","state":"ringing"}"#, #"{"t":"call"}"#, #"{"t":"push","token":"not hex!"}"#,
-                     #"{"t":"push","token":""}"#, #"{"t":"away","on":"yes"}"#, #"{"t":"hello","device":"x"}"#,
+                     #"{"t":"push","token":""}"#, #"{"t":"away","on":"yes"}"#, #"{"t":"palette"}"#,
                      #"{"t":"audio","state":"idle"}"#, "pong", "[]", #"{"state":"start"}"#,
                      #"{"t":"say","id":"s1","text":"  "}"#, #"{"t":"history"}"#, #"{"t":"image","id":"s1"}"#] {
             XCTAssertNil(RelayFrame.parse(junk), junk)

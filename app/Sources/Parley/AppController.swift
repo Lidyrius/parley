@@ -92,12 +92,29 @@ final class AppController: ObservableObject {
         }
         let server = self.server
         phone.onWake = { server.wakeFromPhone() }
+        server.onPalette = { [weak self] name, frame in
+            Log.write("palette: \(name) → the phone")
+            Task { @MainActor in
+                self?.pendingPalette = (name, frame)
+                self?.phone.reply(frame)
+            }
+        }
         // v3: the phone's session view — history (from Claude Code's transcript), its images,
         // and typed messages (delivered like a routed instruction).
         phone.onChat = { [phone, weak self] event in
             // An answer (typed, or tapped in the Live Activity) closes that session's question there.
             if case .say(let id, _) = event {
                 Task { @MainActor in if self?.activityAsk?.id == id { self?.activityAsk = nil } }
+            }
+            // A palette made by voice: again on every (re)connect until the phone confirms it.
+            if case .hello = event {
+                Task { @MainActor in if let p = self?.pendingPalette { phone.reply(p.frame) } }
+                return
+            }
+            if case .paletteSaved(let name) = event {
+                Log.write("palette: the phone saved \(name)")
+                Task { @MainActor in if self?.pendingPalette?.name == name { self?.pendingPalette = nil } }
+                return
             }
             DispatchQueue.global(qos: .userInitiated).async {
                 switch event {
@@ -132,6 +149,7 @@ final class AppController: ObservableObject {
     private var activityFeed = LiveActivityFeed()
     private var activityAsk: LiveActivity.Ask?   // Stumm: the latest question, until answered
     private var widgetFeed = WidgetPushFeed()
+    private var pendingPalette: (name: String, frame: String)?   // a palette made by voice, until the phone has it
     private var activityTimer: Timer?
     private var seenActivityToken: String?
 

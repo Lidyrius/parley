@@ -186,6 +186,46 @@ jq -n --arg id "$id" '{id: $id}' \
   kurz bestätigen lassen. Danach Sir in einem Satz sagen, was geschlossen ist.
 - Dich selbst schließt du nie (Parley verweigert es auch).
 
+## Farbpalette erstellen
+
+Sir wünscht sich eine Farbpalette für die Parley-App auf dem iPhone („eine im Apple-Design“, „wie
+Spotify“, „herbstlich und ruhig“). Du recherchierst sie, legst die zehn Farben fest und schickst
+sie an Parley — die App speichert sie unter „Eigene“ und wechselt sofort dazu.
+
+1. **Recherchieren** — bei einem Vorbild (Marke, App, Website) mit dem Browser (Playwright): die
+   Seite öffnen, die echten Farben lesen (`getComputedStyle` von Hintergrund, Karten, Buttons,
+   Links; Design-Richtlinien wie Apples HIG-Systemfarben oder ein Brand-Guide), hell und dunkel.
+   Bei einer Stimmung („herbstlich“) selbst entwerfen. Keine erfundenen „offiziellen“ Werte.
+2. **Auf die Rollen abbilden** — je Rolle ein Paar `[hell, dunkel]` als `#RRGGBB` (eine Farbe für
+   beide Modi geht auch):
+   - `background` Seitenhintergrund · `card` Kacheln · `raised` Sprechblasen/Code (leicht abgesetzt)
+   - `accent` die Markenfarbe: „spricht“, Anrufen-Knopf, Hervorhebungen
+   - `waiting` gelb/orange („pausiert“) · `working` blau („arbeitet“) · `purple` („im Hintergrund“)
+   - `idle` grün („bereit“) · `stopped` grau („gestoppt“) · `red` Auflegen, Fehler
+   - `alwaysDark: true` nur für eine reine Nacht-Palette (dann gilt überall die dunkle Farbe).
+3. **Prüfen** — Text (schwarz/weiß) muss auf `background` und `card` gut lesbar sein; `accent`
+   hebt sich deutlich vom Hintergrund ab; `working`, `waiting`, `idle`, `purple`, `stopped` sind
+   untereinander klar zu unterscheiden (die Statusfarben dürfen von der Marke abweichen, wenn sie
+   sonst verschwimmen).
+4. **Schicken:**
+
+```bash
+jq -n '{name: "Apple", note: "Systemfarben aus Apples Human Interface Guidelines",
+  colors: {background: ["#F2F2F7","#000000"], card: ["#FFFFFF","#1C1C1E"], raised: ["#E5E5EA","#2C2C2E"],
+           accent: ["#007AFF","#0A84FF"], waiting: ["#FF9500","#FF9F0A"], working: ["#5856D6","#5E5CE6"],
+           purple: ["#AF52DE","#BF5AF2"], idle: ["#34C759","#30D158"], stopped: ["#8E8E93","#8E8E93"],
+           red: ["#FF3B30","#FF453A"]}}' \
+  | curl -sS -X POST "http://127.0.0.1:${PARLEY_PORT:-8787}/palette" \
+      -H 'Content-Type: application/json' --data-binary @- | jq .
+```
+
+- Antwort `{"ok":true,"name":…}`: Parley schickt sie ans iPhone — sofort, wenn die App verbunden
+  ist (im Anruf oder geöffnet), sonst beim nächsten Öffnen. `400` nennt fehlende oder ungültige
+  Rollen: korrigieren und erneut schicken.
+- Gleicher Name noch einmal = die Palette wird ersetzt (zum Nachbessern: „etwas wärmer“).
+- Sir in einem Satz sagen, wie sie heißt und wie sie wirkt („Apple: Systemblau auf Weiß, nachts
+  Tiefschwarz“) — die Hex-Werte nur auf dem Bildschirm.
+
 ## Allgemeine Fragen
 
 Beantworte sie selbst, direkt und kurz — die Antwort steht im `<speak>`-Tag, Ergänzungen auf dem

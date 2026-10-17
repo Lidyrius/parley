@@ -65,6 +65,15 @@ final class Appearance {
                                          purple: pair(p.purple), idle: pair(p.idle), stopped: pair(p.stopped))
     }
 
+    /// A palette made by voice: replaces an own one of the same name (keeping its id), else joins
+    /// them — and is picked.
+    func adopt(_ p: Palette) {
+        var p = p
+        p.id = customPalettes.first { $0.name.caseInsensitiveCompare(p.name) == .orderedSame }?.id
+            ?? "custom-" + UUID().uuidString.prefix(8).lowercased()
+        save(p)
+    }
+
     /// Adds or replaces a custom palette and picks it.
     func save(_ p: Palette) {
         if let i = customPalettes.firstIndex(where: { $0.id == p.id }) { customPalettes[i] = p } else { customPalettes.append(p) }

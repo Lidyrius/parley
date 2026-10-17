@@ -150,6 +150,8 @@ enum Frame: Equatable, Sendable {
     case caption(Caption)
     /// v3: slides for the line about to play.
     case slides([Slide])
+    /// v4: a colour palette made by voice (the Zentrale researched it) — save it and switch to it.
+    case palette(Palette)
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
 
     /// nil for anything that is not a JSON message with a `t` (e.g. the relay's `pong`).
@@ -170,6 +172,9 @@ enum Frame: Equatable, Sendable {
         case "slides":
             guard let w = try? decoder.decode(SlidesWire.self, from: data) else { return .other(head.t) }
             return .slides(w.items.items)
+        case "palette":
+            guard let w = try? decoder.decode(PaletteWire.self, from: data), let p = w.palette else { return .other(head.t) }
+            return .palette(p)
         case "caption":
             guard let w = try? decoder.decode(CaptionWire.self, from: data), w.words.count == w.at.count, !w.words.isEmpty
             else { return .other(head.t) }
@@ -189,6 +194,31 @@ enum Frame: Equatable, Sendable {
 
     private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
+    /// `{"t":"palette","name","note","alwaysDark","colors":{role:["#light","#dark"]}}` — every role
+    /// present, else no palette.
+    private struct PaletteWire: Decodable {
+        let name: String
+        let note: String?
+        let alwaysDark: Bool?
+        let colors: [String: [String]]
+
+        var palette: Palette? {
+            func shade(_ role: String) -> Shade? {
+                guard let pair = colors[role], pair.count == 2,
+                      let l = UInt32(pair[0].replacingOccurrences(of: "#", with: ""), radix: 16),
+                      let d = UInt32(pair[1].replacingOccurrences(of: "#", with: ""), radix: 16) else { return nil }
+                return Shade(l, d)
+            }
+            guard !name.isEmpty, let bg = shade("background"), let card = shade("card"), let raised = shade("raised"),
+                  let accent = shade("accent"), let waiting = shade("waiting"), let working = shade("working"),
+                  let purple = shade("purple"), let idle = shade("idle"), let stopped = shade("stopped"), let red = shade("red")
+            else { return nil }
+            return Palette(id: "", name: name, note: note ?? "", background: bg, card: card, raised: raised, accent: accent,
+                           waiting: waiting, working: working, purple: purple, idle: idle, stopped: stopped, red: red,
+                           alwaysDark: alwaysDark ?? false)
+        }
+    }
+
     private struct CaptionWire: Decodable { let words: [String]; let at: [Double]; let end: Double; let last: Bool? }
     private struct SlidesWire: Decodable { let items: Lossy<Slide> }
 
@@ -247,6 +277,8 @@ enum Outgoing {
     static func activity(token: String?, env: PushEnvironment) -> String {
         encode(["t": .s("activity"), "token": .s(token ?? ""), "env": .s(env.rawValue)])
     }
+    /// v4: a palette made by voice is saved (the host stops resending it).
+    static func paletteSaved(_ name: String) -> String { encode(["t": .s("palette"), "saved": .s(name)]) }
     /// Can't talk now (on the ringing screen): ring again in `after` s, or nil = I'll call back.
     static func later(after: Int?) -> String {
         after.map { encode(["t": .s("later"), "after": .i($0)]) } ?? encode(["t": .s("later")])

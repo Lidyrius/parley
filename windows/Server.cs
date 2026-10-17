@@ -264,6 +264,21 @@ public sealed class Server
                 return;
             }
 
+            // /palette — the Zentrale made a colour palette by voice: to the phone (now, or when it
+            // connects). Same answers as macOS: {"ok":true,"name"} or 400 {"ok":false,"error"}.
+            if (req.HttpMethod == "POST" && path == "/palette")
+            {
+                var (name, frame, error) = PaletteSpec.Parse(body);
+                if (error is not null)
+                {
+                    await Respond(ctx, 400, JsonSerializer.Serialize(new { ok = false, error }));
+                    return;
+                }
+                OnPalette?.Invoke(name!, frame!);
+                await Respond(ctx, 200, JsonSerializer.Serialize(new { ok = true, name }));
+                return;
+            }
+
             // /close — the Zentrale ends running sessions: {"id"} | {"ids":[…]} | {"project":"…"}.
             if (req.HttpMethod == "POST" && path == "/close")
             {
@@ -294,6 +309,8 @@ public sealed class Server
 
     // Ends a session's process: null = closing, else why not. The Zentrale's folder.
     public Func<string, string?> Closer = SessionCloser.Close;
+    // A palette for the phone (POST /palette): its name and `palette` frame.
+    public Action<string, string>? OnPalette;
     public Func<string> ZentraleDir = () => Zentrale.Dir(Config.Load());
 
     // Same answers as macOS: {"ok","closed":[{id,label}],"failed":[{id,error}]}. Each closed one

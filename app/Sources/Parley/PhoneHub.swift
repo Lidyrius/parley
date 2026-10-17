@@ -153,7 +153,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
         case .later(let after):
             lock.withLock { later = .some(after) }
             log(after.map { "phone: not now — ring again in \(Int($0)) s" } ?? "phone: not now — Sir calls back")
-        case .history, .image, .say:
+        case .history, .image, .say, .hello, .paletteSaved:
             onChat?(event)
         case .resume:
             break

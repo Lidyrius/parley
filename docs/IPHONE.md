@@ -237,3 +237,13 @@ sessions, the line or the limit (whole %) changed. An old picture shows "Stand h
 activity itself (local updates, no push): the line spoken now, so the Lock Screen and the expanded
 Island follow the talk. A host push in between clears them; the next line brings them back.
 
+### A colour palette made by voice (Zentrale)
+
+`POST /palette {"name","note"?,"alwaysDark"?,"colors":{role: "#RRGGBB" | ["#light","#dark"]}}` with
+all ten roles (background, card, raised, accent, waiting, working, purple, idle, stopped, red) →
+`{"ok":true,"name"}`, or 400 naming missing / invalid roles. The host sends the phone
+`{"t":"palette","name","note","alwaysDark","colors":{role:["#L","#D"]}}` at once and again on every
+`hello` (the phone's (re)connect) until the phone answers `{"t":"palette","saved":"<name>"}`. The
+phone saves it under "Eigene" (same name = replaced) and switches to it. The Zentrale researches
+the palette (Playwright) — see zentrale/CLAUDE.md, "Farbpalette erstellen".
+

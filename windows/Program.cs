@@ -49,6 +49,12 @@ internal sealed class TrayApp : ApplicationContext
         // routed to a session or the Zentrale. The phone's settings survive restarts.
         _pipeline.Ring = label => Ringer.Ring(label);
         _pipeline.SetCallback = (id, at) => _server.Sessions.SetCallback(id, at);
+        _server.OnPalette = (name, frame) =>
+        {
+            Log.Write($"palette: {name} → the phone");
+            _pendingPalette = (name, frame);
+            _ = PhoneCall.Reply(frame);
+        };
         _pipeline.Route = (text, config) => _server.Delivery.Route(text, config);
         PhoneCall.LoadSettings(Config.Load());
 
@@ -130,6 +136,8 @@ internal sealed class TrayApp : ApplicationContext
 
     private readonly LiveActivityFeed _activityFeed = new();
     private readonly WidgetPushFeed _widgetFeed = new();
+    // A palette made by voice: sent at once and again on every (re)connect until the phone has it.
+    private (string Name, string Frame)? _pendingPalette;
     private System.Threading.Timer? _activityTimer;
     private string? _seenActivityToken;
     private int _activityTicking;
@@ -224,6 +232,13 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneSilent s: PhoneCall.SetSilent(s.On); break;
             case PhoneAlert a: PhoneCall.SetAlert(a.Token, a.Env); break;
             case PhoneActivityStart s: PhoneCall.SetActivityStart(s.Token, s.Env); break;
+            case PhoneHello:
+                if (_pendingPalette is { } pending) _ = PhoneCall.Reply(pending.Frame);
+                break;
+            case PhonePaletteSaved saved:
+                Log.Write($"palette: the phone saved {saved.Name}");
+                if (_pendingPalette?.Name == saved.Name) _pendingPalette = null;
+                break;
             case PhoneActivity a: PhoneCall.SetActivity(a.Token, a.Env); break;
             // v3: the phone's session view — history from Claude Code's transcript, its images,
             // and typed messages (delivered like a resume instruction).

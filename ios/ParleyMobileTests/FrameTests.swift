@@ -381,5 +381,18 @@ struct FrameTests {
         #expect(c.line(at: 0) == "Hallo Sir.")
         #expect(c.line(at: 1.3) == "Alles fertig.")
     }
+
+    /// A palette made by voice (app/Sources/Parley/PaletteSpec.swift's frame): every role, both modes.
+    @Test @MainActor func paletteByVoice() throws {
+        let roles = ["background", "card", "raised", "accent", "waiting", "working", "purple", "idle", "stopped", "red"]
+        let colors = Dictionary(uniqueKeysWithValues: roles.map { ($0, ["#F2F2F7", "#0A84FF"]) })
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: ["t": "palette", "name": "Apple", "note": "System", "alwaysDark": false, "colors": colors]), as: UTF8.self)
+        guard case .palette(let p)? = Frame.decode(json) else { Issue.record("no palette"); return }
+        #expect(p.name == "Apple" && p.accent.light == 0xF2F2F7 && p.accent.dark == 0x0A84FF && !p.alwaysDark)
+        var partial = colors; partial["red"] = nil
+        let broken = String(decoding: try JSONSerialization.data(withJSONObject: ["t": "palette", "name": "X", "colors": partial]), as: UTF8.self)
+        #expect(Frame.decode(broken) == .other("palette"))
+        #expect(Outgoing.paletteSaved("Apple") == #"{"saved":"Apple","t":"palette"}"#)
+    }
 }
 

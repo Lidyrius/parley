@@ -131,6 +131,11 @@ enum RelayFrame {
                   !token.isEmpty, token.count <= 200, token.allSatisfy(\.isHexDigit) else { return nil }
             let env = f["env"] as? String == "development" ? "development" : "production"
             return f["kind"] as? String == "alert" ? .alert(token: token.lowercased(), env: env) : .push(token: token.lowercased(), env: env)
+        case "hello":
+            return .hello
+        case "palette":
+            guard let saved = f["saved"] as? String, !saved.isEmpty else { return nil }
+            return .paletteSaved(saved)
         case "activity":
             let env = f["env"] as? String == "development" ? "development" : "production"
             func hex(_ v: Any?) -> String? {
@@ -202,6 +207,8 @@ enum PhoneEvent: Equatable, Sendable {
     case image(id: String, key: String)       // send one image of it
     case say(id: String, text: String)        // a typed message for that session
     case later(TimeInterval?)                 // can't talk now: ring again in n s, or nil = Sir calls back
+    case hello                                // the phone (re)connected to the relay
+    case paletteSaved(String)                 // v4: it saved and switched to a palette made by voice
     // v4 (docs/LIVE-ACTIVITIES.md): the Live Activity's push tokens.
     case activityStart(token: String, env: String)   // push-to-start: the host starts it
     case activity(token: String, env: String)        // the running one's update token; "" = none runs

@@ -47,6 +47,8 @@ final class ControlServer: @unchecked Sendable {
     // Ends a session's process (POST /close; a stub in tests): nil = closing, else why not.
     var closer: (_ id: String, _ cwd: String) -> String? = { SessionCloser.close(id: $0, cwd: $1) }
     var zentraleDir: () -> String = { ZentraleSettings.load().zentraleDir }
+    // A palette for the phone (POST /palette): its `palette` frame, to send and keep until confirmed.
+    var onPalette: ((_ name: String, _ frame: String) -> Void)?
 
     // POST /permission holds the hook at most this long, then answers "ask".
     var permissionHold: TimeInterval = 110
@@ -544,6 +546,17 @@ final class ControlServer: @unchecked Sendable {
             let query = try? JSONDecoder().decode(Query.self, from: req.body)
             let list = Transcript.past(query: query?.q, limit: min(50, max(1, query?.limit ?? 10)), root: transcripts)
             return (200, Transcript.pastJSON(list))
+        case ("POST", "/palette"):
+            // The Zentrale made a colour palette by voice: to the phone (now, or when it connects).
+            struct Reply: Encodable { let ok: Bool; var name: String?; var error: String? }
+            let reply: (Int, Reply)
+            switch PaletteSpec.frame(req.body) {
+            case .failure(let p): reply = (400, Reply(ok: false, error: PaletteSpec.message(p)))
+            case .success(let p):
+                onPalette?(p.name, p.frame)
+                reply = (200, Reply(ok: true, name: p.name))
+            }
+            return (reply.0, (try? JSONEncoder().encode(reply.1)).map { String(decoding: $0, as: UTF8.self) } ?? "{}")
         case ("POST", "/close"):
             guard let c = Contract.decodeClose(req.body) else {
                 return (400, #"{"ok":false,"error":"bad close payload"}"#)
