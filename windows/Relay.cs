@@ -141,7 +141,7 @@ public static class RelayFrame
                 case "image":
                     return Str("id") is { Length: > 0 } iid && Str("key") is { Length: > 0 } key ? new PhoneImage(iid, key) : null;
                 case "say":
-                    return Str("id") is { Length: > 0 } sid && Str("text")?.Trim() is { Length: > 0 and <= 8000 } text ? new PhoneSay(sid, text) : null;
+                    return Str("id") is { Length: > 0 } sid && Str("text")?.Trim() is { Length: > 0 and <= 8000 } said ? new PhoneSay(sid, said) : null;
                 case "away":
                     return root.TryGetProperty("on", out var flag) && (flag.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         ? new PhoneAway(flag.ValueKind == JsonValueKind.True) : null;
