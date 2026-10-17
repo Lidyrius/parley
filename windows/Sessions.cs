@@ -237,8 +237,10 @@ public sealed class SessionRegistry
         }
     }
 
+    // Parked, or idle / with work in the background and a live mod (it submits the instruction;
+    // Claude Code takes a prompt while its background agents run). As macOS.
     private static bool Resumable(Entry e) =>
-        e.State == "parked" || (e.State == "idle" && e.PresenceAt is not null);
+        e.State == "parked" || (e.State is "idle" or "background" && e.PresenceAt is not null);
 
     // Resumable sessions for the tray and the voice resume command.
     public List<Server.ParkedInfo> ResumableList()

@@ -189,8 +189,6 @@ final class SessionRegistry {
 
     // MARK: - queries
 
-    // Parked, or idle with a live mod (it can submit the instruction). A Codex session
-    // (no presence) is only resumable while parked; a `background` one wakes on its own.
     func setCallback(_ id: String, at: Date?) {
         entries[id]?.callbackAt = at
     }
@@ -200,8 +198,11 @@ final class SessionRegistry {
         return entries[id].map(Self.resumable) ?? false
     }
 
+    // Parked, or idle / with work in the background and a live mod (it submits the instruction;
+    // Claude Code takes a prompt while its background agents run). A Codex session (no
+    // presence) is only resumable while parked.
     private static func resumable(_ e: Entry) -> Bool {
-        e.state == "parked" || (e.state == "idle" && e.presenceAt != nil)
+        e.state == "parked" || (["idle", "background"].contains(e.state) && e.presenceAt != nil)
     }
 
     // Resumable sessions for the menu / tray and the voice resume command.

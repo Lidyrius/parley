@@ -42,6 +42,8 @@ public sealed class Server
     // iPhone (docs/IPHONE.md, v2): the wake greeting and a permission question ride the gate too.
     public const string WakeEvent = "wake";
     public const string PermissionEvent = "permission";
+    // The Wachhund's question (Watchdog.cs): through the gate like a permission prompt.
+    public const string WatchdogEvent = "watchdog";
 
     // POST /permission is answered within this — the hook waits ≤ 120 s; a few seconds spare.
     public static readonly TimeSpan PermissionHold = TimeSpan.FromSeconds(115);
@@ -448,6 +450,43 @@ public sealed class Server
     // A session Parley doesn't know (voice mode off) → ask at once. Else the question waits at
     // the gate like a turn; the request is answered within PermissionHold no matter what — a
     // question still running then finishes in the background (the hook already got "ask").
+    // The Wachhund asks Sir (at the PC / on a call); a yes hands the session the hint — the mod
+    // delivers it at once, Claude Code reads it at its next step, mid-turn. As macOS.
+    public void Watchdog(string id, string label, string question, string hint)
+    {
+        _ = Task.Run(async () =>
+        {
+            var turn = new TurnPayload { Event = WatchdogEvent, SessionId = id, Label = label, Project = label, Speak = question, Listen = true };
+            string transcript;
+            using (PhoneCall.Hold())
+            {
+                await _turnGate.WaitAsync();
+                try
+                {
+                    Sessions.Activate(id, null);
+                    transcript = (await _runTurn(turn)).transcript;
+                }
+                catch (Exception e)
+                {
+                    Log.Write($"watchdog question failed: {e.Message}");
+                    return;
+                }
+                finally
+                {
+                    Sessions.Released(id);
+                    _turnGate.Release();
+                }
+            }
+            if (Permission.Decide(transcript) != Permission.Allow)
+            {
+                Log.Write($"watchdog: {label} — Sir lets it run");
+                return;
+            }
+            Log.Write($"watchdog: hint to {label}");
+            Resume(id, hint);
+        });
+    }
+
     private async Task<string> AskPermission(PermissionPayload p)
     {
         var id = p.SessionId ?? "";

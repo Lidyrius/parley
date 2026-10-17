@@ -253,17 +253,18 @@ final class SessionsTests: XCTestCase {
         XCTAssertEqual(try row("parked")?["resumable"] as? Bool, false)
     }
 
-    func testBackgroundStateEchoesTasksAndIsNotResumable() throws {
+    // Work left running in the background: Claude Code still takes a prompt → "Fortsetzen".
+    func testBackgroundStateEchoesTasksAndIsResumable() throws {
         let tasks = #"[{"type":"subagent","description":"App: session presence + overview API"}]"#
         presence("bg", "background", tasks: tasks)
         let r = try XCTUnwrap(try row("bg"))
         XCTAssertEqual(r["state"] as? String, "background")
-        XCTAssertEqual(r["resumable"] as? Bool, false)
+        XCTAssertEqual(r["resumable"] as? Bool, true)
         let echoed = try XCTUnwrap(r["tasks"] as? [[String: Any]])
         XCTAssertEqual(echoed.count, 1)
         XCTAssertEqual(echoed.first?["type"] as? String, "subagent")
         XCTAssertEqual(echoed.first?["description"] as? String, "App: session presence + overview API")
-        XCTAssertEqual(post("/resume", #"{"id":"bg"}"#).0, 404)
+        XCTAssertTrue(reg.canResume("bg"))
         XCTAssertTrue(reg.othersAlive(except: "someone-else"))         // alive → announce
 
         presence("bg", "working")                                        // working beats background

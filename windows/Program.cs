@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Parley;
 
 // Entry point: single-instance guard, system-tray icon (mute, stats, settings, quit),
@@ -130,6 +132,39 @@ internal sealed class TrayApp : ApplicationContext
         }
         StartRelay();
         _activityTimer = new System.Threading.Timer(_ => TickLiveActivity(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        _watchdogTimer = new System.Threading.Timer(_ => TickWatchdog(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    // ---- the Wachhund (Watchdog.cs) ---------------------------------------------------
+
+    private readonly WatchdogMemory _watchdogMemory = new();
+    private System.Threading.Timer? _watchdogTimer;
+
+    // Every 30 s: each working session's transcript tail → a finding → Sir is asked (at the PC /
+    // on a call), or told by notification (Unterwegs without a call) — once per kind per 30 min.
+    private void TickWatchdog()
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(_server.Sessions.Json());
+            if (!doc.RootElement.TryGetProperty("sessions", out var list) || list.ValueKind != JsonValueKind.Array) return;
+            var now = DateTime.UtcNow;
+            foreach (var s in list.EnumerateArray())
+            {
+                string? Str(string k) => s.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+                if (Str("state") != "working" || Str("id") is not { Length: > 0 } id || Transcript.File(id) is not { } file) continue;
+                var since = DateTime.UnixEpoch.AddMilliseconds(s.TryGetProperty("since", out var sv) && sv.ValueKind == JsonValueKind.Number ? sv.GetDouble() : 0);
+                var calls = Watchdog.Calls(Transcript.TailLines(file, 256 * 1024));
+                var finding = Watchdog.Check("working", since, File.GetLastWriteTimeUtc(file), calls, now);
+                if (finding is null || !_watchdogMemory.ShouldReport(id, finding, now)) continue;
+                var label = Str("label") is { Length: > 0 } l ? l : Str("project") ?? "Eine Session";
+                var question = Watchdog.Question(label, finding);
+                Log.Write($"watchdog: {label} — {finding.Kind}");
+                if (PhoneCall.Away && !PhoneCall.Active) _ = Apns.SendAlert($"Parley · {label}", question, id);
+                else _server.Watchdog(id, label, question, Watchdog.Hint(finding));
+            }
+        }
+        catch (Exception e) { Log.Write($"watchdog: {e.Message}"); }
     }
 
     // ---- the iPhone's Live Activity (docs/LIVE-ACTIVITIES.md) --------------------------

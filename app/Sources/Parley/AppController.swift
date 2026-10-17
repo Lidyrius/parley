@@ -142,6 +142,39 @@ final class AppController: ObservableObject {
         activityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickLiveActivity() }
         }
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickWatchdog() }
+        }
+    }
+
+    // MARK: - the Wachhund (Watchdog.swift)
+
+    // Every 30 s: each working session's transcript tail → a finding → Sir is asked (at the Mac /
+    // on a call), or told by notification (Unterwegs without a call) — once per kind per 30 min.
+    private func tickWatchdog() {
+        guard let obj = (try? JSONSerialization.jsonObject(with: Data(server.sessionsJSON().utf8))) as? [String: Any],
+              let list = obj["sessions"] as? [[String: Any]] else { return }
+        let now = Date()
+        for s in list where s["state"] as? String == "working" {
+            guard let id = s["id"] as? String, let file = Transcript.file(for: id) else { continue }
+            let since = Date(timeIntervalSince1970: ((s["since"] as? NSNumber)?.doubleValue ?? 0) / 1000)
+            let written = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            let calls = Watchdog.calls(Transcript.tailLines(file, bytes: 256 * 1024))
+            guard let finding = Watchdog.check(state: "working", since: since, lastWrite: written, calls: calls, now: now),
+                  watchdogMemory.shouldReport(id, finding, now: now) else { continue }
+            let label = (s["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (s["project"] as? String ?? "Eine Session")
+            let question = Watchdog.question(label: label, finding)
+            Log.write("watchdog: \(label) — \(finding.kind)")
+            if phone.away && !phone.callActive {
+                // Unterwegs: no call for this — a notification; tapping it opens the session to answer.
+                if let target = phone.alertTarget {
+                    let apns = self.apns
+                    Task.detached { await apns.notify(token: target.token, env: target.env, title: "Parley · \(label)", body: question, session: id) }
+                }
+            } else {
+                server.watchdog(id: id, question: question, hint: Watchdog.hint(finding))
+            }
+        }
     }
 
     // MARK: - the iPhone's Live Activity (docs/LIVE-ACTIVITIES.md)
@@ -150,6 +183,8 @@ final class AppController: ObservableObject {
     private var activityAsk: LiveActivity.Ask?   // Stumm: the latest question, until answered
     private var widgetFeed = WidgetPushFeed()
     private var pendingPalette: (name: String, frame: String)?   // a palette made by voice, until the phone has it
+    private var watchdogMemory = WatchdogMemory()
+    private var watchdogTimer: Timer?
     private var activityTimer: Timer?
     private var seenActivityToken: String?
 
@@ -238,7 +273,7 @@ final class AppController: ObservableObject {
         switch turn.event {
         case ControlServer.resumeEvent: return await runResume(turn)
         case ControlServer.wakeEvent: return await runWake()
-        case ControlServer.permissionEvent: return await runPermission(turn)
+        case ControlServer.permissionEvent, ControlServer.watchdogEvent: return await runPermission(turn)
         default: break
         }
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))

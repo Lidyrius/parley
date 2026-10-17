@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+namespace Parley;
+
 // The Parley Live Activity on the iPhone (docs/LIVE-ACTIVITIES.md) — the same as macOS
 // (app/Sources/Parley/LiveActivity.swift): every session at a glance in the Dynamic Island, on
 // the Lock Screen, the Watch and in CarPlay. The host starts it by push-to-start while Unterwegs

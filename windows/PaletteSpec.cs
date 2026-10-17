@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+namespace Parley;
+
 // A colour palette for the iPhone app, made by voice — as macOS (app/Sources/Parley/
 // PaletteSpec.swift): the Zentrale researches it and POSTs it; the phone gets it as a `palette`
 // frame, saves it under "Eigene" and switches to it.

@@ -70,7 +70,9 @@ final class ControlServer: @unchecked Sendable {
     // The permission question (POST /permission) and the phone's wake dialog, the same way.
     static let permissionEvent = "permission"
     static let wakeEvent = "wake"
-    static let dialogEvents: Set<String> = [resumeEvent, permissionEvent, wakeEvent]
+    // The Wachhund's question (Watchdog.swift), the same way.
+    static let watchdogEvent = "watchdog"
+    static let dialogEvents: Set<String> = [resumeEvent, permissionEvent, wakeEvent, watchdogEvent]
     private var lastResumable: [ParkedInfo] = []
 
     // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
@@ -187,6 +189,26 @@ final class ControlServer: @unchecked Sendable {
             if self.replyQueue.count < before { self.sessions.dialogFinished(id: sid) }
         }
         return true
+    }
+
+    // MARK: - the Wachhund
+
+    // Its question rides the queue like a permission prompt; a yes hands the session the hint
+    // (delivered by the mod at once — Claude Code reads it at its next step, mid-turn).
+    func watchdog(id: String, question: String, hint: String) {
+        queue.async {
+            guard let e = self.sessions.entries[id] else { return }
+            let turn = TurnPayload(event: Self.watchdogEvent, session_id: id, cwd: e.cwd, project: e.project, tmux_pane: "",
+                                   speak: question, label: e.label, listen: true)
+            _ = self.enqueue(turn) { [weak self] reply in
+                guard PermissionPrompt.decide(reply.transcript) == .allow else {
+                    Log.write("watchdog: \(e.label) — Sir lets it run")
+                    return
+                }
+                Log.write("watchdog: hint to \(e.label)")
+                self?.deliver(id, hint)
+            }
+        }
     }
 
     // One held /permission request: answered exactly once (the dialog, or the hold timeout).
@@ -373,7 +395,7 @@ final class ControlServer: @unchecked Sendable {
         case Self.resumeEvent:
             sessions.resumeFinished(id: id, replied: !reply.transcript.isEmpty)
             deliver(id, reply.transcript.isEmpty ? Self.resumeInstruction : reply.transcript)
-        case Self.permissionEvent, Self.wakeEvent:
+        case Self.permissionEvent, Self.wakeEvent, Self.watchdogEvent:
             sessions.dialogFinished(id: id)
         default:
             sessions.finished(id: id, reply: reply)

@@ -47,7 +47,7 @@ public sealed class TurnPipeline
         {
             if (turn.Event == Server.ResumeEvent) return await RunResume(turn);
             if (turn.Event == Server.WakeEvent) return await RunWake(turn);
-            if (turn.Event == Server.PermissionEvent) return await RunPermission(turn);
+            if (turn.Event is Server.PermissionEvent or Server.WatchdogEvent) return await RunPermission(turn);
             return await RunTurn(turn);
         }
         finally { LiveStatus.Set("idle"); }
