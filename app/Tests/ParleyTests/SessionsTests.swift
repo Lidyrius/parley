@@ -173,6 +173,8 @@ final class SessionsTests: XCTestCase {
         XCTAssertEqual(active["voice"] as? Bool, true)
         clock.phase = "idle"   // e.g. muted/sent between phases → still the voiced turn
         XCTAssertEqual(try state("a"), "speaking")
+        clock.phase = "queued"   // a Fragerunde gathers before ringing: it wants to talk, not talking yet
+        XCTAssertEqual(try state("a"), "queued")
     }
 
     func testWaitingEndsAtUntil() throws {

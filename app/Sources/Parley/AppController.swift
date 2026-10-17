@@ -258,8 +258,40 @@ final class AppController: ObservableObject {
     }
 
     private func syncPhone() {
+        if phoneCall && !phone.callActive { lastCallEnd = Date() }
         phoneCall = phone.callActive
         phoneAway = phone.away
+    }
+
+    // MARK: - Fragerunde
+
+    // After a call, the next updates don't ring at once: for a few minutes they gather (queued,
+    // shown so in the Island) and then come as one round — "Ich habe drei Updates für Sie, Sir."
+    // Sir calling in meanwhile starts the round right away. Permission prompts never wait.
+    static let roundGap: TimeInterval = 4 * 60
+    private var lastCallEnd: Date?
+
+    private func gatherRound() async {
+        guard let end = lastCallEnd, !phone.callActive else { return }
+        let ready = end.addingTimeInterval(Self.roundGap)
+        guard Date() < ready else { return }
+        Log.write("Fragerunde: gathering until \(ready.formatted(date: .omitted, time: .standard))")
+        LiveStatus.set(phase: "queued")
+        while Date() < ready, !phone.callActive, phone.away, !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        LiveStatus.set(phase: "speaking")
+    }
+
+    /// "Ich habe drei Updates für Sie, Sir." — before the first of several in a new call.
+    private func announceRound(_ config: AppConfig) async {
+        let n = 1 + server.queuedCount()
+        guard n > 1 else { return }
+        let de = config.language.lowercased().hasPrefix("de")
+        let words = ["zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"]
+        let count = n - 2 < words.count ? words[n - 2] : "\(n)"
+        Log.write("Fragerunde: \(n) updates")
+        await speakLine(de ? "Ich habe \(count) Updates für Sie, Sir." : "I have \(n) updates for you, Sir.", config: config)
     }
 
     // `audio` state for the phone: speaking while any queue item or ack clip runs (the phone
@@ -355,13 +387,16 @@ final class AppController: ObservableObject {
         // "Not now" on the phone puts the line off: ring again in a minute or five, or wait for
         // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
         var calledBack = false
-        if ringing, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: key) {
+        if ringing { await gatherRound() }
+        let rang = ringing && !phone.callActive
+        if rang, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: key) {
             calledBack = back
         }
         // Unterwegs and not on the phone: the Mac stays silent — the line waits as a notification.
         if phone.away && !phone.callActive { prefetch?.cancel(); return silentTurn(turn, key: key) }
         if effectivelyMuted && !phone.callActive { prefetch?.cancel(); return mutedTurn() }
         if calledBack { await thankForCallingBack(config) }
+        if ringing, phone.callActive { await announceRound(config) }
 
         // Wait out the previous turn's background ack clip so this turn's audio never
         // overlaps it (only ever blocks if Claude replied faster than the ack played).

@@ -427,7 +427,7 @@ public sealed class SessionRegistry
         if (e.Id == _activeId)
         {
             var p = _phase();
-            return (p is "speaking" or "listening" or "transcribing") ? p : "speaking";
+            return (p is "speaking" or "listening" or "transcribing" or "queued") ? p : "speaking";   // queued: a Fragerunde gathers
         }
         if (e.Queued) return "queued";
         if (e.WaitUntil is { } u && t < u) return "waiting";

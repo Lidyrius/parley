@@ -365,7 +365,7 @@ final class SessionRegistry {
     func state(of e: Entry, at t: Date) -> String {
         if e.id == activeId {
             let p = phase()
-            return ["speaking", "listening", "transcribing"].contains(p) ? p : "speaking"
+            return ["speaking", "listening", "transcribing", "queued"].contains(p) ? p : "speaking"   // queued: a Fragerunde gathers
         }
         if e.queued { return "queued" }
         if let u = e.waitUntil, t < u { return "waiting" }

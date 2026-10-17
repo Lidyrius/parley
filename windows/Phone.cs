@@ -151,6 +151,13 @@ public static class PhoneCall
     }
 
     private static bool _lockedAway;
+    private static DateTime? _lastCallEnd;
+
+    // When the last call ended (a Fragerunde gathers for a few minutes after it).
+    public static DateTime? LastCallEnd
+    {
+        get { lock (Gate) return _lastCallEnd; }
+    }
 
     public static void SetLockedAway(bool on)
     {
@@ -211,6 +218,7 @@ public static class PhoneCall
         {
             changed = _call != started;
             if (!started && !_call) _declined = true;
+            if (!started && _call) _lastCallEnd = DateTime.UtcNow;
             _call = started;
             if (started) _downRate = down;
             _audioAt = DateTime.UtcNow;   // grace until its first frame arrives

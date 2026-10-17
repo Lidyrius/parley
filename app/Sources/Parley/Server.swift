@@ -417,6 +417,11 @@ final class ControlServer: @unchecked Sendable {
         queue.sync { replyQueue.isEmpty }
     }
 
+    // How many turns wait behind the one being voiced (a Fragerunde counts them).
+    func queuedCount() -> Int {
+        queue.sync { replyQueue.count }
+    }
+
     // True if any session besides `id` is alive (any state but stopped) → announce the turn.
     func othersAlive(except id: String) -> Bool {
         queue.sync { sessions.othersAlive(except: id) }

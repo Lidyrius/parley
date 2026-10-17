@@ -207,7 +207,11 @@ public sealed class TurnPipeline
         // (≤ 45 s) while the synthesis runs; unanswered, the turn plays on the speaker.
         // "Not now" on the phone puts the line off: ring again in a minute or five, or wait for
         // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
+        // Fragerunde: right after a call, gather for a few minutes, then ring once for all.
+        var ringing = PhoneCall.Away && !PhoneCall.Silent && !PhoneCall.Active;
+        if (ringing) await GatherRound();
         var (_, calledBack) = await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
+        if (ringing && PhoneCall.Active) await AnnounceRound(config);
         // Unterwegs and not on the phone: the PC stays silent — the line waits as a notification.
         if (PhoneCall.Away && !PhoneCall.Active)
         {
@@ -387,6 +391,36 @@ public sealed class TurnPipeline
             }
         }
         return (outcome.Kind == RingKind.Answered, calledBack);
+    }
+
+    // ---- Fragerunde (as macOS) ----------------------------------------------------------
+
+    // After a call, the next updates don't ring at once: for a few minutes they gather (queued,
+    // shown so in the Island) and then come as one round. Sir calling in meanwhile starts it.
+    // Permission prompts never wait.
+    public static readonly TimeSpan RoundGap = TimeSpan.FromMinutes(4);
+
+    private static async Task GatherRound()
+    {
+        if (PhoneCall.LastCallEnd is not { } end || PhoneCall.Active) return;
+        var ready = end + RoundGap;
+        if (DateTime.UtcNow >= ready) return;
+        Log.Write($"Fragerunde: gathering until {ready.ToLocalTime():HH:mm:ss}");
+        LiveStatus.Set("queued");
+        while (DateTime.UtcNow < ready && !PhoneCall.Active && PhoneCall.Away) await Task.Delay(500);
+        LiveStatus.Set("speaking");
+    }
+
+    // "Ich habe drei Updates für Sie, Sir." — before the first of several in a new call.
+    private async Task AnnounceRound(Config config)
+    {
+        var n = 1 + _queuedTurns();
+        if (n < 2) return;
+        var de = config.Language.StartsWith("de", StringComparison.OrdinalIgnoreCase);
+        string[] words = { "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun" };
+        var count = n - 2 < words.Length ? words[n - 2] : n.ToString();
+        Log.Write($"Fragerunde: {n} updates");
+        await SpeakLine(de ? $"Ich habe {count} Updates für Sie, Sir." : $"I have {n} updates for you, Sir.", config);
     }
 
     private async Task ThankForCallingBack(Config config)
