@@ -5,6 +5,7 @@ import WidgetKit
 struct ParleyWidgets: WidgetBundle {
     var body: some Widget {
         ParleyLiveActivity()
+        SessionsWidget()
         CallControl()
         AwayControl()
         SilentControl()

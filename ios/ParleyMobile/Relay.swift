@@ -83,7 +83,10 @@ final class Relay {
         isDemo = true
         link = .connected
         hostOnline = true
-        if case .sessions(let s)? = Frame.decode(Demo.frame(now: now)) { snapshot = s }
+        if case .sessions(let s)? = Frame.decode(Demo.frame(now: now)) {
+            snapshot = s
+            WidgetFeed.publish(s)
+        }
     }
 
     /// "Fortsetzen": same as `POST /resume` on the host.
@@ -182,6 +185,7 @@ final class Relay {
                 if next != skew { skew = next }
             }
             snapshot = s
+            WidgetFeed.publish(s)
             return
         case .peer(let host):
             hostOnline = host

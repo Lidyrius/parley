@@ -29,7 +29,7 @@ struct AwayControl: ControlWidget {
             .tint(Paint.color(.accent, SharedState.colors, dark: true))
         }
         .displayName("Parley unterwegs")
-        .description("Updates klingeln auf dem iPhone statt auf dem Mac.")
+        .description("Updates klingeln hier als Anruf, statt am Rechner gesprochen zu werden.")
     }
 }
 

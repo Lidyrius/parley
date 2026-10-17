@@ -14,7 +14,7 @@ struct ParleyLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: ParleyAttributes.self) { context in
             LockScreenView(state: context.state, stale: context.isStale)
-                .widgetURL(Link.session(context.state.ask?.id ?? context.state.top?.id))
+                .widgetURL(DeepLink.session(context.state.ask?.id ?? context.state.top?.id))
         } dynamicIsland: { context in
             let state = context.state
             let colors = SharedState.colors
@@ -34,14 +34,23 @@ struct ParleyLiveActivity: Widget {
                         .padding(.top, state.ask == nil ? 6 : 2)
                 }
             } compactLeading: {
-                Orb(color: tint, size: 22)
+                // Who it is about: the question's session, else the most urgent one.
+                Text(state.ask?.label ?? state.top?.label ?? "Parley")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+                    .frame(maxWidth: 64, alignment: .leading)
             } compactTrailing: {
                 Badge(state: state, colors: colors)
             } minimal: {
-                Orb(color: tint, size: 22)
+                Group {
+                    if state.ask != nil { Image(systemName: "bubble.left.fill") } else { Text("\(state.alive)").monospacedDigit() }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
             }
             .keylineTint(tint)
-            .widgetURL(Link.session(state.ask?.id ?? state.top?.id))
+            .widgetURL(DeepLink.session(state.ask?.id ?? state.top?.id))
         }
         .supplementalActivityFamilies([.small])
     }
@@ -85,7 +94,6 @@ private struct Small: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Orb(color: Paint.color(state.ask != nil ? .accent : state.top?.role ?? .idle, colors, dark: dark), size: 28)
             VStack(alignment: .leading, spacing: 2) {
                 if let ask = state.ask {
                     Text(ask.label).font(.headline).lineLimit(1)
@@ -112,7 +120,7 @@ private struct Small: View {
 
 // MARK: - Parts
 
-/// Orb, "Parley", and how many sessions run (or that the Mac went quiet).
+/// "Parley" and how many sessions run (or whose question waits, or that the Mac went quiet).
 private struct Title: View {
     let state: ParleyAttributes.ContentState
     let tint: Color
@@ -121,7 +129,6 @@ private struct Title: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Orb(color: tint, size: 34)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Parley").font(.headline)
                 if let ask = state.ask, !stale {
@@ -311,7 +318,7 @@ private struct Badge: View {
 
 /// A row's timer, counted by the system: up since a state began, down to a pause's end or the
 /// next ring. Nothing for states without a time.
-private struct Clock: View {
+struct Clock: View {
     let row: ParleyAttributes.Row
 
     var body: some View {
@@ -325,29 +332,6 @@ private struct Clock: View {
         default:
             EmptyView()
         }
-    }
-}
-
-/// Parley's orb, still: a glow, the core and one orbit — the island can't animate it.
-struct Orb: View {
-    let color: Color
-    let size: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(RadialGradient(colors: [color.opacity(0.55), color.opacity(0.12), .clear],
-                                     center: .center, startRadius: 0, endRadius: size / 2))
-            Ellipse()
-                .stroke(color.opacity(0.85), lineWidth: max(1, size * 0.06))
-                .frame(width: size * 0.86, height: size * 0.34)
-                .rotationEffect(.degrees(-24))
-            Circle()
-                .fill(RadialGradient(colors: [.white, color], center: .center, startRadius: 0, endRadius: size * 0.2))
-                .frame(width: size * 0.4, height: size * 0.4)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 
@@ -387,7 +371,7 @@ enum Paint {
     }
 }
 
-enum Link {
+enum DeepLink {
     /// Tapping the activity opens the session it is about.
     static func session(_ id: String?) -> URL? {
         guard let id, var c = URLComponents(string: "parley://session") else { return nil }

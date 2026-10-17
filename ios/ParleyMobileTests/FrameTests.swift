@@ -346,5 +346,23 @@ struct FrameTests {
         #expect(Outgoing.activityStart(token: "ab", env: .production) == #"{"env":"production","start":"ab","t":"activity"}"#)
         #expect(Outgoing.activity(token: nil, env: .development) == #"{"env":"development","t":"activity","token":""}"#)
     }
+
+    /// The host's overview as the widgets show it: running sessions, most urgent first, in
+    /// seconds; the line of the most urgent one that spoke; today's figures.
+    @Test @MainActor func widgetSnapshotFromTheOverview() {
+        var w = Session(id: "w"); w.label = "Shirts"; w.state = .working; w.since = 1_000_000
+        w.stats = Stats(lastLine: "Ich teste noch.")
+        var c = Session(id: "c"); c.label = "Website"; c.state = .idle; c.since = 2_000_000; c.callback = 0
+        var s = Session(id: "s"); s.label = "Alt"; s.state = .stopped
+        var p = Session(id: "p"); p.label = "Angebote"; p.state = .waiting; p.since = 1_500_000; p.until = 1_800_000
+        let today = Today(costUsd: 3.5, turns: 7, spokenSeconds: 60,
+                          rateLimits: [RateLimit(kind: "five_hour", percentUsed: 42), RateLimit(kind: "seven_day", percentUsed: 18)])
+        let snap = WidgetFeed.snapshot(Snapshot(sessions: [w, s, c, p], today: today), now: Date(timeIntervalSince1970: 9))
+        #expect(snap.sessions.map(\.id) == ["c", "p", "w"])
+        #expect(snap.sessions[1].until == 1800 && snap.sessions[0].callback == 0)
+        #expect(snap.line == "Ich teste noch." && snap.from == "Shirts")
+        #expect(snap.cost == 3.5 && snap.updates == 7 && snap.limit == 42 && snap.week == 18)
+        #expect(!snap.isStale(at: Date(timeIntervalSince1970: 9 + 599)) && snap.isStale(at: Date(timeIntervalSince1970: 9 + 601)))
+    }
 }
 

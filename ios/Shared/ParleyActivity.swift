@@ -65,11 +65,11 @@ extension ParleyAttributes.Row {
     /// The state in a few words (the timer shows beside it).
     var title: String {
         switch kind {
-        case .callBack: "wartet auf deinen Rückruf"
-        case .ringsAt: "ruft an in"
+        case .callBack: "wartet auf Rückruf"
+        case .ringsAt: "ruft wieder an"
         case .live: state == "listening" ? "hört zu" : "spricht"
         case .queued: "möchte sprechen"
-        case .paused: "pausiert · noch"
+        case .paused: "pausiert"
         case .working: "arbeitet"
         case .background: "im Hintergrund"
         case .parked: "geparkt"
