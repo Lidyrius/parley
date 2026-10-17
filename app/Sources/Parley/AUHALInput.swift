@@ -18,17 +18,12 @@ final class AUHALInput: @unchecked Sendable {
 
     /// One-time (per device) expensive setup. Safe to call again to re-bind the current
     /// default input device. Returns false on any CoreAudio error.
+    /// `device`: a specific input (barge-in uses the built-in mic next to Bluetooth headphones);
+    /// nil = the system default.
     @discardableResult
-    func prepare() -> Bool {
+    func prepare(device: AudioDeviceID? = nil) -> Bool {
         teardown()
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var dev = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &dev) == noErr,
-              dev != 0 else { return false }
+        guard var dev = device ?? AudioDevices.defaultDevice(input: true) else { return false }
 
         var desc = AudioComponentDescription(
             componentType: kAudioUnitType_Output,

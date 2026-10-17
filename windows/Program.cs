@@ -85,6 +85,9 @@ internal sealed class TrayApp : ApplicationContext
             PhoneCall.SetLockedAway(lockAway.Checked && _pcLocked);
         };
         menu.Items.Add(lockAway);
+        var barge = new ToolStripMenuItem("Parley unterbrechen (einfach reinreden)") { CheckOnClick = true, Checked = Config.Load().BargeIn };
+        barge.CheckedChanged += (_, _) => Config.Merge(new Dictionary<string, string> { ["bargeIn"] = barge.Checked ? "1" : "0" });
+        menu.Items.Add(barge);
         Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) =>
         {
             if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionLock) ScreenLocked(true);

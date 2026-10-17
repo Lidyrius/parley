@@ -45,12 +45,14 @@ final class MicCapture: @unchecked Sendable {
         }
     }
 
-    func start(onFinished: @escaping (Data) -> Void) {
+    /// `preroll`: 16 kHz mic from just before (barge-in: Sir already started talking).
+    func start(preroll: [Int16] = [], onFinished: @escaping (Data) -> Void) {
         q.async { [weak self] in
             guard let self else { return }
             self.finished = false
             self.onFinished = onFinished
             self.recorder.reset()
+            _ = self.recorder.feed(preroll)
             self.buffersSeen = 0
             self.maxDBSeen = -120
             self.endReason = "unknown"

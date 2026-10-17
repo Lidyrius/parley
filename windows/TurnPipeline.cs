@@ -248,17 +248,21 @@ public sealed class TurnPipeline
         }
 
         var pcm = await prefetch;
+        // Barge-in at the PC: talking over the line cuts it (in a call the phone watches itself).
+        var watch = pcm is not null && config.BargeIn && !PhoneCall.Active && !PhoneCall.Away ? new BargeWatch(turn.Speak) : null;
         if (pcm is not null)
         {
             Log.Write($"speak start ({pcm.Length} bytes, rate {config.SpeakingRate:0.00})");
             await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak,
                                    slides: turn.Slides, session: Server.SessionKey(turn),
-                                   last: !turn.WantsListen && _queuedTurns() == 0);
+                                   last: !turn.WantsListen && _queuedTurns() == 0,
+                                   cancellationToken: watch?.Heard ?? default);
         }
         else Log.Write("no TTS audio (missing key or synth failed)");
+        var localPreroll = watch is null ? null : await watch.Stop();
         // Barge-in: Sir talked over Parley — listen now (even after a speak-only line), with the
         // seconds he already spoke.
-        var barged = PhoneCall.TakeBarge();
+        var barged = PhoneCall.TakeBarge() || watch?.Barged == true;
         if (barged) Log.Write("barge-in: listening");
 
         if (!turn.WantsListen && !barged)
@@ -276,7 +280,7 @@ public sealed class TurnPipeline
         var text = "";
         for (var hop = 0; hop < 4; hop++)
         {
-            (wav, text) = await ListenOnce(config, barged && hop == 0);
+            (wav, text) = await ListenOnce(config, barged && hop == 0, watch?.Barged == true ? localPreroll : null);
 
             var parked = _resumableList?.Invoke() ?? new List<Server.ParkedInfo>();
             if (text.Length == 0 || parked.Count == 0 || hop >= 3) break;
@@ -433,7 +437,8 @@ public sealed class TurnPipeline
         await SpeakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config);
     }
 
-    private async Task<(byte[] wav, string text)> ListenOnce(Config config, bool barged = false)
+    /// `preroll`: a barge-in at the PC's mic; a phone barge-in brings the phone's own.
+    private async Task<(byte[] wav, string text)> ListenOnce(Config config, bool barged = false, IReadOnlyList<byte[]>? preroll = null)
     {
         if (!barged)   // after a barge-in Sir is already talking: no beep
         {
@@ -445,7 +450,7 @@ public sealed class TurnPipeline
         Log.Write("record start");
         ShowPill(true);
         _mic.OnLevel = level => { LiveStatus.Push(level); _pill?.BeginInvoke(() => _pill.Push(level)); };
-        var wav = await _mic.Record(barged ? PhoneCall.RecentMic() : null);
+        var wav = await _mic.Record(barged ? preroll ?? PhoneCall.RecentMic() : null);
         _mic.OnLevel = null;
         ShowPill(false);
         Log.Write($"record done bytes={wav.Length}");

@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import AVFoundation
 import UniformTypeIdentifiers
 
 struct SessionInfo: Identifiable, Equatable {
@@ -34,6 +35,16 @@ final class AppController: ObservableObject {
         }
     }
     private var macLocked = false
+    // Barge-in at the Mac (menu: "Parley unterbrechen"): talking over Parley stops it, it listens.
+    @Published var bargeIn = Keychain.get(.bargeOff) != "1" {
+        didSet {
+            Keychain.set(bargeIn ? "" : "1", for: .bargeOff)
+            if bargeIn { BargeMonitor.requestAuthorization() }
+        }
+    }
+    private var speaking: TTSPlayer?       // the Mac's voice right now (barge-in cuts it)
+    private var localBarged = false
+    private var localPreroll: [Int16] = []  // the last 2 s of mic when Sir barged in
     private var lockTimer: Task<Void, Never>?
     @Published var pushKeyId: String?      // APNs key chosen ("Push-Schlüssel wählen…")
 
@@ -63,6 +74,7 @@ final class AppController: ObservableObject {
         guard !started else { return }   // idempotent: launch + menu .task may both call
         started = true
         mic.prepareInput()   // expensive AUHAL setup now → near-instant mic starts later
+        if bargeIn { BargeMonitor.requestAuthorization() }
         Notifier.requestAuth()
         server.onTurn = { [weak self] turn in
             Task { @MainActor in
@@ -434,7 +446,7 @@ final class AppController: ObservableObject {
         Log.write("speak done")
         // Barge-in: Sir talked over Parley — listen now (even after a speak-only line), with
         // the seconds he already spoke.
-        let barged = phone.takeBarge()
+        let barged = phone.takeBarge() || takeLocalBarge()
         if barged { Log.write("barge-in: listening") }
 
         // speak-only turn (<speak-end>): no mic, no pill. Resume media (queue permitting),
@@ -952,21 +964,66 @@ final class AppController: ObservableObject {
         // Unterwegs: the Mac stays silent; only a call voices anything.
         if phone.away { Log.write("Unterwegs → not on the Mac's speaker"); return }
         let player = TTSPlayer(rate: config.speakingRate)
+        localBarged = false
+        localPreroll = []
+        let watch = text.isEmpty ? nil : watchForBarge(text, player: player)
+        speaking = player
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
-        await synthesize(text, config: config, prefetched: prefetched) { player.enqueue(pcmChunk: $0) }
+        await synthesize(text, config: config, prefetched: prefetched) { if !localBarged { player.enqueue(pcmChunk: $0) } }
         // Audible "you can talk now" beep after the speech — but ONLY on listen turns.
         // A speak-end turn plays a silent 0.02s finish marker instead (no cue: nobody is
         // being asked to talk). Beeping BEFORE the mic starts is fine because the prepared
         // AUHAL start is near-instant; beeping AFTER mic start is silent on this system.
-        await withCheckedContinuation { cont in
-            if beep { player.scheduleBeep { cont.resume() } }
-            else { player.scheduleBeep(seconds: 0.02, amplitude: 0.0) { cont.resume() } }
+        // A barge-in cuts the voice (its silence() fires the beep's completion) and skips the beep.
+        if !localBarged {
+            await withCheckedContinuation { cont in
+                if beep { player.scheduleBeep { cont.resume() } }
+                else { player.scheduleBeep(seconds: 0.02, amplitude: 0.0) { cont.resume() } }
+            }
+            if !localBarged { try? await Task.sleep(nanoseconds: 120_000_000) }
         }
-        try? await Task.sleep(nanoseconds: 120_000_000)
+        speaking = nil
         player.stop()
+        if let watch { localPreroll = watch() }
         // Minimal settle before the mic claims the device — AUHAL needs far less than the
         // old cold engine start; the watchdog covers the rare stuck case.
         try? await Task.sleep(nanoseconds: 100_000_000)
+    }
+
+    /// Barge-in at the Mac: an on-device recognizer listens while `player` speaks `line` —
+    /// through the player's echo-cancelled mic (speakers), or the built-in mic when the voice
+    /// goes to Bluetooth headphones (no echo there; their own mic would drop them to call
+    /// quality). Returns the stop, which hands back the last 2 s of mic; nil = not listening.
+    private func watchForBarge(_ line: String, player: TTSPlayer) -> (() -> [Int16])? {
+        guard bargeIn, let monitor = BargeMonitor(line: line) else { return nil }
+        monitor.onBarge = { Task { @MainActor [weak self] in self?.bargeHeard() } }
+        let feed: @Sendable (AVAudioPCMBuffer) -> Void = { monitor.feed($0) }
+        if let out = AudioDevices.defaultDevice(input: false), AudioDevices.isBluetooth(out) {
+            // ponytail: a Bluetooth *speaker* echoes into the built-in mic un-cancelled; the word
+            // rule (only words not in the line count) is the guard there.
+            guard let builtIn = AudioDevices.builtInInput() else { return nil }
+            let mic = AUHALInput()
+            guard mic.prepare(device: builtIn), mic.start(onBuffer: feed) else { mic.teardown(); return nil }
+            monitor.start()
+            Log.write("barge: listening on the built-in mic")
+            return { mic.teardown(); return monitor.stop() }
+        }
+        guard player.listen(feed) else { return nil }
+        monitor.start()
+        Log.write("barge: listening (echo-cancelled)")
+        return { monitor.stop() }
+    }
+
+    private func bargeHeard() {
+        guard let speaking, !localBarged else { return }
+        localBarged = true
+        speaking.silence()
+        Log.write("barge-in at the Mac: Parley stops")
+    }
+
+    private func takeLocalBarge() -> Bool {
+        defer { localBarged = false }
+        return localBarged
     }
 
     // Google Cloud TTS (Chirp3 HD): one-shot synthesize → PCM → enqueue.
@@ -1176,7 +1233,7 @@ final class AppController: ObservableObject {
             Task { @MainActor in self?.hud.push(level) }
         }
         let wav = await withCheckedContinuation { cont in
-            mic.start { wav in cont.resume(returning: wav) }
+            mic.start(preroll: preroll ? localPreroll : []) { wav in cont.resume(returning: wav) }
         }
         mic.onLevel = nil
         hud.finish()

@@ -95,6 +95,38 @@ enum AudioDevices {
         return status == noErr
     }
 
+    /// The system default input or output device.
+    static func defaultDevice(input: Bool) -> AudioDeviceID? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: input ? kAudioHardwarePropertyDefaultInputDevice : kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var dev = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &dev) == noErr,
+              dev != 0 else { return nil }
+        return dev
+    }
+
+    static func transport(_ id: AudioDeviceID) -> UInt32 {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr ? value : 0
+    }
+
+    static func isBluetooth(_ id: AudioDeviceID) -> Bool {
+        [kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE].contains(transport(id))
+    }
+
+    /// The Mac's own microphone (MacBook, iMac), if it has one.
+    static func builtInInput() -> AudioDeviceID? {
+        inputDevices().first { transport($0.id) == kAudioDeviceTransportTypeBuiltIn }?.id
+    }
+
     // MARK: - private
 
     private static func hasInput(_ id: AudioDeviceID) -> Bool {

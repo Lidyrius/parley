@@ -79,6 +79,27 @@ final class TTSPlayer {
         if timePitch.rate != v { timePitch.rate = v }
     }
 
+    /// Barge-in on the speaker: Apple's voice processing on this engine (echo cancellation
+    /// against what it plays), its mic to `onBuffer`. Before start(); false = not available.
+    private var listening = false
+
+    func listen(_ onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) -> Bool {
+        let input = engine.inputNode
+        do { try input.setVoiceProcessingEnabled(true) } catch {
+            Log.write("barge: voice processing unavailable (\(error.localizedDescription))")
+            return false
+        }
+        if #available(macOS 14.0, *) {
+            // Parley pauses media itself; don't let voice processing duck everything else too.
+            input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+        }
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { return false }
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buf, _ in onBuffer(buf) }
+        listening = true
+        return true
+    }
+
     func start() throws {
         carry.removeAll(keepingCapacity: true)   // fresh playback; drop any stale odd byte
         // Output level for GET /status (same dB→0…1 mapping as the mic).
@@ -135,8 +156,16 @@ final class TTSPlayer {
         return buf
     }
 
+    /// Barge-in: cut the voice now, keep the engine (and its mic) running until stop().
+    /// Scheduled completions (the beep's) fire.
+    func silence() { node.stop() }
+
     func stop() {
         engine.mainMixerNode.removeTap(onBus: 0)
+        if listening {
+            engine.inputNode.removeTap(onBus: 0)
+            listening = false
+        }
         node.stop()
         engine.stop()
         carry.removeAll()

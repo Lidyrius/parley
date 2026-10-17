@@ -18,7 +18,8 @@ public sealed class MicCapture
 
     /// Record until trailing silence (or timeout); returns 16 kHz mono 16-bit WAV bytes.
     /// In an iPhone call the phone's microphone is the input.
-    /// `preroll`: barge-in — Sir already started talking, so the phone's last seconds count too.
+    /// `preroll`: barge-in — Sir already started talking, so the last seconds of mic (the phone's
+    /// or this PC's, 16 kHz frames) count too.
     public async Task<byte[]> Record(IReadOnlyList<byte[]>? preroll = null)
     {
         if (PhoneCall.Active)
@@ -41,6 +42,13 @@ public sealed class MicCapture
         double resamplePos = 0;
         float prevSample = 0;
         var reason = "error";
+        foreach (var frame in preroll ?? Array.Empty<byte[]>())
+        {
+            var chunk = PhoneAudio.ToSamples(frame);
+            samples.AddRange(chunk);
+            totalDuration += chunk.Length / TargetRate;
+            if (totalDuration >= VadGraceSeconds) vad.Process(Vad.Db(PhoneAudio.Rms(chunk)), chunk.Length / TargetRate);
+        }
 
         try
         {
@@ -165,7 +173,7 @@ public sealed class MicCapture
         return Wav.Encode(captured);
     }
 
-    private static float[] ToMonoFloats(byte[] buffer, int bytes, WaveFormat fmt, int channels)
+    internal static float[] ToMonoFloats(byte[] buffer, int bytes, WaveFormat fmt, int channels)
     {
         if (fmt.Encoding == WaveFormatEncoding.IeeeFloat || fmt.Encoding == WaveFormatEncoding.Extensible)
         {

@@ -38,6 +38,7 @@ enum Keychain {
         case phoneActivityStart // the Live Activity's push-to-start token (hex), `activity` frame
         case phoneActivityToken // the running Live Activity's update token (hex); empty = none runs
         case autoAwayOnLock // "1" = the Mac locked for a minute counts as Unterwegs (updates ring the phone)
+        case bargeOff       // "1" = barge-in off (default on: talking over Parley stops it and it listens)
         case apnsKeyId      // APNs auth key id (from AuthKey_<KEYID>.p8)
         case apnsTeamId     // Apple team id; empty = 384887N3UL
         case apnsKeyP8      // the .p8 PEM text

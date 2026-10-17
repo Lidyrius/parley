@@ -62,6 +62,7 @@ it's completely terminal-agnostic. In Codex, activate the skill explicitly with
 - 🗣️ **Spoken summaries** — the agent ends each turn with a short spoken line, in your
   language and in the Jarvis character.
 - 🎤 **Voice replies** — talk back; silence ends the recording automatically.
+- ✋ **Barge-in** — just talk over Parley ("Stopp", or anything) and it stops and listens.
 - 🌊 **Live waveform pill** — a floating, always-on-top capsule shows it's listening and
   a volume-pulsing orb, so you know you're heard.
 - ⏯️ **Smart media pause** — pauses YouTube/Spotify while speaking, resumes after —

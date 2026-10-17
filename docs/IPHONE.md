@@ -259,6 +259,18 @@ frames dropped until the host stops speaking) and sends `{"t":"barge"}`. The hos
 last 2 s of mic, so the first words count; after a speak-only line too (the hook injects any
 transcript). Einstellungen → "Parley unterbrechen" (on by default).
 
+Without a call the host does the same on its own speaker (menu / tray "Parley unterbrechen",
+on by default):
+
+- **Mac** (`Barge.swift`): an on-device `SFSpeechRecognizer` (de-DE) on the playback engine's
+  echo-cancelled mic (AVAudioEngine voice processing) — or, when the voice goes to Bluetooth
+  headphones, on the built-in mic (no echo there; the headphones' own mic would drop them to call
+  quality). A barge cuts the voice, skips the beep and records with the last 2 s of that mic.
+  Asks once for speech recognition.
+- **Windows** (`Barge.cs`): Windows speech recognition (German dictation; needs
+  "Online-Spracherkennung" on) while the line plays; a WASAPI capture keeps the last 2 s. No echo
+  cancellation — the word rule is the guard.
+
 ### Fragerunde, Wachhund, Unterwegs by itself
 
 - **Fragerunde:** for 4 min after a call ends, a new update doesn't ring: it waits (`queued`, the
