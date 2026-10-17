@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UserNotifications
 
 @main
 struct ParleyMobileApp: App {
@@ -17,10 +18,28 @@ struct ParleyMobileApp: App {
 
 /// iOS also launches the app in the background — for a VoIP push or a Siri "Parley anrufen" —
 /// where no scene comes up. The model (PushKit, CallKit) must exist at launch for those.
-final class AppDelegate: NSObject, UIApplicationDelegate {
+/// It also owns the notification side (Unterwegs + Stumm): the token, and opening the session a
+/// tapped notification is about.
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         _ = AppModel.shared
+        UNUserNotificationCenter.current().delegate = self
+        application.registerForRemoteNotifications()   // the token needs no permission; showing does
         return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        AppModel.shared.alertToken = PushPayload.hex(deviceToken)
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard let id = response.notification.request.content.userInfo["session"] as? String else { return }
+        await MainActor.run { AppModel.shared.open(session: id) }
     }
 }
 
@@ -45,15 +64,40 @@ final class AppModel {
         }
     }
 
+    /// Stumm (with Unterwegs): updates arrive as a notification, the reply is typed. Persisted;
+    /// sent on change and after every (re)connect.
+    var silent: Bool {
+        didSet {
+            guard silent != oldValue else { return }
+            UserDefaults.standard.set(silent, forKey: Self.silentKey)
+            relay.send(Outgoing.silent(silent))
+            if silent, !demo {
+                Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) }
+            }
+        }
+    }
+    /// The open session (navigation path; a tapped notification sets it).
+    var path: [String] = []
+    /// v3: each session's history as last received, its images, and messages typed but not yet seen in it.
+    private(set) var histories: [String: [ChatItem]] = [:]
+    private(set) var images: [String: UIImage] = [:]
+    private(set) var pending: [String: [String]] = [:]
+    @ObservationIgnored private var requestedImages: Set<String> = []
+    @ObservationIgnored var alertToken: String? {
+        didSet { if alertToken != oldValue { sendAlertToken() } }
+    }
+
     @ObservationIgnored private var push: PushRegistry?
     @ObservationIgnored private var isForeground = false
     @ObservationIgnored private let pushEnvironment = PushEnvironment.current()
     private static let awayKey = "awayMode"
+    private static let silentKey = "silentMode"
 
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         demo = arguments.contains("-demo")
         call = CallController(relay: relay, demo: demo)
         away = !demo && UserDefaults.standard.bool(forKey: Self.awayKey)
+        silent = !demo && UserDefaults.standard.bool(forKey: Self.silentKey)
         call.ensureRelay = { [weak self] in self?.dialIfIdle() }
         call.onEnded = { [weak self] in self?.callEnded() }
         relay.onEvent = { [weak self] in self?.handle($0) }
@@ -136,6 +180,32 @@ final class AppModel {
         }
     }
 
+    // MARK: - session view (v3)
+
+    func open(session id: String) { path = [id] }
+
+    func loadHistory(_ id: String) {
+        if demo { histories[id] = Demo.history; return }
+        relay.send(Outgoing.history(id: id))
+    }
+
+    func loadImage(session id: String, key: String) {
+        guard !demo, requestedImages.insert(key).inserted else { return }
+        relay.send(Outgoing.image(id: id, key: key))
+    }
+
+    func say(_ text: String, to id: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        pending[id, default: []].append(t)
+        if !demo { relay.send(Outgoing.say(id: id, text: t)) }
+    }
+
+    private func sendAlertToken() {
+        guard let token = alertToken, !demo else { return }
+        relay.send(Outgoing.alertPush(token: token, env: pushEnvironment))
+    }
+
     private func sendPushToken() {
         guard let token = push?.token else { return }
         relay.send(Outgoing.push(token: token, env: pushEnvironment))
@@ -146,7 +216,9 @@ final class AppModel {
         case .opened:
             // Per-connection state: the host may have restarted or the socket been replaced.
             relay.send(Outgoing.away(away))
+            relay.send(Outgoing.silent(silent))
             sendPushToken()
+            sendAlertToken()
             if call.phase.isActive { relay.send(Outgoing.call(started: true)) }
             call.relayChanged()
         case .closed:
@@ -157,6 +229,13 @@ final class AppModel {
             call.relayChanged()
         case .frame(.audio(let state, let label)):
             call.hostAudioChanged(state, label: label)
+        case .frame(.history(let id, let items)):
+            histories[id] = items
+            // A typed message shows as sent once the session has it (typed or as a reply).
+            let seen = Set(items.filter { $0.kind == .user || $0.kind == .voice }.compactMap(\.text))
+            pending[id]?.removeAll { seen.contains($0) }
+        case .frame(.image(let key, let data)):
+            if let data, let image = UIImage(data: data) { images[key] = image }
         case .frame(.ring(let label)):
             // In the background the VoIP push rings instead (the socket is closed there anyway).
             if isForeground { call.reportIncoming(label: label) }

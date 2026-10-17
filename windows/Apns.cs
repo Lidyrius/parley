@@ -96,6 +96,31 @@ public static class Apns
         }
     }
 
+    // A visible notification (Unterwegs + Stumm): "Parley · Tippfrei" + the spoken line; tapping
+    // it opens that session on the phone. Grouped per session.
+    public const string AlertTopic = "de.developaway.parley.mobile";
+
+    public static async Task<bool> SendAlert(string title, string body, string session)
+    {
+        var (token, env) = PhoneCall.Alert;
+        if (token.Length == 0)
+        {
+            Log.Write("apns: no notification token from the phone yet — open the app once with Stumm on");
+            return false;
+        }
+        var payload = new Dictionary<string, object>
+        {
+            ["aps"] = new Dictionary<string, object>
+            {
+                ["alert"] = new { title, body },
+                ["sound"] = "default",
+                ["thread-id"] = session,
+            },
+            ["session"] = session,
+        };
+        return await Send(token, env, AlertTopic, "alert", JsonSerializer.Serialize(payload), expiration: null);
+    }
+
     // true = APNs accepted it (200). Every outcome is logged; nothing throws.
     public static async Task<bool> SendVoip(string label)
     {
@@ -105,6 +130,12 @@ public static class Apns
             Log.Write("apns: no VoIP token from the phone yet");
             return false;
         }
+        // Ring now or never: a call that arrives after the 45 s wait would ring for nothing.
+        return await Send(token, env, Topic, "voip", JsonSerializer.Serialize(new { label }), expiration: "0");
+    }
+
+    private static async Task<bool> Send(string token, string env, string topic, string pushType, string json, string? expiration)
+    {
         var c = Config.Load();
         if (c.ApnsKeyId.Length == 0 || c.ApnsKeyP8.Length == 0)
         {
@@ -123,14 +154,13 @@ public static class Apns
             // Per request too: DefaultRequestVersion only applies to HttpClient's own helpers.
             Version = HttpVersion.Version20,
             VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-            Content = new StringContent(JsonSerializer.Serialize(new { label }), Encoding.UTF8, "application/json"),
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
         req.Headers.Authorization = new AuthenticationHeaderValue("bearer", jwt);
-        req.Headers.TryAddWithoutValidation("apns-topic", Topic);
-        req.Headers.TryAddWithoutValidation("apns-push-type", "voip");
+        req.Headers.TryAddWithoutValidation("apns-topic", topic);
+        req.Headers.TryAddWithoutValidation("apns-push-type", pushType);
         req.Headers.TryAddWithoutValidation("apns-priority", "10");
-        // Ring now or never: a call that arrives after the 45 s wait would ring for nothing.
-        req.Headers.TryAddWithoutValidation("apns-expiration", "0");
+        if (expiration is not null) req.Headers.TryAddWithoutValidation("apns-expiration", expiration);
         try
         {
             using var resp = await Http.SendAsync(req);

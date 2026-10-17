@@ -46,3 +46,17 @@ enum Demo {
         return #"{"t":"sessions","at":\#(t),"sessions":[\#(sessions.joined(separator: ","))],"today":\#(today)}"#
     }
 }
+
+extension Demo {
+    /// The session view's sample history (every kind of entry).
+    static let history: [ChatItem] = [
+        ChatItem(id: "d1", kind: .user, text: "Bau bitte den Export-Button in die Rechnungsliste ein."),
+        ChatItem(id: "d2", kind: .tool, text: "Read · InvoiceList.swift"),
+        ChatItem(id: "d3", kind: .tool, text: "Edit · InvoiceList.swift"),
+        ChatItem(id: "d4", kind: .tool, text: "Bash · Run the invoice tests"),
+        ChatItem(id: "d5", kind: .assistant, text: "Der Button ist drin und exportiert als **CSV**. Alle 24 Tests sind grün."),
+        ChatItem(id: "d6", kind: .image, fromUser: false),
+        ChatItem(id: "d7", kind: .speak, text: "Der Export ist eingebaut, Sir. Soll ich auch PDF anbieten?"),
+        ChatItem(id: "d8", kind: .voice, text: "Ja, mach PDF auch noch."),
+    ]
+}

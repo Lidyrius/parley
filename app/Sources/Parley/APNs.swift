@@ -69,6 +69,29 @@ enum APNs {
         return req
     }
 
+    // A visible notification (Unterwegs + Stumm): "Parley · Tippfrei" + the spoken line; tapping
+    // it opens that session on the phone. Grouped per session.
+    static let alertTopic = "de.developaway.parley.mobile"
+
+    static func alertRequest(token: String, env: String, jwt: String, title: String, body: String, session: String) -> URLRequest {
+        var req = URLRequest(url: URL(string: "https://\(host(env: env))/3/device/\(token)")!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("bearer \(jwt)", forHTTPHeaderField: "authorization")
+        req.setValue(alertTopic, forHTTPHeaderField: "apns-topic")
+        req.setValue("alert", forHTTPHeaderField: "apns-push-type")
+        req.setValue("10", forHTTPHeaderField: "apns-priority")
+        req.setValue("application/json", forHTTPHeaderField: "content-type")
+        struct Alert: Encodable { let title: String; let body: String }
+        struct Aps: Encodable {
+            let alert: Alert; let sound = "default"; let threadId: String
+            enum CodingKeys: String, CodingKey { case alert, sound, threadId = "thread-id" }
+        }
+        struct Payload: Encodable { let aps: Aps; let session: String }
+        req.httpBody = try? JSONEncoder().encode(Payload(aps: Aps(alert: Alert(title: title, body: body), threadId: session), session: session))
+        return req
+    }
+
     /// APNs' error body: {"reason":"BadDeviceToken"}.
     static func reason(_ data: Data) -> String? {
         ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["reason"] as? String
@@ -117,6 +140,16 @@ final class APNsClient: @unchecked Sendable {
     /// One VoIP push; returns the HTTP status (-1 = not sent) and APNs' reason. Logged either way.
     @discardableResult
     func push(token: String, env: String, label: String) async -> (status: Int, reason: String?) {
+        await send(env: env) { APNs.request(token: token, env: env, jwt: $0, label: label) }
+    }
+
+    /// One visible notification (Unterwegs + Stumm).
+    @discardableResult
+    func notify(token: String, env: String, title: String, body: String, session: String) async -> (status: Int, reason: String?) {
+        await send(env: env) { APNs.alertRequest(token: token, env: env, jwt: $0, title: title, body: body, session: session) }
+    }
+
+    private func send(env: String, _ build: (String) -> URLRequest) async -> (status: Int, reason: String?) {
         guard configured else { log("apns: no push key — skipped"); return (-1, "no key") }
         let jwt: String
         do { jwt = try providerToken() } catch {
@@ -124,7 +157,7 @@ final class APNsClient: @unchecked Sendable {
             return (-1, "bad key")
         }
         do {
-            let (data, resp) = try await transport(APNs.request(token: token, env: env, jwt: jwt, label: label))
+            let (data, resp) = try await transport(build(jwt))
             let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
             let reason = APNs.reason(data)
             log("apns: push \(env) → \(status)\(reason.map { " \($0)" } ?? "")")

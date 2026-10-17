@@ -119,6 +119,8 @@ public static class PhoneCall
     private static string? _speaker;           // the session voiced now — rides on every `audio` frame
     private static string? _sent;              // the state|speaker the phone has (null = unknown → send)
     private static bool _away;
+    private static bool _silent;
+    private static string _alertToken = "";
     private static string _pushToken = "", _pushEnv = "production";
 
     // ---- relay seam ------------------------------------------------------------------
@@ -144,6 +146,25 @@ public static class PhoneCall
     public static bool Away
     {
         get { lock (Gate) return _away; }
+    }
+
+    public static bool Silent
+    {
+        get { lock (Gate) return _silent; }
+    }
+
+    // Where a notification goes: the alert token and the push environment (same app build).
+    public static (string Token, string Env) Alert
+    {
+        get { lock (Gate) return (_alertToken, _pushEnv); }
+    }
+
+    // A text frame to the phone (v3 answers: history, image), whether or not a call is up.
+    public static async Task Reply(string frame)
+    {
+        RelayClient? relay;
+        lock (Gate) relay = _relay;
+        if (relay is not null) await relay.SendTextAsync(frame);
     }
 
     public static (string Token, string Env) Push
@@ -350,6 +371,8 @@ public static class PhoneCall
         lock (Gate)
         {
             _away = c.PhoneAway;
+            _silent = c.PhoneSilent;
+            _alertToken = c.PhoneAlertToken;
             _pushToken = c.PhonePushToken;
             _pushEnv = c.PhonePushEnv;
         }
@@ -365,6 +388,33 @@ public static class PhoneCall
         }
         Config.Merge(new Dictionary<string, string> { ["phoneAway"] = on ? "1" : "0" });
         Log.Write($"phone: Unterwegs-Modus {(on ? "an" : "aus")}");
+    }
+
+    // `silent`: Stumm on / off (with Unterwegs: a notification instead of a call), kept.
+    public static void SetSilent(bool on)
+    {
+        lock (Gate)
+        {
+            if (_silent == on) return;
+            _silent = on;
+        }
+        Config.Merge(new Dictionary<string, string> { ["phoneSilent"] = on ? "1" : "0" });
+        Log.Write($"phone: Stumm {(on ? "an" : "aus")}");
+    }
+
+    // `push` with kind "alert": the notification token, kept across restarts.
+    public static void SetAlert(string token, string env)
+    {
+        token = token.Trim().ToLowerInvariant();
+        if (!Apns.ValidToken(token)) { Log.Write("phone: ignored a malformed notification token"); return; }
+        lock (Gate)
+        {
+            if (_alertToken == token) return;
+            _alertToken = token;
+            _pushEnv = env == "development" ? "development" : "production";
+        }
+        Config.Merge(new Dictionary<string, string> { ["phoneAlertToken"] = token, ["phonePushEnv"] = env == "development" ? "development" : "production" });
+        Log.Write("phone: notification push token stored");
     }
 
     // `push`: the phone's VoIP token (hex) and APNs environment, kept across restarts.
@@ -406,7 +456,7 @@ public static class Ringer
     public static async Task<bool> Ring(string label)
     {
         if (PhoneCall.Active) return true;
-        if (!PhoneCall.Away) return false;
+        if (!PhoneCall.Away || PhoneCall.Silent) return false;   // Stumm: the turn sends a notification instead
         var pushed = await Apns.SendVoip(label);
         var rang = await PhoneCall.SendRing(label);
         if (!pushed && !rang)

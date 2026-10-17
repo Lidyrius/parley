@@ -58,6 +58,17 @@ struct Snapshot: Equatable, Sendable {
     var at: Double?
 }
 
+/// One entry of a session's history (`history` frame, v3): what was typed or said, Claude's
+/// text, the line Parley spoke, a tool step, or an image (pixels via an `image` frame).
+struct ChatItem: Identifiable, Equatable, Sendable {
+    enum Kind: String, Sendable { case user, voice, assistant, speak, tool, image, other }
+    var id: String
+    var kind: Kind = .other
+    var text: String?
+    var fromUser = false            // which side an image sits on
+    var at: Double?
+}
+
 /// What the host is doing with the call audio (`audio` frame, v2).
 enum HostAudio: String, Sendable, CaseIterable {
     case speaking, listening, idle
@@ -71,6 +82,10 @@ enum Frame: Equatable, Sendable {
     case audio(HostAudio, label: String?)
     /// v2: an update wants the phone (the push's twin for a phone that is open in the foreground).
     case ring(label: String?)
+    /// v3: a session's recent history, newest last.
+    case history(id: String, items: [ChatItem])
+    /// v3: one image of a history (JPEG); nil = the host could not find it.
+    case image(key: String, data: Data?)
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
 
     /// nil for anything that is not a JSON message with a `t` (e.g. the relay's `pong`).
@@ -85,6 +100,12 @@ enum Frame: Equatable, Sendable {
             guard let state = head.state.flatMap(HostAudio.init(rawValue:)) else { return .other(head.t) }
             return .audio(state, label: head.label.flatMap(Self.clean))
         case "ring": return .ring(label: head.label.flatMap(Self.clean))
+        case "history":
+            guard let h = try? decoder.decode(HistoryWire.self, from: data) else { return .other(head.t) }
+            return .history(id: h.id, items: h.items.items)
+        case "image":
+            guard let w = try? decoder.decode(ImageWire.self, from: data) else { return .other(head.t) }
+            return .image(key: w.key, data: w.data.flatMap { Data(base64Encoded: $0) })
         default: return .other(head.t)
         }
     }
@@ -94,6 +115,9 @@ enum Frame: Equatable, Sendable {
         let s = label.trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? nil : s
     }
+
+    private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem> }
+    private struct ImageWire: Decodable { let key: String; let data: String? }
 
     private struct Head: Decodable {
         let t: String
@@ -125,6 +149,16 @@ enum Outgoing {
     }
     /// v2: Unterwegs-Modus on or off.
     static func away(_ on: Bool) -> String { encode(["t": .s("away"), "on": .b(on)]) }
+    /// v3: Stumm — with Unterwegs on, updates come as a notification instead of a call.
+    static func silent(_ on: Bool) -> String { encode(["t": .s("silent"), "on": .b(on)]) }
+    /// v3: the notification push token (hex).
+    static func alertPush(token: String, env: PushEnvironment) -> String {
+        encode(["t": .s("push"), "token": .s(token), "env": .s(env.rawValue), "kind": .s("alert")])
+    }
+    /// v3: a session's history, one of its images, a typed message for it.
+    static func history(id: String) -> String { encode(["t": .s("history"), "id": .s(id)]) }
+    static func image(id: String, key: String) -> String { encode(["t": .s("image"), "id": .s(id), "key": .s(key)]) }
+    static func say(id: String, text: String) -> String { encode(["t": .s("say"), "id": .s(id), "text": .s(text)]) }
 
     private enum Value: Encodable {
         case s(String), b(Bool)
@@ -200,6 +234,18 @@ extension Session: Decodable {
         tasks = (c.lenient(.tasks) as Lossy<BackgroundTask>?)?.items ?? []
         host = c.lenient(.host)
         stats = c.lenient(.stats)
+    }
+}
+
+extension ChatItem: Decodable {
+    private enum K: String, CodingKey { case id, k, text, who, at }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = (c.lenient(.k) as String?).flatMap(Kind.init(rawValue:)) ?? .other
+        text = c.lenient(.text)
+        fromUser = (c.lenient(.who) as String?) == "user"
+        at = c.lenient(.at)
     }
 }
 

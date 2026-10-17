@@ -147,6 +147,15 @@ public sealed class TurnPipeline
         Log.Write($"turn start project={turn.Project} listen={turn.WantsListen}");
         _resumeGen++;
 
+        // Unterwegs + Stumm: no call, no voice on the PC — a notification, and the session waits
+        // (parked) for a reply typed on the phone.
+        if (PhoneCall.Away && PhoneCall.Silent && !PhoneCall.Active)
+        {
+            Log.Write($"Unterwegs + Stumm → notification for {turn.SpokenLabel}");
+            _ = Apns.SendAlert($"Parley · {turn.SpokenLabel}", turn.Speak, Server.SessionKey(turn));
+            return ("", turn.WantsListen, 0, "");
+        }
+
         if (Muted)
         {
             Log.Write("muted → skipping turn");

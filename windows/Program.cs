@@ -158,6 +158,23 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneWake _: _server.StartWake(); break;
             case PhonePush p: PhoneCall.SetPush(p.Token, p.Env); break;
             case PhoneAway a: PhoneCall.SetAway(a.On); break;
+            case PhoneSilent s: PhoneCall.SetSilent(s.On); break;
+            case PhoneAlert a: PhoneCall.SetAlert(a.Token, a.Env); break;
+            // v3: the phone's session view — history from Claude Code's transcript, its images,
+            // and typed messages (delivered like a resume instruction).
+            // ponytail: re-reads the 3 MB tail per poll (~3 s while open); cache by mtime if it shows.
+            case PhoneHistory h:
+                _ = Task.Run(() => PhoneCall.Reply(Transcript.HistoryFrame(h.Id,
+                    Transcript.File(h.Id) is { } path ? Transcript.Items(Transcript.TailLines(path)) : new List<Transcript.Item>())));
+                break;
+            case PhoneImage i:
+                _ = Task.Run(() => PhoneCall.Reply(Transcript.ImageFrame(i.Key,
+                    Transcript.File(i.Id) is { } path ? Transcript.Image(path, i.Key) : null)));
+                break;
+            case PhoneSay s:
+                Log.Write($"phone: typed message for {s.Id} ({s.Text.Length} chars)");
+                _server.Resume(s.Id, s.Text);
+                break;
         }
     }
 

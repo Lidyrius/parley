@@ -10,6 +10,7 @@ struct SessionCard: View {
     var fillsRow = true
     @Binding var isExpanded: Bool
     let onResume: () -> Void
+    var onOpen: () -> Void = {}
     @State private var resumeTaps = 0
     @ScaledMetric(relativeTo: .headline) private var ringSize: CGFloat = 40
 
@@ -31,22 +32,13 @@ struct SessionCard: View {
 
     private var isOff: Bool { session.state == .stopped }
 
+    // The tile opens the session's history; the chevron (its own button) shows the details.
     private func header(_ at: Double) -> some View {
-        Button {
-            guard session.stats != nil else { return }
-            withAnimation(.snappy) { isExpanded.toggle() }
-        } label: {
+        Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top) {
                     RingView(session: session, skew: skew, size: ringSize)
                     Spacer(minLength: 0)
-                    if session.stats != nil {
-                        Image(systemName: "chevron.down")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                            .padding(4)
-                    }
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(session.name)
@@ -71,7 +63,24 @@ struct SessionCard: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(session.name), \(Fmt.stateLabel(session)), \(Fmt.timer(session, at: at))")
-        .accessibilityHint(session.stats == nil ? "" : isExpanded ? "Details ausblenden" : "Details anzeigen")
+        .accessibilityHint("Verlauf öffnen")
+        .overlay(alignment: .topTrailing) {
+            if session.stats != nil {
+                Button {
+                    withAnimation(.snappy) { isExpanded.toggle() }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                        .padding(10)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(-6)
+                .accessibilityLabel(isExpanded ? "Details ausblenden" : "Details anzeigen")
+            }
+        }
     }
 
     private var stateText: AttributedString {

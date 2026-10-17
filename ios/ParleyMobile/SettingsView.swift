@@ -23,10 +23,14 @@ struct SettingsView: View {
                     Toggle(isOn: $model.away) {
                         Label("Unterwegs-Modus", systemImage: "car.fill")
                     }
+                    Toggle(isOn: $model.silent) {
+                        Label("Stumm", systemImage: "bell.slash.fill")
+                    }
+                    .disabled(!model.away)
                 } header: {
                     Text("Anrufe")
                 } footer: {
-                    Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“.")
+                    Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Mit „Stumm“ kommt stattdessen eine Mitteilung; tippe darauf und antworte schriftlich. Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“.")
                 }
                 if model.pairing != nil {
                     Section {

@@ -45,6 +45,18 @@ final class APNsTests: XCTestCase {
         XCTAssertThrowsError(try APNs.privateKey(pem: "nope"))
     }
 
+    func testAlertRequest() throws {
+        let req = APNs.alertRequest(token: "ab12", env: "production", jwt: "J", title: "Parley · Tippfrei", body: "Fertig, Sir.", session: "s1")
+        XCTAssertEqual(req.url?.absoluteString, "https://api.push.apple.com/3/device/ab12")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "apns-topic"), "de.developaway.parley.mobile")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "apns-push-type"), "alert")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(req.httpBody)) as? [String: Any])
+        let aps = try XCTUnwrap(body["aps"] as? [String: Any])
+        XCTAssertEqual(body["session"] as? String, "s1")
+        XCTAssertEqual(aps["thread-id"] as? String, "s1")
+        XCTAssertEqual(aps["alert"] as? [String: String], ["title": "Parley · Tippfrei", "body": "Fertig, Sir."])
+    }
+
     func testRequestHostsHeadersAndPayload() throws {
         let prod = APNs.request(token: "ab12", env: "production", jwt: "J", label: "Tippfrei")
         XCTAssertEqual(prod.url?.absoluteString, "https://api.push.apple.com/3/device/ab12")

@@ -115,6 +115,11 @@ struct FrameTests {
         #expect(Outgoing.away(false) == #"{"on":false,"t":"away"}"#)
         #expect(Outgoing.push(token: "00ffab", env: .production) == #"{"env":"production","t":"push","token":"00ffab"}"#)
         #expect(Outgoing.push(token: "01", env: .development) == #"{"env":"development","t":"push","token":"01"}"#)
+        #expect(Outgoing.alertPush(token: "ab", env: .production) == #"{"env":"production","kind":"alert","t":"push","token":"ab"}"#)
+        #expect(Outgoing.silent(true) == #"{"on":true,"t":"silent"}"#)
+        #expect(Outgoing.history(id: "s1") == #"{"id":"s1","t":"history"}"#)
+        #expect(Outgoing.image(id: "s1", key: "u#0") == #"{"id":"s1","key":"u#0","t":"image"}"#)
+        #expect(Outgoing.say(id: "s1", text: "Mach \"weiter\"") == #"{"id":"s1","t":"say","text":"Mach \"weiter\""}"#)
     }
 
     /// What the phone sends must read back the same through a generic JSON parser (the host's).
@@ -144,5 +149,18 @@ struct FrameTests {
         #expect(snap.sessions.contains { $0.state == .waiting && $0.until != nil })
         #expect(snap.sessions.contains { $0.state == .background && !$0.tasks.isEmpty })
         #expect(snap.today?.rateLimits.count == 2)
+    }
+
+    @Test func historyAndImageFrames() {
+        let h = Frame.decode(#"{"t":"history","id":"s1","items":[{"id":"a#0","k":"assistant","text":"Fertig.","at":1},{"id":"r#0","k":"image","who":"assistant"},{"id":"v#0","k":"voice","text":"Ja"},{"id":"x#0","k":"новое"},{"k":"user"},7]}"#)
+        #expect(h == .history(id: "s1", items: [
+            ChatItem(id: "a#0", kind: .assistant, text: "Fertig.", at: 1),
+            ChatItem(id: "r#0", kind: .image),
+            ChatItem(id: "v#0", kind: .voice, text: "Ja"),
+            ChatItem(id: "x#0", kind: .other),
+        ]))
+        #expect(Frame.decode(#"{"t":"history","items":[]}"#) == .other("history"))
+        #expect(Frame.decode(#"{"t":"image","key":"r#0","mime":"image/jpeg","data":"/9j/"}"#) == .image(key: "r#0", data: Data([0xFF, 0xD8, 0xFF])))
+        #expect(Frame.decode(#"{"t":"image","key":"r#0"}"#) == .image(key: "r#0", data: nil))
     }
 }

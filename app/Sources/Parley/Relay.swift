@@ -129,10 +129,24 @@ enum RelayFrame {
         case "push":
             guard let token = f["token"] as? String,
                   !token.isEmpty, token.count <= 200, token.allSatisfy(\.isHexDigit) else { return nil }
-            return .push(token: token.lowercased(), env: f["env"] as? String == "development" ? "development" : "production")
+            let env = f["env"] as? String == "development" ? "development" : "production"
+            return f["kind"] as? String == "alert" ? .alert(token: token.lowercased(), env: env) : .push(token: token.lowercased(), env: env)
         case "away":
             guard let on = f["on"] as? Bool else { return nil }
             return .away(on)
+        case "silent":
+            guard let on = f["on"] as? Bool else { return nil }
+            return .silent(on)
+        case "history":
+            guard let id = f["id"] as? String, !id.isEmpty else { return nil }
+            return .history(id)
+        case "image":
+            guard let id = f["id"] as? String, let key = f["key"] as? String, !id.isEmpty, !key.isEmpty else { return nil }
+            return .image(id: id, key: key)
+        case "say":
+            guard let id = f["id"] as? String, let text = f["text"] as? String, !id.isEmpty,
+                  case let t = text.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, t.count <= 8000 else { return nil }
+            return .say(id: id, text: t)
         default:
             return nil
         }
@@ -169,6 +183,12 @@ enum PhoneEvent: Equatable, Sendable {
     case wake                                 // "Hey Parley" while the host was idle
     case push(token: String, env: String)     // VoIP push token (hex), "production" | "development"
     case away(Bool)                           // Unterwegs-Modus
+    // v3 (docs/IPHONE.md): Stumm, notification push token, a session's history / image, typing.
+    case silent(Bool)                         // Unterwegs + Stumm: a notification instead of a call
+    case alert(token: String, env: String)    // notification push token (hex)
+    case history(String)                      // send that session's recent history
+    case image(id: String, key: String)       // send one image of it
+    case say(id: String, text: String)        // a typed message for that session
 }
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never

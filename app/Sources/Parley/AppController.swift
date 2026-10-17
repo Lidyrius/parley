@@ -91,6 +91,24 @@ final class AppController: ObservableObject {
         }
         let server = self.server
         phone.onWake = { server.wakeFromPhone() }
+        // v3: the phone's session view — history (from Claude Code's transcript), its images,
+        // and typed messages (delivered like a routed instruction).
+        phone.onChat = { [phone] event in
+            DispatchQueue.global(qos: .userInitiated).async {
+                switch event {
+                case .history(let id):
+                    // ponytail: re-reads the 3 MB tail per poll (~3 s while the view is open); cache by mtime if it shows.
+                    let items = Transcript.file(for: id).map { Transcript.items(Transcript.tailLines($0)) } ?? []
+                    phone.reply(Transcript.historyFrame(session: id, items: items))
+                case .image(let id, let key):
+                    phone.reply(Transcript.imageFrame(key: key, jpeg: Transcript.file(for: id).flatMap { Transcript.image(in: $0, key: key) }))
+                case .say(let id, let text):
+                    Log.write("phone: typed message for \(id) (\(text.count) chars)")
+                    server.deliverRouted(id: id, instruction: text)
+                default: break
+                }
+            }
+        }
         phone.onChange = { [weak self] in Task { @MainActor in self?.syncPhone() } }
         syncPhone()
         let push = APNsCredentials.load()
@@ -161,6 +179,9 @@ final class AppController: ObservableObject {
             Notifier.notify(title: "Parley · \(turn.spokenLabel)", body: turn.speak)
             return TurnReply(transcript: "", park: false)
         }
+        // Unterwegs + Stumm: no call, no voice on the Mac — a notification, and the session waits
+        // (parked) for a reply typed on the phone.
+        if phone.away && phone.silent && !phone.callActive { return silentTurn(turn, key: key) }
         let ringing = shouldRing
         if effectivelyMuted && !phone.callActive && !ringing { return mutedTurn() }
 
@@ -402,7 +423,22 @@ final class AppController: ObservableObject {
     // Ring only in Unterwegs-Modus with no call yet, and when the phone can be reached at all
     // (a VoIP push, or the relay for a phone in the foreground).
     private var shouldRing: Bool {
-        phone.away && !phone.callActive && ((apns.configured && phone.pushTarget != nil) || relayConnected == true)
+        phone.away && !phone.silent && !phone.callActive && ((apns.configured && phone.pushTarget != nil) || relayConnected == true)
+    }
+
+    private func silentTurn(_ turn: TurnPayload, key: String) -> TurnReply {
+        Log.write("Unterwegs + Stumm → notification for \(turn.spokenLabel)")
+        if let target = phone.alertTarget {
+            let apns = self.apns, session = ControlServer.sessionKey(turn)
+            Task.detached {
+                await apns.notify(token: target.token, env: target.env, title: "Parley · \(turn.spokenLabel)",
+                                  body: turn.speak, session: session)
+            }
+        } else {
+            Log.write("phone: no notification token yet — open the app once with Stumm on")
+        }
+        setStatus(key, "paused")
+        return TurnReply(transcript: "", park: turn.wantsListen)
     }
 
     // VoIP push + `ring`, then wait ≤ 45 s for `call start`. true = the call is connected.

@@ -25,6 +25,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
 
     var onChange: (@Sendable () -> Void)?   // call or Unterwegs-Modus changed (menu)
     var onWake: (@Sendable () -> Void)?     // `wake` during a connected call
+    var onChat: (@Sendable (PhoneEvent) -> Void)?   // history / image / say (v3)
 
     private let lock = NSLock()
     private let store: Store
@@ -59,6 +60,13 @@ final class PhoneHub: CallLink, @unchecked Sendable {
 
     var callActive: Bool { lock.withLock { active } }
     var away: Bool { store.get(.phoneAway) == "1" }
+    var silent: Bool { store.get(.phoneSilent) == "1" }
+
+    // Where a notification push goes; nil until the phone sent its alert token.
+    var alertTarget: (token: String, env: String)? {
+        guard let t = store.get(.phoneAlertToken), !t.isEmpty else { return nil }
+        return (t, store.get(.phonePushEnv) ?? "production")
+    }
 
     // Where a VoIP push goes; nil until the phone sent `push`.
     var pushTarget: (token: String, env: String)? {
@@ -105,6 +113,18 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             store.set(on ? "1" : "0", .phoneAway)
             log("phone: Unterwegs-Modus \(on ? "an" : "aus")")
             onChange?()
+        case .silent(let on):
+            guard silent != on else { return }
+            store.set(on ? "1" : "0", .phoneSilent)
+            log("phone: Stumm \(on ? "an" : "aus")")
+            onChange?()
+        case .alert(let token, let env):
+            guard store.get(.phoneAlertToken) != token else { return }
+            store.set(token, .phoneAlertToken)
+            store.set(env, .phonePushEnv)
+            log("phone: notification push token stored (\(env))")
+        case .history, .image, .say:
+            onChat?(event)
         case .resume:
             break
         }
@@ -137,6 +157,11 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     var callGeneration: Int { lock.withLock { generation } }
 
     func isLive(_ generation: Int) -> Bool { lock.withLock { active && self.generation == generation } }
+
+    // A text frame to the phone (v3 answers: history, image), whether or not a call is up.
+    func reply(_ frame: String) {
+        lock.withLock { sendText }?(frame)
+    }
 
     func sendAudio(_ frame: Data) {
         let send = lock.withLock { active ? sendBinary : nil }

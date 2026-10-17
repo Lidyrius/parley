@@ -13,9 +13,15 @@ final class PhoneFrameTests: XCTestCase {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"away","on":true}"#), .away(true))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"away","on":false}"#), .away(false))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"resume","id":"s1"}"#), .resume("s1"))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"silent","on":true}"#), .silent(true))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"push","token":"AB","env":"production","kind":"alert"}"#), .alert(token: "ab", env: "production"))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1"}"#), .history("s1"))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"image","id":"s1","key":"u#0"}"#), .image(id: "s1", key: "u#0"))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"say","id":"s1","text":"  Mach weiter. "}"#), .say(id: "s1", text: "Mach weiter."))
         for junk in [#"{"t":"call","state":"ringing"}"#, #"{"t":"call"}"#, #"{"t":"push","token":"not hex!"}"#,
                      #"{"t":"push","token":""}"#, #"{"t":"away","on":"yes"}"#, #"{"t":"hello","device":"x"}"#,
-                     #"{"t":"audio","state":"idle"}"#, "pong", "[]", #"{"state":"start"}"#] {
+                     #"{"t":"audio","state":"idle"}"#, "pong", "[]", #"{"state":"start"}"#,
+                     #"{"t":"say","id":"s1","text":"  "}"#, #"{"t":"history"}"#, #"{"t":"image","id":"s1"}"#] {
             XCTAssertNil(RelayFrame.parse(junk), junk)
         }
     }
@@ -114,6 +120,23 @@ final class PhoneHubTests: XCTestCase {
         XCTAssertEqual(wire.changes, 1)
         hub.handle(.away(false))
         XCTAssertFalse(hub.away)
+    }
+
+    func testStummAlertTokenAndChatEvents() {
+        let seen = Wire()
+        hub.onChat = { e in seen.lock.withLock { seen.text.append("\(e)") } }
+        XCTAssertFalse(hub.silent)
+        XCTAssertNil(hub.alertTarget)
+        hub.handle(.silent(true))
+        XCTAssertTrue(hub.silent)
+        XCTAssertEqual(wire.changes, 1)
+        hub.handle(.alert(token: "beef", env: "production"))
+        XCTAssertEqual(hub.alertTarget?.token, "beef")
+        hub.handle(.history("s1"))
+        hub.handle(.say(id: "s1", text: "Weiter"))
+        XCTAssertEqual(seen.text.count, 2)
+        hub.reply("x")                                     // answers go out without a call
+        XCTAssertEqual(wire.text, ["x"])
     }
 
     func testRelayGoneEndsTheCall() async {

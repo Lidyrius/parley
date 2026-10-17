@@ -141,3 +141,22 @@ Everything in v1 stays. Additions (unknown types are still ignored everywhere):
 - **Incoming**: PushKit VoIP push → CallKit incoming call "Parley · <label>" → answering connects
   the relay (if needed) and sends `call start`. The phone registers its VoIP token with `push`.
 - **Unterwegs-Modus** toggle in the app → `away`.
+
+## Protocol v3 — session view, typing, Unterwegs + Stumm
+
+Tapping a tile opens that session: its recent history (read by the host from Claude Code's own
+transcript, `~/.claude/projects/<folder>/<session id>.jsonl`, last 3 MB), screenshots included, and
+a text field that sends a message into the session. **Stumm** (only with Unterwegs on) replaces
+the call with a notification; the session then waits for a typed reply.
+
+| `t`       | direction      | body |
+|-----------|----------------|------|
+| `history` | phone → host   | `{"id":"<session>"}` send that session's history (the phone polls ~3 s while the view is open). |
+| `history` | host → phone   | `{"id":…,"items":[{"id":"<uuid>#<n>","k":"user|voice|assistant|speak|tool|image","text":…,"who":"user|assistant","at":<ms>}]}` — newest ≤ 60, oldest dropped until the frame is ≤ 200 KB. `voice` = a spoken reply, `speak` = the line Parley spoke, `tool` = "Bash · what for", `image` = a screenshot / pasted image (pixels via `image`). Empty `items` for a session without a transcript (Codex). |
+| `image`   | phone → host   | `{"id":"<session>","key":"<item id>"}` |
+| `image`   | host → phone   | `{"key":…,"mime":"image/jpeg","data":"<base64>"}` downscaled to fit one frame; `data` missing = not found. |
+| `say`     | phone → host   | `{"id":"<session>","text":"…"}` delivered like a routed instruction: at once to a session that waits (parked / mod), else at its next turn. |
+| `silent`  | phone → host   | `{"on":true|false}` **Stumm**. With `away` on, a turn sends a notification push instead of ringing and parks the session (listen turns) until a `say` arrives. |
+| `push`    | phone → host   | `{"token","env","kind":"alert"}` the notification push token (topic `de.developaway.parley.mobile`); without `kind` it is the VoIP token as before. |
+
+Notification push payload: `{"aps":{"alert":{"title":"Parley · <label>","body":"<spoken line>"},"sound":"default","thread-id":"<session>"},"session":"<session>"}` — tapping it opens that session.

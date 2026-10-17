@@ -15,10 +15,10 @@ struct OverviewView: View {
     var body: some View {
         @Bindable var model = model
         let relay = model.relay
-        NavigationStack {
+        NavigationStack(path: $model.path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    StatusHeader(relay: relay, away: $model.away)
+                    StatusHeader(relay: relay, away: $model.away, silent: $model.silent)
                     if let failure = model.call.failure {
                         CallFailureBanner(text: failure) { model.call.failure = nil }
                             .transition(.move(edge: .top).combined(with: .opacity))
@@ -43,6 +43,7 @@ struct OverviewView: View {
                 try? await Task.sleep(for: .milliseconds(600))
             }
             .sheet(isPresented: $showsSettings) { SettingsView() }
+            .navigationDestination(for: String.self) { SessionView(id: $0) }
         }
     }
 
@@ -96,7 +97,8 @@ struct OverviewView: View {
                             let opened = row.items.contains { expanded.contains($0.id) }
                             ForEach(row.items) { s in
                                 SessionCard(session: s, skew: skew, canResume: canSend, fillsRow: !opened,
-                                            isExpanded: binding(s.id), onResume: { resume(s.id) })
+                                            isExpanded: binding(s.id), onResume: { resume(s.id) },
+                                            onOpen: { model.open(session: s.id) })
                             }
                             ForEach(row.items.count..<columns, id: \.self) { _ in
                                 Color.clear.gridCellUnsizedAxes(.vertical)
@@ -132,6 +134,7 @@ struct OverviewView: View {
 private struct StatusHeader: View {
     let relay: Relay
     @Binding var away: Bool
+    @Binding var silent: Bool
 
     var body: some View {
         let status = relay.status
@@ -142,10 +145,14 @@ private struct StatusHeader: View {
                     pill(status)
                     Spacer(minLength: 8)
                     awayToggle
+                    if away { silentToggle }
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     pill(status)
-                    awayToggle
+                    HStack(spacing: 8) {
+                        awayToggle
+                        if away { silentToggle }
+                    }
                 }
             }
 
@@ -174,6 +181,14 @@ private struct StatusHeader: View {
         }
         .toggleStyle(PillToggleStyle())
         .accessibilityHint("Updates klingeln als Anruf auf dem iPhone")
+    }
+
+    private var silentToggle: some View {
+        Toggle(isOn: $silent) {
+            Label("Stumm", systemImage: "bell.slash.fill")
+        }
+        .toggleStyle(PillToggleStyle())
+        .accessibilityHint("Statt eines Anrufs kommt eine Mitteilung, du antwortest schriftlich")
     }
 
     /// Breaks only between the pairs: each value stays glued to its label.

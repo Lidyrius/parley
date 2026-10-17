@@ -131,7 +131,17 @@ public static class RelayFrame
                 case "wake":
                     return new PhoneWake();
                 case "push":
-                    return Str("token") is { Length: > 0 } token ? new PhonePush(token, Str("env") ?? "production") : null;
+                    if (Str("token") is not { Length: > 0 } token) return null;
+                    return Str("kind") == "alert" ? new PhoneAlert(token, Str("env") ?? "production") : new PhonePush(token, Str("env") ?? "production");
+                case "silent":
+                    return root.TryGetProperty("on", out var silent) && (silent.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                        ? new PhoneSilent(silent.ValueKind == JsonValueKind.True) : null;
+                case "history":
+                    return Str("id") is { Length: > 0 } hid ? new PhoneHistory(hid) : null;
+                case "image":
+                    return Str("id") is { Length: > 0 } iid && Str("key") is { Length: > 0 } key ? new PhoneImage(iid, key) : null;
+                case "say":
+                    return Str("id") is { Length: > 0 } sid && Str("text")?.Trim() is { Length: > 0 and <= 8000 } text ? new PhoneSay(sid, text) : null;
                 case "away":
                     return root.TryGetProperty("on", out var flag) && (flag.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         ? new PhoneAway(flag.ValueKind == JsonValueKind.True) : null;
@@ -159,6 +169,12 @@ public sealed record PhoneCallState(bool Started) : PhoneMessage;    // `call` s
 public sealed record PhoneWake : PhoneMessage { }                     // "Hey Parley" while the host was idle
 public sealed record PhonePush(string Token, string Env) : PhoneMessage;   // VoIP token, production | development
 public sealed record PhoneAway(bool On) : PhoneMessage;              // Unterwegs-Modus
+// v3: Stumm, the notification push token, a session's history / image, a typed message.
+public sealed record PhoneSilent(bool On) : PhoneMessage;
+public sealed record PhoneAlert(string Token, string Env) : PhoneMessage;
+public sealed record PhoneHistory(string Id) : PhoneMessage;
+public sealed record PhoneImage(string Id, string Key) : PhoneMessage;
+public sealed record PhoneSay(string Id, string Text) : PhoneMessage;
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never
 // counts), else at least every 10 s. A new connection starts with a fresh one → sent at once.
