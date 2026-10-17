@@ -8,6 +8,10 @@ namespace Parley;
 // Groq Whisper transcription + intent classification — same models and prompts as macOS.
 public static class Groq
 {
+    // ~0.2 s with reasoning off. Groq retires models without notice — a 4xx shows up in the
+    // log as "groq classify http 400". Same model as macOS.
+    private const string Model = "qwen/qwen3.8-27b";
+
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     /// wav: 16 kHz mono 16-bit WAV bytes. Returns "" on failure (never an error body).
@@ -98,7 +102,8 @@ public static class Groq
         {
             var payload = new
             {
-                model = "llama-3.3-70b-versatile",
+                model = Model,
+                reasoning_effort = "none",
                 temperature = 0,
                 max_tokens = 8,
                 messages = new object[]
@@ -138,7 +143,8 @@ public static class Groq
             var list = string.Join("\n", options.Select((o, i) => $"{i + 1}. {o}"));
             var payload = new
             {
-                model = "llama-3.3-70b-versatile",
+                model = Model,
+                reasoning_effort = "none",
                 temperature = 0,
                 max_tokens = 4,
                 messages = new object[]
@@ -169,7 +175,8 @@ public static class Groq
         {
             var payload = new
             {
-                model = "llama-3.3-70b-versatile",
+                model = Model,
+                reasoning_effort = "none",
                 temperature = 0,
                 max_tokens = 8,
                 messages = new object[]
@@ -183,7 +190,12 @@ public static class Groq
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.GroqKey);
             req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
             using var resp = await Http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return Intent.Other;
+            if (!resp.IsSuccessStatusCode)
+            {
+                var err = await resp.Content.ReadAsStringAsync();
+                Log.Write($"groq classify http {(int)resp.StatusCode}: {err[..Math.Min(160, err.Length)]}");
+                return Intent.Other;
+            }
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
             var content = doc.RootElement.GetProperty("choices")[0]
                 .GetProperty("message").GetProperty("content").GetString() ?? "";
@@ -212,7 +224,8 @@ public static class Groq
         {
             var payload = new
             {
-                model = "llama-3.3-70b-versatile",
+                model = Model,
+                reasoning_effort = "none",
                 temperature = 0,
                 max_tokens = 300,
                 response_format = new { type = "json_object" },
@@ -266,7 +279,8 @@ public static class Groq
         {
             var payload = new
             {
-                model = "llama-3.3-70b-versatile",
+                model = Model,
+                reasoning_effort = "none",
                 temperature = 0,
                 max_tokens = 160,
                 response_format = new { type = "json_object" },

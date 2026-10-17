@@ -24,6 +24,7 @@ enum ControlCommand {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
             "model": Classifier.model,
+            "reasoning_effort": "none",
             "temperature": 0,
             "max_tokens": 160,
             "response_format": ["type": "json_object"],

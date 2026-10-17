@@ -773,7 +773,11 @@ final class AppController: ObservableObject {
         guard !config.groqKey.isEmpty else { return .other }
         do {
             let (data, resp) = try await URLSession.shared.data(for: Classifier.request(text: text, apiKey: config.groqKey))
-            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return .other }
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            guard code == 200 else {
+                Log.write("groq classify http \(code): \(String(data: data, encoding: .utf8)?.prefix(160) ?? "")")
+                return .other
+            }
             return Classifier.parse(data)
         } catch { return .other }
     }

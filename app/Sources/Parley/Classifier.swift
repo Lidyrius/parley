@@ -25,7 +25,9 @@ enum Intent: String, CaseIterable {
 // Classify the transcript via Groq (OpenAI-compatible chat). Fast + cheap; falls back
 // to .other on any error. Only request construction + parsing are unit-tested.
 enum Classifier {
-    static let model = "llama-3.3-70b-versatile"   // more accurate on combos/questions, still ~0.3s
+    // ~0.2 s with reasoning off (every request sends `reasoning_effort: none`). Groq retires
+    // models without notice — a 4xx here shows up in the log as "groq … http 400".
+    static let model = "qwen/qwen3.8-27b"
     static let endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
     private static let system = """
@@ -81,7 +83,7 @@ enum Classifier {
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
-            "model": model, "temperature": 0, "max_tokens": maxTokens,
+            "model": model, "reasoning_effort": "none", "temperature": 0, "max_tokens": maxTokens,
             "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -94,7 +96,7 @@ enum Classifier {
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
-            "model": model, "temperature": 0, "max_tokens": 8,
+            "model": model, "reasoning_effort": "none", "temperature": 0, "max_tokens": 8,
             "messages": [["role": "system", "content": waitSystem], ["role": "user", "content": text]],
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -119,6 +121,7 @@ enum Classifier {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
             "model": model,
+            "reasoning_effort": "none",
             "temperature": 0,
             "max_tokens": 4,
             "messages": [

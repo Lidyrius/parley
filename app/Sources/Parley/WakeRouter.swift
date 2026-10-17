@@ -29,7 +29,7 @@ enum WakeRouter {
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
-            "model": Classifier.model, "temperature": 0, "max_tokens": 60,
+            "model": Classifier.model, "reasoning_effort": "none", "temperature": 0, "max_tokens": 60,
             "response_format": ["type": "json_object"],
             "messages": [["role": "system", "content": sys], ["role": "user", "content": text]],
         ]
