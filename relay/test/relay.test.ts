@@ -197,13 +197,29 @@ describe("forwarding", () => {
 		phone.ws.close(1000);
 	});
 
-	it("forwards unknown types but drops binary, non-JSON, typeless and oversized frames", async () => {
+	it("forwards call audio (binary) both ways and drops oversized audio", async () => {
 		const room = newRoom();
 		const host = await connect(room, "host");
 		const phone = await connect(room, "phone");
 		await phone.next(); // peer
 
-		host.ws.send(new Uint8Array([1, 2, 3]));
+		host.ws.send(new Uint8Array(640)); // one 20 ms PCM16 frame, host → phone
+		expect(await phone.next()).toBe("<binary>");
+		phone.ws.send(new Uint8Array(70 * 1024)); // oversized: dropped
+		phone.ws.send(new Uint8Array(640)); // phone → host
+		phone.send({ t: "wake" });
+		expect(await host.next()).toBe("<binary>");
+		expect(await host.json()).toEqual({ t: "wake" }); // the oversized one never arrived
+		host.ws.close(1000);
+		phone.ws.close(1000);
+	});
+
+	it("forwards unknown types but drops non-JSON, typeless and oversized text frames", async () => {
+		const room = newRoom();
+		const host = await connect(room, "host");
+		const phone = await connect(room, "phone");
+		await phone.next(); // peer
+
 		host.send("not json");
 		host.send({ no: "type" });
 		host.send({ t: "sessions", pad: "x".repeat(300 * 1024) });

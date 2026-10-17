@@ -9,6 +9,7 @@ type Role = "host" | "phone";
 const ROOM_ID = /^[A-Za-z0-9_-]{16,64}$/;
 // A `sessions` frame is a few KB; anything near this is a sender bug, not data worth relaying.
 const MAX_FRAME_BYTES = 256 * 1024;
+const MAX_AUDIO_BYTES = 64 * 1024;
 // Close code for a host connection that a newer host connection replaced (private range).
 const CLOSE_REPLACED = 4000;
 
@@ -69,8 +70,16 @@ export class Room extends DurableObject<Env> {
 	}
 
 	webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
-		// Binary frames are reserved for audio (stage 2); a replaced host may still be draining.
-		if (typeof message !== "string" || ws.readyState !== WebSocket.OPEN) return;
+		// A replaced host may still be draining.
+		if (ws.readyState !== WebSocket.OPEN) return;
+		const fromHost = this.ctx.getTags(ws).includes("host");
+		// Binary frames are call audio (PCM16 16 kHz, 20 ms): forwarded as they are, never stored.
+		if (typeof message !== "string") {
+			if (message.byteLength > MAX_AUDIO_BYTES) return;
+			if (fromHost) this.toPhones(message);
+			else for (const host of this.open("host")) trySend(host, message);
+			return;
+		}
 		const bytes = new TextEncoder().encode(message).byteLength;
 		if (bytes > MAX_FRAME_BYTES) {
 			console.warn(JSON.stringify({ msg: "frame too large, dropped", bytes }));
@@ -79,7 +88,7 @@ export class Room extends DurableObject<Env> {
 		const t = frameType(message);
 		if (t === undefined) return;
 
-		if (this.ctx.getTags(ws).includes("host")) {
+		if (fromHost) {
 			if (t === "sessions") this.ctx.storage.kv.put("sessions", message);
 			this.toPhones(message);
 		} else {
@@ -111,7 +120,7 @@ export class Room extends DurableObject<Env> {
 			.filter((ws) => ws !== except && ws.readyState === WebSocket.OPEN);
 	}
 
-	private toPhones(frame: string): void {
+	private toPhones(frame: string | ArrayBuffer): void {
 		for (const phone of this.open("phone")) trySend(phone, frame);
 	}
 }
@@ -158,7 +167,7 @@ function frameType(frame: string): string | undefined {
 	}
 }
 
-function trySend(ws: WebSocket, frame: string): void {
+function trySend(ws: WebSocket, frame: string | ArrayBuffer): void {
 	try {
 		ws.send(frame);
 	} catch {
