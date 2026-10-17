@@ -454,12 +454,11 @@ private struct LiveCaption: View {
             .coordinateSpace(.named("caption"))
             .geometryGroup()   // the block moves as one; words never animate their own positions
             .offset(y: -scroll)
+            .padding(.top, 4)    // room for accents and descenders: two whole lines, the third still out of sight
         }
         .frame(maxWidth: 360)
-        .frame(height: lineHeight * 2 + lineSpacing, alignment: .top)
+        .frame(height: lineHeight * 2 + lineSpacing + 10, alignment: .top)
         .clipped()
-        .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.8),
-                                     .init(color: .black.opacity(0.35), location: 1)], startPoint: .top, endPoint: .bottom))
         .onPreferenceChange(WordFrames.self) { frames = $0 }
         .task(id: caption) {
             // The voice's clock at ~30 Hz drives which word is spoken; the scroll follows lines.

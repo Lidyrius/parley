@@ -144,9 +144,10 @@ final class CallController {
         uuid = id
         self.label = label
         phase = .ringing
+        // In the app already (or no CallKit, the simulator): the call screen slides up at once.
+        if provider == nil || UIApplication.shared.applicationState == .active { showsScreen = true }
         ensureRelay()  // be ready by the time it is answered
         guard let provider else {
-            showsScreen = true  // no CallKit (simulator): the in-app screen rings
             reported()
             return
         }
