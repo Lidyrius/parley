@@ -67,8 +67,7 @@ public static class AudioOut
             var rest = await PhoneCall.PlayAsync(pcm, sampleRate, cancellationToken);
             if (rest is null || rest.Length < 2) return;
             Log.Write("phone: call gone mid-playback → the rest on the speaker");
-            pcm = rest;
-            sampleRate = PhoneAudio.SampleRate;
+            pcm = rest;   // still at sampleRate
         }
         var format = new WaveFormat(sampleRate, 16, 1);
         var provider = new BufferedWaveProvider(format)

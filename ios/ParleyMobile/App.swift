@@ -82,6 +82,9 @@ final class AppModel {
     private(set) var histories: [String: [ChatItem]] = [:]
     private(set) var images: [String: UIImage] = [:]
     private(set) var pending: [String: [String]] = [:]
+    /// Sessions whose history goes further back than what is loaded; an older page in flight.
+    private(set) var hasOlder: Set<String> = []
+    private(set) var loadingOlder: Set<String> = []
     @ObservationIgnored private var requestedImages: Set<String> = []
     @ObservationIgnored var alertToken: String? {
         didSet { if alertToken != oldValue { sendAlertToken() } }
@@ -189,6 +192,24 @@ final class AppModel {
         relay.send(Outgoing.history(id: id))
     }
 
+    /// The page before the oldest loaded item (scrolled to the top).
+    func loadOlder(_ id: String) {
+        guard !demo, hasOlder.contains(id), !loadingOlder.contains(id), let first = histories[id]?.first else { return }
+        loadingOlder.insert(id)
+        relay.send(Outgoing.history(id: id, before: first.id))
+    }
+
+    /// A received page merged into what is loaded: an older page goes in front; the newest page
+    /// replaces the tail from its first item on (older pages stay) — or everything, when it no
+    /// longer overlaps.
+    nonisolated static func merge(_ old: [ChatItem], page: [ChatItem], before: String?) -> [ChatItem] {
+        if let before {
+            return old.first?.id == before ? page + old : old
+        }
+        guard let first = page.first, let j = old.firstIndex(where: { $0.id == first.id }) else { return page }
+        return Array(old[..<j]) + page
+    }
+
     func loadImage(session id: String, key: String) {
         guard !demo, requestedImages.insert(key).inserted else { return }
         relay.send(Outgoing.image(id: id, key: key))
@@ -229,8 +250,16 @@ final class AppModel {
             call.relayChanged()
         case .frame(.audio(let state, let label)):
             call.hostAudioChanged(state, label: label)
-        case .frame(.history(let id, let items)):
-            histories[id] = items
+        case .frame(.history(let id, let items, let before, let more)):
+            let old = histories[id] ?? []
+            histories[id] = Self.merge(old, page: items, before: before)
+            if before != nil {
+                loadingOlder.remove(id)
+                if more { hasOlder.insert(id) } else { hasOlder.remove(id) }
+            } else if (items.first.map { first in old.firstIndex { $0.id == first.id } ?? 0 } ?? 0) == 0 {
+                // Nothing older loaded in front of this page: its own `more` says.
+                if more { hasOlder.insert(id) } else { hasOlder.remove(id) }
+            }
             // A typed message shows as sent once the session has it (typed or as a reply).
             let seen = Set(items.filter { $0.kind == .user || $0.kind == .voice }.compactMap(\.text))
             pending[id]?.removeAll { seen.contains($0) }

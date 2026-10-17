@@ -9,6 +9,10 @@ struct SessionView: View {
     @State private var zoomed: ZoomedImage?
     @State private var sent = 0
     @State private var openGroups: Set<String> = []
+    /// Paging: only once the view settled at the bottom (else the top row's first layout
+    /// would page at once); the row to stay on when an older page lands in front.
+    @State private var canPage = false
+    @State private var keep: String?
 
     var body: some View {
         let session = model.relay.snapshot?.sessions.first { $0.id == id }
@@ -25,6 +29,16 @@ struct SessionView: View {
                     } else if items == nil {
                         ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                     }
+                    if model.hasOlder.contains(id) {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .onAppear {
+                                guard canPage, !model.loadingOlder.contains(id) else { return }
+                                keep = Self.rows(items ?? []).first?.id
+                                model.loadOlder(id)
+                            }
+                    }
                     ForEach(Self.rows(items ?? [])) { r in
                         switch r {
                         case .item(let item): row(item).id(item.id)
@@ -40,6 +54,21 @@ struct SessionView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .onChange(of: items?.first?.id) {
+                // An older page went in front: stay on the row that was on top.
+                guard let keep else { return }
+                self.keep = nil
+                Task {
+                    try? await Task.sleep(for: .milliseconds(30))
+                    proxy.scrollTo(keep, anchor: .top)
+                }
+            }
+            .onChange(of: items == nil) {
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    canPage = true
+                }
+            }
             .onChange(of: (items?.last?.id ?? "") + "\(pending.count)") {
                 // After the new rows are laid out, else it stops short of the end.
                 Task {

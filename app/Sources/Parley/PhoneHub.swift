@@ -34,6 +34,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     private var generation = 0
     private var desired: PhoneAudioState = .idle
     private var sentState: PhoneAudioState?
+    private var rate = PhoneAudioFormat.sampleRate   // the call's down rate
     private var speaker: String?   // the session Parley voices now — sent with every `audio` frame
     private var sink: (@Sendable (Data) -> Void)?
     private var sendText: (@Sendable (String) -> Void)?
@@ -59,6 +60,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     // MARK: - state
 
     var callActive: Bool { lock.withLock { active } }
+    var downRate: Int { lock.withLock { rate } }
     var away: Bool { store.get(.phoneAway) == "1" }
     var silent: Bool { store.get(.phoneSilent) == "1" }
 
@@ -77,8 +79,9 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     // A phone frame (resume is handled by the server).
     func handle(_ event: PhoneEvent) {
         switch event {
-        case .call(true):
+        case .call(true, let down):
             let (changed, state, send) = lock.withLock { () -> (Bool, PhoneAudioState, (@Sendable (String) -> Void)?) in
+                rate = down
                 guard !active else { return (false, desired, nil) }   // a repeated start keeps the call
                 active = true
                 generation += 1
@@ -86,10 +89,10 @@ final class PhoneHub: CallLink, @unchecked Sendable {
                 return (true, desired, sendText)
             }
             guard changed else { return }
-            log("phone: call connected")
+            log("phone: call connected (voice at \(down / 1000) kHz)")
             send?(RelayFrame.audio(state, label: lock.withLock { speaker }))
             onChange?()
-        case .call(false):
+        case .call(false, _):
             let changed = lock.withLock { () -> Bool in
                 guard active else { return false }
                 active = false

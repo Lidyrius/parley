@@ -5,6 +5,8 @@ import XCTest
 final class PhoneFrameTests: XCTestCase {
     func testParsesTheV2FramesAndIgnoresTheRest() {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"start"}"#), .call(true))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"start","down":24000}"#), .call(true, down: 24000))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"start","down":44100}"#), .call(true, down: 16000))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"end"}"#), .call(false))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"wake"}"#), .wake)
         XCTAssertEqual(RelayFrame.parse(#"{"t":"push","token":"A1b2","env":"production"}"#), .push(token: "a1b2", env: "production"))
@@ -15,7 +17,8 @@ final class PhoneFrameTests: XCTestCase {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"resume","id":"s1"}"#), .resume("s1"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"silent","on":true}"#), .silent(true))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"push","token":"AB","env":"production","kind":"alert"}"#), .alert(token: "ab", env: "production"))
-        XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1"}"#), .history("s1"))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1"}"#), .history(id: "s1", before: nil))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1","before":"u#0"}"#), .history(id: "s1", before: "u#0"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"image","id":"s1","key":"u#0"}"#), .image(id: "s1", key: "u#0"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"say","id":"s1","text":"  Mach weiter. "}"#), .say(id: "s1", text: "Mach weiter."))
         for junk in [#"{"t":"call","state":"ringing"}"#, #"{"t":"call"}"#, #"{"t":"push","token":"not hex!"}"#,
@@ -132,7 +135,7 @@ final class PhoneHubTests: XCTestCase {
         XCTAssertEqual(wire.changes, 1)
         hub.handle(.alert(token: "beef", env: "production"))
         XCTAssertEqual(hub.alertTarget?.token, "beef")
-        hub.handle(.history("s1"))
+        hub.handle(.history(id: "s1", before: nil))
         hub.handle(.say(id: "s1", text: "Weiter"))
         XCTAssertEqual(seen.text.count, 2)
         hub.reply("x")                                     // answers go out without a call

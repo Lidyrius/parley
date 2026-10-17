@@ -11,6 +11,8 @@ final class FakeLink: CallLink, @unchecked Sendable {
     private var _states: [PhoneAudioState] = []
     private var _sink: (@Sendable (Data) -> Void)?
     var dieAfterFrames: Int?
+    var down = PhoneAudioFormat.sampleRate
+    var downRate: Int { down }
 
     var live: Bool { get { lock.withLock { _live } } set { lock.withLock { _live = newValue } } }
     var frames: [Data] { lock.withLock { _frames } }
@@ -173,8 +175,23 @@ final class PhoneVoiceTests: XCTestCase {
         XCTAssertEqual(link.states, [.speaking])
     }
 
+    // A phone that asked for 24 kHz gets the TTS samples as they are: 960-byte frames, no resampling.
+    func testHiFiPhoneGets24kHzUnchanged() async {
+        let link = FakeLink()
+        link.down = PhoneAudioFormat.hiFiRate
+        let voice = PhoneVoice(link: link, rate: 1)
+        let samples = PCMFrames.int16(sine(440, rate: 24000, seconds: 0.2))
+        voice.enqueue(PCMFrames.bytes(samples))
+        let rest = await voice.finish(beep: false)
+        XCTAssertNil(rest)
+        // 0.2 s speech + 20 ms silent marker at 24 kHz = 5280 samples = 11 frames of 480.
+        XCTAssertEqual(link.frames.count, 11)
+        XCTAssertTrue(link.frames.allSatisfy { $0.count == 960 })
+        XCTAssertEqual(PCMFrames.samples(link.frames[0]), Array(samples.prefix(480)))   // bit-exact
+    }
+
     // The call ends mid-line: what the phone did not play comes back for the Mac's speaker
-    // (heard = sent minus the 5 prebuffered frames, mapped back to 24 kHz).
+    // (heard = sent minus the 13 frames of lead, 0.25 s, mapped back to 24 kHz).
     func testCallEndingMidLineHandsBackTheUnheardSpeech() async throws {
         let link = FakeLink()
         link.dieAfterFrames = 30
@@ -184,7 +201,7 @@ final class PhoneVoiceTests: XCTestCase {
         let finished = await voice.finish(beep: true)
         let rest = try XCTUnwrap(finished)
         let heardFrames = Double(pcm.count - rest.count) / (320 * 1.5 * 2)
-        XCTAssertEqual(heardFrames, 25, accuracy: 2)                                // 30 sent − 5 lead
+        XCTAssertEqual(heardFrames, 17, accuracy: 2)                                // 30 sent − 13 lead
         XCTAssertEqual(rest, pcm.subdata(in: (pcm.count - rest.count)..<pcm.count))
     }
 

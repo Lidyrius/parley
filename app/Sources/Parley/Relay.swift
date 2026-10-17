@@ -120,7 +120,7 @@ enum RelayFrame {
             return .resume(id)
         case "call":
             switch f["state"] as? String {
-            case "start": return .call(true)
+            case "start": return .call(true, down: f["down"] as? Int == PhoneAudioFormat.hiFiRate ? PhoneAudioFormat.hiFiRate : PhoneAudioFormat.sampleRate)
             case "end": return .call(false)
             default: return nil
             }
@@ -139,7 +139,7 @@ enum RelayFrame {
             return .silent(on)
         case "history":
             guard let id = f["id"] as? String, !id.isEmpty else { return nil }
-            return .history(id)
+            return .history(id: id, before: (f["before"] as? String).flatMap { $0.isEmpty ? nil : $0 })
         case "image":
             guard let id = f["id"] as? String, let key = f["key"] as? String, !id.isEmpty, !key.isEmpty else { return nil }
             return .image(id: id, key: key)
@@ -179,14 +179,14 @@ enum RelayFrame {
 // A phone's text frame (protocol v2 adds everything but `resume`).
 enum PhoneEvent: Equatable, Sendable {
     case resume(String)
-    case call(Bool)                           // true = the phone's call is connected, false = ended
+    case call(Bool, down: Int = PhoneAudioFormat.sampleRate)   // connected / ended; the voice's rate (v3: 24 kHz on request)
     case wake                                 // "Hey Parley" while the host was idle
     case push(token: String, env: String)     // VoIP push token (hex), "production" | "development"
     case away(Bool)                           // Unterwegs-Modus
     // v3 (docs/IPHONE.md): Stumm, notification push token, a session's history / image, typing.
     case silent(Bool)                         // Unterwegs + Stumm: a notification instead of a call
     case alert(token: String, env: String)    // notification push token (hex)
-    case history(String)                      // send that session's recent history
+    case history(id: String, before: String?) // send that session's newest history, or the page before an item
     case image(id: String, key: String)       // send one image of it
     case say(id: String, text: String)        // a typed message for that session
 }

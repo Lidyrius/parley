@@ -154,7 +154,7 @@ internal sealed class TrayApp : ApplicationContext
         switch (message)
         {
             case PhoneResume r: _server.StartResume(r.Id); break;
-            case PhoneCallState c: PhoneCall.OnCall(c.Started); break;
+            case PhoneCallState c: PhoneCall.OnCall(c.Started, c.Down); break;
             case PhoneWake _: _server.StartWake(); break;
             case PhonePush p: PhoneCall.SetPush(p.Token, p.Env); break;
             case PhoneAway a: PhoneCall.SetAway(a.On); break;
@@ -164,8 +164,11 @@ internal sealed class TrayApp : ApplicationContext
             // and typed messages (delivered like a resume instruction).
             // ponytail: re-reads the 3 MB tail per poll (~3 s while open); cache by mtime if it shows.
             case PhoneHistory h:
-                _ = Task.Run(() => PhoneCall.Reply(Transcript.HistoryFrame(h.Id,
-                    Transcript.File(h.Id) is { } path ? Transcript.Items(Transcript.TailLines(path)) : new List<Transcript.Item>())));
+                _ = Task.Run(() =>
+                {
+                    var (items, more) = Transcript.File(h.Id) is { } path ? Transcript.Page(path, h.Before) : (new List<Transcript.Item>(), false);
+                    return PhoneCall.Reply(Transcript.HistoryFrame(h.Id, items, h.Before, more));
+                });
                 break;
             case PhoneImage i:
                 _ = Task.Run(() => PhoneCall.Reply(Transcript.ImageFrame(i.Key,

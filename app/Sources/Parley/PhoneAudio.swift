@@ -13,6 +13,9 @@ enum PhoneAudioFormat {
     static let frameBytes = 640
     static let frameSeconds = 0.02
     static let ttsRate = Int(ElevenLabs.sampleRate)   // 24 kHz: Google + ElevenLabs PCM, cached clips
+    // A phone that asks for it (`call start` with `"down":24000`) gets the voice at the TTS's own
+    // 24 kHz — no resampling, the full band; older phones get 16 kHz. The mic stays 16 kHz.
+    static let hiFiRate = ttsRate
 }
 
 // What the host is doing with the call audio — the `audio` frame (the phone listens for the
@@ -26,6 +29,11 @@ protocol CallLink: AnyObject, Sendable {
     func sendAudio(_ frame: Data)                   // one 640-byte frame to the phone
     func setAudioState(_ state: PhoneAudioState)
     func setAudioSink(_ sink: (@Sendable (Data) -> Void)?)   // where the phone's mic frames go
+    var downRate: Int { get }                       // Parley's voice to the phone: 16 or 24 kHz
+}
+
+extension CallLink {
+    var downRate: Int { PhoneAudioFormat.sampleRate }
 }
 
 // MARK: - pure helpers
@@ -54,8 +62,7 @@ enum PCMFrames {
     }
 
     /// Whole 20 ms frames of `samples`, plus the rest (< 320 samples) for the next call.
-    static func frames(_ samples: [Int16]) -> (frames: [Data], rest: [Int16]) {
-        let size = PhoneAudioFormat.frameSamples
+    static func frames(_ samples: [Int16], size: Int = PhoneAudioFormat.frameSamples) -> (frames: [Data], rest: [Int16]) {
         let whole = samples.count / size
         let frames = (0..<whole).map { bytes(samples[($0 * size)..<(($0 + 1) * size)]) }
         return (frames, Array(samples[(whole * size)...]))
@@ -251,19 +258,21 @@ final class PhoneVoice: @unchecked Sendable {
     private let queue: DispatchQueue
     private let now: @Sendable () -> Date
     private let stretch: TimeStretch?
-    private var resampler = Resampler(from: PhoneAudioFormat.ttsRate, to: PhoneAudioFormat.sampleRate)
+    private let outRate: Int            // the call's down rate: 16 kHz, or 24 kHz as is
+    private var resampler: Resampler?   // nil at 24 kHz
+    private var frameSize: Int { outRate / 50 }
     private var carry = Data()          // odd byte between chunks
     private var speech = Data()         // all 24 kHz speech enqueued (the fallback plays its rest)
-    private var pending: [Int16] = []   // 16 kHz samples short of a whole frame
+    private var pending: [Int16] = []   // samples (at outRate) short of a whole frame
     private var frames: [Data] = []
     private var head = 0                // next frame to send
-    private var pacer = FramePacer()
+    private var pacer = FramePacer(lead: 0.25)   // a quarter second ahead: mobile networks jitter
     private var timer: DispatchSourceTimer?
     private var closed = false
     private var interrupted = false
     private var restOffset = 0
     private var waiter: CheckedContinuation<Data?, Never>?
-    static let margin: TimeInterval = 0.08   // network slack before "played"
+    static let margin: TimeInterval = 0.2    // network slack before "played"
 
     init(link: any CallLink, rate: Double, now: @escaping @Sendable () -> Date = { Date() },
          queue: DispatchQueue = DispatchQueue(label: "de.developaway.parley.phone-voice", qos: .userInteractive)) {
@@ -273,6 +282,8 @@ final class PhoneVoice: @unchecked Sendable {
         self.now = now
         self.queue = queue
         self.stretch = abs(self.rate - 1) < 0.01 ? nil : TimeStretch(rate: self.rate)
+        outRate = link.downRate
+        resampler = outRate == PhoneAudioFormat.ttsRate ? nil : Resampler(from: PhoneAudioFormat.ttsRate, to: outRate)
         link.setAudioState(.speaking)
         let t = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
         t.schedule(deadline: .now(), repeating: 0.01, leeway: .milliseconds(2))
@@ -307,9 +318,9 @@ final class PhoneVoice: @unchecked Sendable {
                                     : [Float](repeating: 0, count: PhoneAudioFormat.ttsRate / 50)
                     self.push(tone, stretched: false)
                     var tail = self.stretch?.flush() ?? []
-                    tail = self.resampler.process(tail) + self.resampler.flush()
+                    if self.resampler != nil { tail = self.resampler!.process(tail) + self.resampler!.flush() }
                     self.pending += PCMFrames.int16(tail)
-                    let size = PhoneAudioFormat.frameSamples
+                    let size = self.frameSize
                     self.pending += [Int16](repeating: 0, count: (size - self.pending.count % size) % size)   // last frame whole
                     self.cut()
                 }
@@ -324,12 +335,12 @@ final class PhoneVoice: @unchecked Sendable {
 
     private func push(_ floats: [Float], stretched: Bool) {
         let timed = stretch.map { $0.process(floats) } ?? floats
-        pending += PCMFrames.int16(resampler.process(timed))
+        pending += PCMFrames.int16(resampler != nil ? resampler!.process(timed) : timed)
         cut()
     }
 
     private func cut() {
-        let (f, rest) = PCMFrames.frames(pending)
+        let (f, rest) = PCMFrames.frames(pending, size: frameSize)
         frames += f
         pending = rest
     }
@@ -361,11 +372,11 @@ final class PhoneVoice: @unchecked Sendable {
     }
 
     // The call ended: stop sending; the speech not yet heard starts at what was sent minus the
-    // frames still in the phone's prebuffer, mapped back to the 24 kHz input (rate, 3:2).
+    // frames still in the phone's prebuffer, mapped back to the 24 kHz input (rate, out rate).
     private func interrupt() {
         interrupted = true
-        let heard16k = max(0, pacer.total - pacer.leadFrames) * PhoneAudioFormat.frameSamples
-        let heard24k = Double(heard16k) * Double(PhoneAudioFormat.ttsRate) / Double(PhoneAudioFormat.sampleRate) * rate
+        let heardOut = max(0, pacer.total - pacer.leadFrames) * frameSize
+        let heard24k = Double(heardOut) * Double(PhoneAudioFormat.ttsRate) / Double(outRate) * rate
         restOffset = Int(heard24k) * 2
         frames.removeAll()
         head = 0

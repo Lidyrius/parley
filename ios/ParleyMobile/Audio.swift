@@ -14,6 +14,11 @@ enum PCM {
     /// What the engine side works in: Float32 mono 16 kHz (the mixer converts to the output).
     static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
 
+    /// Parley's voice plays at 24 kHz, the TTS's own rate: a host that got `"down":24000` sends
+    /// 960-byte frames; an older host's 640-byte 16 kHz frames are upsampled.
+    static let playFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!
+    static let hiFiFrameBytes = 960
+
     /// Float samples (−1…1, clamped) → Int16 little-endian bytes.
     static func encode<C: Collection<Float>>(_ samples: C) -> Data {
         var out = Data(count: samples.count * 2)
@@ -38,7 +43,7 @@ enum PCM {
     }
 
     /// A received frame as a playable buffer in `format`.
-    static func buffer(_ data: Data) -> AVAudioPCMBuffer? {
+    static func buffer(_ data: Data, format: AVAudioFormat = format) -> AVAudioPCMBuffer? {
         let samples = decode(data)
         guard !samples.isEmpty,
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
@@ -124,13 +129,13 @@ final class Resampler {
     }
 }
 
-/// Decides when received frames go to the player: it holds back `prebuffer` frames (60 ms) when
+/// Decides when received frames go to the player: it holds back `prebuffer` frames (100 ms) when
 /// playback (re)starts, so network jitter doesn't stutter, then passes frames straight through
 /// while the player still has audio queued. A short burst that never reaches the prebuffer is
 /// released by `flush()` (the caller arms a timer). Frames are never reordered or dropped,
 /// except beyond `capacity` queued frames (a stuck player).
 struct JitterBuffer {
-    var prebuffer = 3
+    var prebuffer = 5                        // 100 ms: mobile networks jitter
     var capacity = 1500                      // 30 s
     private(set) var waiting: [Data] = []    // held back, not yet scheduled
     private(set) var inFlight = 0            // scheduled on the player, not yet played

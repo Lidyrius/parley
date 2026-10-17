@@ -11,6 +11,8 @@ final class CallAudio {
     private let mic: MicPipeline
     private let meter: AudioMeter
     private var jitter = JitterBuffer()
+    /// An older host's 16 kHz frames → the player's 24 kHz.
+    private let upsample = Resampler(from: PCM.format, to: PCM.playFormat)
     /// Bumped on every stop, so late "played" callbacks from an old run are ignored.
     private var generation = 0
     private var flushTimer: Task<Void, Never>?
@@ -52,7 +54,7 @@ final class CallAudio {
                 input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.tap(mic))
             }
         }
-        engine.connect(player, to: engine.mainMixerNode, format: PCM.format)
+        engine.connect(player, to: engine.mainMixerNode, format: PCM.playFormat)
         engine.prepare()
         do {
             try engine.start()
@@ -97,7 +99,7 @@ final class CallAudio {
 
     // MARK: - Playback
 
-    /// One received wire frame (640 bytes, 20 ms).
+    /// One received wire frame (20 ms: 960 bytes at 24 kHz, or 640 at 16 kHz).
     func play(_ frame: Data) {
         guard isRunning else { return }
         for f in jitter.push(frame) { schedule(f) }
@@ -113,7 +115,10 @@ final class CallAudio {
     }
 
     private func schedule(_ frame: Data) {
-        guard let buffer = PCM.buffer(frame), let channel = buffer.floatChannelData?[0] else {
+        let buffer = frame.count == PCM.hiFiFrameBytes
+            ? PCM.buffer(frame, format: PCM.playFormat)
+            : PCM.buffer(frame).flatMap { upsample?.convert($0) }
+        guard let buffer, buffer.frameLength > 0, let channel = buffer.floatChannelData?[0] else {
             jitter.played()
             return
         }

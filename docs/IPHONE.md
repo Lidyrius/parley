@@ -151,12 +151,13 @@ the call with a notification; the session then waits for a typed reply.
 
 | `t`       | direction      | body |
 |-----------|----------------|------|
-| `history` | phone → host   | `{"id":"<session>"}` send that session's history (the phone polls ~3 s while the view is open). |
-| `history` | host → phone   | `{"id":…,"items":[{"id":"<uuid>#<n>","k":"user|voice|assistant|speak|tool|image","text":…,"who":"user|assistant","at":<ms>}]}` — newest ≤ 60, oldest dropped until the frame is ≤ 200 KB. `voice` = a spoken reply, `speak` = the line Parley spoke, `tool` = "Bash · what for", `image` = a screenshot / pasted image (pixels via `image`). Empty `items` for a session without a transcript (Codex). |
+| `history` | phone → host   | `{"id":"<session>"}` send that session's newest history (the phone polls ~3 s while the view is open); with `"before":"<item id>"` the page right before that item (scrolled to the top). |
+| `history` | host → phone   | `{"id":…,"before"?:…,"more":bool,"items":[{"id":"<uuid>#<n>","k":"user|voice|assistant|speak|tool|image","text":…,"who":"user|assistant","at":<ms>}]}` — ≤ 60 items, oldest dropped until the frame is ≤ 200 KB; `more` = older history exists. The newest page reads the transcript's last 3 MB, an older page the whole file. `voice` = a spoken reply, `speak` = the line Parley spoke, `tool` = "Bash · what for", `image` = a screenshot / pasted image (pixels via `image`). Empty `items` for a session without a transcript (Codex). |
 | `image`   | phone → host   | `{"id":"<session>","key":"<item id>"}` |
 | `image`   | host → phone   | `{"key":…,"mime":"image/jpeg","data":"<base64>"}` downscaled to fit one frame; `data` missing = not found. |
 | `say`     | phone → host   | `{"id":"<session>","text":"…"}` delivered like a routed instruction: at once to a session that waits (parked / mod), else at its next turn. |
 | `silent`  | phone → host   | `{"on":true|false}` **Stumm**. With `away` on, a turn sends a notification push instead of ringing and parks the session (listen turns) until a `say` arrives. |
+| `call`    | phone → host   | `{"state":"start","down":24000}` asks for Parley's voice at 24 kHz (the TTS's own rate): the host then sends 960-byte frames (20 ms) instead of 640-byte 16 kHz ones. Without `down`, 16 kHz as before; the phone plays either (by frame size). The mic stays 16 kHz. Host lead ~0.25 s, phone prebuffer 100 ms. |
 | `push`    | phone → host   | `{"token","env","kind":"alert"}` the notification push token (topic `de.developaway.parley.mobile`); without `kind` it is the VoIP token as before. |
 
 Notification push payload: `{"aps":{"alert":{"title":"Parley · <label>","body":"<spoken line>"},"sound":"default","thread-id":"<session>"},"session":"<session>"}` — tapping it opens that session.

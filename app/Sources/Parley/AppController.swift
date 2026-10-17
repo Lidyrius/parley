@@ -96,10 +96,11 @@ final class AppController: ObservableObject {
         phone.onChat = { [phone] event in
             DispatchQueue.global(qos: .userInitiated).async {
                 switch event {
-                case .history(let id):
+                case .history(let id, let before):
                     // ponytail: re-reads the 3 MB tail per poll (~3 s while the view is open); cache by mtime if it shows.
-                    let items = Transcript.file(for: id).map { Transcript.items(Transcript.tailLines($0)) } ?? []
-                    phone.reply(Transcript.historyFrame(session: id, items: items))
+                    let page: (items: [Transcript.Item], more: Bool) =
+                        Transcript.file(for: id).map { Transcript.page($0, before: before) } ?? (items: [], more: false)
+                    phone.reply(Transcript.historyFrame(session: id, items: page.items, before: before, more: page.more))
                 case .image(let id, let key):
                     phone.reply(Transcript.imageFrame(key: key, jpeg: Transcript.file(for: id).flatMap { Transcript.image(in: $0, key: key) }))
                 case .say(let id, let text):

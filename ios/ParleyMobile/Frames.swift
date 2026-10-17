@@ -82,8 +82,9 @@ enum Frame: Equatable, Sendable {
     case audio(HostAudio, label: String?)
     /// v2: an update wants the phone (the push's twin for a phone that is open in the foreground).
     case ring(label: String?)
-    /// v3: a session's recent history, newest last.
-    case history(id: String, items: [ChatItem])
+    /// v3: a page of a session's history, oldest first: the newest (`before` nil) or the one
+    /// right before the item `before`. `more` = there is older history.
+    case history(id: String, items: [ChatItem], before: String?, more: Bool)
     /// v3: one image of a history (JPEG); nil = the host could not find it.
     case image(key: String, data: Data?)
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
@@ -102,7 +103,7 @@ enum Frame: Equatable, Sendable {
         case "ring": return .ring(label: head.label.flatMap(Self.clean))
         case "history":
             guard let h = try? decoder.decode(HistoryWire.self, from: data) else { return .other(head.t) }
-            return .history(id: h.id, items: h.items.items)
+            return .history(id: h.id, items: h.items.items, before: h.before, more: h.more ?? false)
         case "image":
             guard let w = try? decoder.decode(ImageWire.self, from: data) else { return .other(head.t) }
             return .image(key: w.key, data: w.data.flatMap { Data(base64Encoded: $0) })
@@ -116,7 +117,7 @@ enum Frame: Equatable, Sendable {
         return s.isEmpty ? nil : s
     }
 
-    private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem> }
+    private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
 
     private struct Head: Decodable {
@@ -140,7 +141,10 @@ enum Outgoing {
     static func hello(device: String) -> String { encode(["t": .s("hello"), "device": .s(device)]) }
     static func resume(id: String) -> String { encode(["t": .s("resume"), "id": .s(id)]) }
     /// v2: the phone's CallKit call connected (`true`) or ended (`false`).
-    static func call(started: Bool) -> String { encode(["t": .s("call"), "state": .s(started ? "start" : "end")]) }
+    /// v3: a start asks for Parley's voice at 24 kHz (`down`); the mic stays 16 kHz.
+    static func call(started: Bool) -> String {
+        started ? encode(["t": .s("call"), "state": .s("start"), "down": .i(24_000)]) : encode(["t": .s("call"), "state": .s("end")])
+    }
     /// v2: the wake word was heard while the host was idle.
     static let wake = encode(["t": .s("wake")])
     /// v2: the VoIP push token (hex) and its APNs environment.
@@ -156,17 +160,22 @@ enum Outgoing {
         encode(["t": .s("push"), "token": .s(token), "env": .s(env.rawValue), "kind": .s("alert")])
     }
     /// v3: a session's history, one of its images, a typed message for it.
-    static func history(id: String) -> String { encode(["t": .s("history"), "id": .s(id)]) }
+    static func history(id: String, before: String? = nil) -> String {
+        var body: [String: Value] = ["t": .s("history"), "id": .s(id)]
+        if let before { body["before"] = .s(before) }
+        return encode(body)
+    }
     static func image(id: String, key: String) -> String { encode(["t": .s("image"), "id": .s(id), "key": .s(key)]) }
     static func say(id: String, text: String) -> String { encode(["t": .s("say"), "id": .s(id), "text": .s(text)]) }
 
     private enum Value: Encodable {
-        case s(String), b(Bool)
+        case s(String), b(Bool), i(Int)
         func encode(to encoder: Encoder) throws {
             var c = encoder.singleValueContainer()
             switch self {
             case .s(let v): try c.encode(v)
             case .b(let v): try c.encode(v)
+            case .i(let v): try c.encode(v)
             }
         }
     }

@@ -67,10 +67,19 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(frame["t"] as? String, "image")
         XCTAssertNotNil(Data(base64Encoded: frame["data"] as? String ?? ""))
 
+        let latest = Transcript.page(url, before: nil)
+        XCTAssertEqual(latest.items.count, 7)
+        XCTAssertFalse(latest.more)
+        let older = Transcript.page(url, before: "r1#0")             // the 4 items before the screenshot
+        XCTAssertEqual(older.items.map(\.id), ["u1#0", "a1#0", "a1#1", "a1#2"])
+        XCTAssertFalse(older.more)
+        XCTAssertEqual(Transcript.page(url, before: "gone#0").items, [])
+
         let big = (0..<200).map { Transcript.Item(id: "i\($0)", k: "assistant", text: String(repeating: "x", count: 2000)) }
         let history = Transcript.historyFrame(session: "sess-1", items: big)
         XCTAssertLessThanOrEqual(history.utf8.count, Transcript.maxFrame)
         XCTAssertTrue(history.contains("\"i199\""))                    // the newest survive
+        XCTAssertTrue(history.contains("\"more\":true"))              // trimmed → older exists
     }
 
     // PARLEY_TRANSCRIPT=<path to a real .jsonl> swift test --filter testRealTranscript

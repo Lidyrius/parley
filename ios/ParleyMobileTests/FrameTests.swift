@@ -108,7 +108,7 @@ struct FrameTests {
     }
 
     @Test func encodesCallControl() {
-        #expect(Outgoing.call(started: true) == #"{"state":"start","t":"call"}"#)
+        #expect(Outgoing.call(started: true) == #"{"down":24000,"state":"start","t":"call"}"#)
         #expect(Outgoing.call(started: false) == #"{"state":"end","t":"call"}"#)
         #expect(Outgoing.wake == #"{"t":"wake"}"#)
         #expect(Outgoing.away(true) == #"{"on":true,"t":"away"}"#)
@@ -118,6 +118,7 @@ struct FrameTests {
         #expect(Outgoing.alertPush(token: "ab", env: .production) == #"{"env":"production","kind":"alert","t":"push","token":"ab"}"#)
         #expect(Outgoing.silent(true) == #"{"on":true,"t":"silent"}"#)
         #expect(Outgoing.history(id: "s1") == #"{"id":"s1","t":"history"}"#)
+        #expect(Outgoing.history(id: "s1", before: "a#0") == #"{"before":"a#0","id":"s1","t":"history"}"#)
         #expect(Outgoing.image(id: "s1", key: "u#0") == #"{"id":"s1","key":"u#0","t":"image"}"#)
         #expect(Outgoing.say(id: "s1", text: "Mach \"weiter\"") == #"{"id":"s1","t":"say","text":"Mach \"weiter\""}"#)
     }
@@ -158,7 +159,8 @@ struct FrameTests {
             ChatItem(id: "r#0", kind: .image),
             ChatItem(id: "v#0", kind: .voice, text: "Ja"),
             ChatItem(id: "x#0", kind: .other),
-        ]))
+        ], before: nil, more: false))
+        #expect(Frame.decode(#"{"t":"history","id":"s1","before":"a#0","more":true,"items":[]}"#) == .history(id: "s1", items: [], before: "a#0", more: true))
         #expect(Frame.decode(#"{"t":"history","items":[]}"#) == .other("history"))
         #expect(Frame.decode(#"{"t":"image","key":"r#0","mime":"image/jpeg","data":"/9j/"}"#) == .image(key: "r#0", data: Data([0xFF, 0xD8, 0xFF])))
         #expect(Frame.decode(#"{"t":"image","key":"r#0"}"#) == .image(key: "r#0", data: nil))
@@ -173,5 +175,14 @@ struct FrameTests {
             #expect(run.count == 3)
             #expect(SessionView.toolNames(run) == "Bash, Edit")
         } else { Issue.record("no tool group") }
+    }
+
+    @Test func historyPagesMerge() {
+        func items(_ ids: String...) -> [ChatItem] { ids.map { ChatItem(id: $0) } }
+        let loaded = items("a", "b", "c", "d")
+        #expect(AppModel.merge(loaded, page: items("x", "y"), before: "a").map(\.id) == ["x", "y", "a", "b", "c", "d"])   // older in front
+        #expect(AppModel.merge(loaded, page: items("x"), before: "b").map(\.id) == ["a", "b", "c", "d"])                  // stale page
+        #expect(AppModel.merge(loaded, page: items("c", "d", "e"), before: nil).map(\.id) == ["a", "b", "c", "d", "e"])   // newest: tail replaced
+        #expect(AppModel.merge(loaded, page: items("q", "r"), before: nil).map(\.id) == ["q", "r"])                       // no overlap
     }
 }

@@ -124,7 +124,9 @@ public static class RelayFrame
                 case "call":
                     return Str("state") switch
                     {
-                        "start" => new PhoneCallState(true),
+                        "start" => new PhoneCallState(true,
+                            root.TryGetProperty("down", out var down) && down.ValueKind == JsonValueKind.Number
+                                && down.TryGetInt32(out var rate) && rate == PhoneAudio.HiFiRate ? PhoneAudio.HiFiRate : PhoneAudio.SampleRate),
                         "end" => new PhoneCallState(false),
                         _ => null,
                     };
@@ -137,7 +139,7 @@ public static class RelayFrame
                     return root.TryGetProperty("on", out var silent) && (silent.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         ? new PhoneSilent(silent.ValueKind == JsonValueKind.True) : null;
                 case "history":
-                    return Str("id") is { Length: > 0 } hid ? new PhoneHistory(hid) : null;
+                    return Str("id") is { Length: > 0 } hid ? new PhoneHistory(hid, Str("before") is { Length: > 0 } b ? b : null) : null;
                 case "image":
                     return Str("id") is { Length: > 0 } iid && Str("key") is { Length: > 0 } key ? new PhoneImage(iid, key) : null;
                 case "say":
@@ -165,14 +167,14 @@ public static class RelayFrame
 // A phone's message (protocol v1 + v2).
 public abstract record PhoneMessage { }
 public sealed record PhoneResume(string Id) : PhoneMessage;          // resume a session (POST /resume)
-public sealed record PhoneCallState(bool Started) : PhoneMessage;    // `call` start / end
+public sealed record PhoneCallState(bool Started, int Down = PhoneAudio.SampleRate) : PhoneMessage;    // `call` start / end; the voice's rate (v3: 24 kHz on request)
 public sealed record PhoneWake : PhoneMessage { }                     // "Hey Parley" while the host was idle
 public sealed record PhonePush(string Token, string Env) : PhoneMessage;   // VoIP token, production | development
 public sealed record PhoneAway(bool On) : PhoneMessage;              // Unterwegs-Modus
 // v3: Stumm, the notification push token, a session's history / image, a typed message.
 public sealed record PhoneSilent(bool On) : PhoneMessage;
 public sealed record PhoneAlert(string Token, string Env) : PhoneMessage;
-public sealed record PhoneHistory(string Id) : PhoneMessage;
+public sealed record PhoneHistory(string Id, string? Before) : PhoneMessage;   // newest page, or the one before an item
 public sealed record PhoneImage(string Id, string Key) : PhoneMessage;
 public sealed record PhoneSay(string Id, string Text) : PhoneMessage;
 

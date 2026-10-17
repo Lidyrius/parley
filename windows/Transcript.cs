@@ -48,7 +48,7 @@ public static class Transcript
         try
         {
             using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            var start = Math.Max(0, f.Length - bytes);
+            var start = Math.Max(0, f.Length - (long)bytes);
             f.Seek(start, SeekOrigin.Begin);
             using var r = new StreamReader(f, Encoding.UTF8);
             var lines = r.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
@@ -61,6 +61,30 @@ public static class Transcript
     // ---- items -----------------------------------------------------------------------
 
     public static List<Item> Items(IEnumerable<string> lines)
+    {
+        var all = Parse(lines);
+        return all.Count > MaxItems ? all.GetRange(all.Count - MaxItems, MaxItems) : all;
+    }
+
+    // One page of history: the newest (`before` null, from the 3 MB tail) or the items right
+    // before the item `before`. `More` = there is older history still.
+    public static (List<Item> Items, bool More) Page(string path, string? before)
+    {
+        if (before is null)
+        {
+            var size = new FileInfo(path).Length;
+            var tail = Parse(TailLines(path));
+            return (tail.Count > MaxItems ? tail.GetRange(tail.Count - MaxItems, MaxItems) : tail, tail.Count > MaxItems || size > TailBytes);
+        }
+        // ponytail: an older page parses the whole file (~0.5 s for 30 MB); read it in windows if that shows.
+        var all = Parse(TailLines(path, int.MaxValue));
+        var i = all.FindIndex(x => x.Id == before);
+        if (i < 0) return (new List<Item>(), false);
+        var from = Math.Max(0, i - MaxItems);
+        return (all.GetRange(from, i - from), from > 0);
+    }
+
+    public static List<Item> Parse(IEnumerable<string> lines)
     {
         var output = new List<Item>();
         foreach (var line in lines)
@@ -126,18 +150,20 @@ public static class Transcript
                 }
             }
         }
-        return output.Count > MaxItems ? output.GetRange(output.Count - MaxItems, MaxItems) : output;
+        return output;
     }
 
-    // {"t":"history","id":…,"items":[…]}, oldest items dropped until it fits a relay frame.
-    public static string HistoryFrame(string session, List<Item> items)
+    // {"t":"history","id":…,"items":[…],"more":…} (+ `before` for an older page), oldest items
+    // dropped until it fits a relay frame (then there is more).
+    public static string HistoryFrame(string session, List<Item> items, string? before = null, bool more = false)
     {
         var list = items.ToList();
         while (true)
         {
-            var json = JsonSerializer.Serialize(new { t = "history", id = session, items = list }, Json);
+            var json = JsonSerializer.Serialize(new { t = "history", id = session, before, more, items = list }, Json);
             if (Encoding.UTF8.GetByteCount(json) <= MaxFrame || list.Count == 0) return json;
             list.RemoveRange(0, Math.Max(1, list.Count / 4));
+            more = true;
         }
     }
 

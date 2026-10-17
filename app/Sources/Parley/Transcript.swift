@@ -45,7 +45,24 @@ enum Transcript {
 
     // MARK: - items
 
-    static func items(_ lines: [Data]) -> [Item] {
+    static func items(_ lines: [Data]) -> [Item] { Array(parse(lines).suffix(maxItems)) }
+
+    /// One page of history: the newest (`before` nil, from the 3 MB tail) or the items right
+    /// before the item `before`. `more` = there is older history still.
+    static func page(_ url: URL, before: String?) -> (items: [Item], more: Bool) {
+        guard let before else {
+            let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int) ?? 0
+            let all = parse(tailLines(url))
+            return (Array(all.suffix(maxItems)), all.count > maxItems || size > tailBytes)
+        }
+        // ponytail: an older page parses the whole file (~0.5 s for 30 MB); read it in windows if that shows.
+        let all = parse(tailLines(url, bytes: .max))
+        guard let i = all.firstIndex(where: { $0.id == before }) else { return ([], false) }
+        let from = max(0, i - maxItems)
+        return (Array(all[from..<i]), from > 0)
+    }
+
+    static func parse(_ lines: [Data]) -> [Item] {
         var out: [Item] = []
         for line in lines {
             guard let e = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
@@ -96,17 +113,19 @@ enum Transcript {
                 }
             }
         }
-        return Array(out.suffix(maxItems))
+        return out
     }
 
-    /// `{"t":"history","id":…,"items":[…]}`, oldest items dropped until it fits a relay frame.
-    static func historyFrame(session: String, items: [Item]) -> String {
-        struct Wire: Encodable { let t = "history"; let id: String; let items: [Item] }
-        var items = items
+    /// `{"t":"history","id":…,"items":[…],"more":…}` (+ `before` for an older page), oldest
+    /// items dropped until it fits a relay frame (then there is more).
+    static func historyFrame(session: String, items: [Item], before: String? = nil, more: Bool = false) -> String {
+        struct Wire: Encodable { let t = "history"; let id: String; let before: String?; let more: Bool; let items: [Item] }
+        var items = items, more = more
         while true {
-            let data = (try? JSONEncoder().encode(Wire(id: session, items: items))) ?? Data()
+            let data = (try? JSONEncoder().encode(Wire(id: session, before: before, more: more, items: items))) ?? Data()
             if data.count <= maxFrame || items.isEmpty { return String(decoding: data, as: UTF8.self) }
             items.removeFirst(max(1, items.count / 4))
+            more = true
         }
     }
 

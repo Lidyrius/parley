@@ -37,6 +37,8 @@ struct AudioTests {
 
     @Test func receivedFrameBecomesAPlayableBuffer() throws {
         let frame = PCM.encode([Float](repeating: 0.25, count: 320))
+        let hiFi = try #require(PCM.buffer(Data(count: PCM.hiFiFrameBytes), format: PCM.playFormat))
+        #expect(hiFi.frameLength == 480 && hiFi.format.sampleRate == 24_000)
         let buffer = try #require(PCM.buffer(frame))
         #expect(buffer.frameLength == 320)
         #expect(buffer.format == PCM.format)
@@ -155,7 +157,7 @@ struct AudioTests {
     private func frame(_ n: UInt8) -> Data { Data(repeating: n, count: PCM.frameBytes) }
 
     @Test func prebuffersBeforePlaying() {
-        var jb = JitterBuffer()
+        var jb = JitterBuffer(prebuffer: 3)
         #expect(jb.push(frame(1)).isEmpty)
         #expect(jb.push(frame(2)).isEmpty)
         #expect(jb.push(frame(3)) == [frame(1), frame(2), frame(3)])
@@ -166,7 +168,7 @@ struct AudioTests {
     }
 
     @Test func underrunPrebuffersAgain() {
-        var jb = JitterBuffer()
+        var jb = JitterBuffer(prebuffer: 3)
         _ = jb.push(frame(1)); _ = jb.push(frame(2)); _ = jb.push(frame(3))
         for _ in 0..<3 { jb.played() }
         #expect(!jb.isPlaying)

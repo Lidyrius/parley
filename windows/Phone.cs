@@ -15,6 +15,9 @@ public static class PhoneAudio
     public const int FrameMs = 20;
     public const int FrameSamples = SampleRate * FrameMs / 1000;   // 320
     public const int FrameBytes = FrameSamples * 2;                 // 640
+    // A phone that asks for it (`call start` with "down":24000) gets Parley's voice at the TTS's
+    // own 24 kHz — no resampling, the full band; older phones get 16 kHz. The mic stays 16 kHz.
+    public const int HiFiRate = 24000;
 
     public static short[] ToSamples(ReadOnlySpan<byte> pcm)
     {
@@ -51,14 +54,16 @@ public static class PhoneAudio
         return output;
     }
 
-    // Whole 20 ms frames; the last one is zero-padded, so every frame is exactly 640 bytes.
-    public static List<byte[]> Frames(ReadOnlySpan<short> samples)
+    // Whole 20 ms frames at `rate`; the last one is zero-padded, so every frame is whole
+    // (640 bytes at 16 kHz, 960 at 24 kHz).
+    public static List<byte[]> Frames(ReadOnlySpan<short> samples, int rate = SampleRate)
     {
-        var frames = new List<byte[]>((samples.Length + FrameSamples - 1) / FrameSamples);
-        for (var start = 0; start < samples.Length; start += FrameSamples)
+        var size = rate * FrameMs / 1000;
+        var frames = new List<byte[]>((samples.Length + size - 1) / size);
+        for (var start = 0; start < samples.Length; start += size)
         {
-            var frame = new byte[FrameBytes];
-            var count = Math.Min(FrameSamples, samples.Length - start);
+            var frame = new byte[size * 2];
+            var count = Math.Min(size, samples.Length - start);
             for (var i = 0; i < count; i++)
                 BinaryPrimitives.WriteInt16LittleEndian(frame.AsSpan(i * 2, 2), samples[start + i]);
             frames.Add(frame);
@@ -66,19 +71,13 @@ public static class PhoneAudio
         return frames;
     }
 
-    // PCM at `sampleRate` (16-bit LE mono) → the call's 20 ms frames.
-    public static List<byte[]> FramesFor(byte[] pcm, int sampleRate) =>
-        Frames(Resample(ToSamples(pcm), sampleRate, SampleRate));
+    // PCM at `sampleRate` (16-bit LE mono) → the call's 20 ms frames at `outRate`.
+    public static List<byte[]> FramesFor(byte[] pcm, int sampleRate, int outRate = SampleRate) =>
+        Frames(Resample(ToSamples(pcm), sampleRate, outRate), outRate);
 
-    // Frames `from`… back into one 16 kHz buffer (what is left when a call drops midway).
-    public static byte[] Join(IReadOnlyList<byte[]> frames, int from)
-    {
-        var start = Math.Clamp(from, 0, frames.Count);
-        var joined = new byte[(frames.Count - start) * FrameBytes];
-        for (var i = start; i < frames.Count; i++)
-            Buffer.BlockCopy(frames[i], 0, joined, (i - start) * FrameBytes, Math.Min(FrameBytes, frames[i].Length));
-        return joined;
-    }
+    // What frame `frame` on is in the input (`pcm` at `sampleRate`): the part a dropped call never played.
+    public static byte[] Rest(byte[] pcm, int sampleRate, int frame) =>
+        pcm[Math.Min(pcm.Length, (int)((long)frame * sampleRate * FrameMs / 1000) * 2)..];
 
     public static float Rms(ReadOnlySpan<short> samples)
     {
@@ -106,7 +105,7 @@ public static class PhoneCall
     // lost with its link): Parley uses the PC's speaker and mic until frames arrive again. The
     // phone streams its mic all through a call, so a healthy call never gets near this.
     public static readonly TimeSpan AudioSilentLimit = TimeSpan.FromSeconds(10);
-    private const int LeadFrames = 5;   // sent 100 ms ahead of real time: absorbs timer + network jitter
+    private const int LeadFrames = 12;  // sent 240 ms ahead of real time: absorbs timer + mobile network jitter
 
     private static readonly object Gate = new();
     private static readonly SemaphoreSlim StateGate = new(1, 1);   // `audio` frames go out one at a time, latest wins
@@ -120,6 +119,7 @@ public static class PhoneCall
     private static string? _sent;              // the state|speaker the phone has (null = unknown → send)
     private static bool _away;
     private static bool _silent;
+    private static int _downRate = PhoneAudio.SampleRate;   // the call's voice rate: 16 or 24 kHz
     private static string _alertToken = "";
     private static string _pushToken = "", _pushEnv = "production";
 
@@ -148,6 +148,11 @@ public static class PhoneCall
         get { lock (Gate) return _away; }
     }
 
+    public static int DownRate
+    {
+        get { lock (Gate) return _downRate; }
+    }
+
     public static bool Silent
     {
         get { lock (Gate) return _silent; }
@@ -174,17 +179,18 @@ public static class PhoneCall
 
     // `call` start / end from the phone.
     // The phone repeats its call state on every (re)connect, so only a change is logged.
-    public static void OnCall(bool started)
+    public static void OnCall(bool started, int down = PhoneAudio.SampleRate)
     {
         bool changed;
         lock (Gate)
         {
             changed = _call != started;
             _call = started;
+            if (started) _downRate = down;
             _audioAt = DateTime.UtcNow;   // grace until its first frame arrives
             _sent = null;                 // a (re)joined call learns the current state
         }
-        if (changed) Log.Write(started ? "phone: call started" : "phone: call ended");
+        if (changed) Log.Write(started ? $"phone: call started (voice at {down / 1000} kHz)" : "phone: call ended");
         if (!started) return;
         if (changed) Clips.PrerenderGreet(Config.Load());   // the first "Hey Parley" answers at once
         _ = PushState();
@@ -299,14 +305,14 @@ public static class PhoneCall
 
     // Parley's voice to the phone, in real time (a few frames ahead), so "done" means the
     // phone has played it and beep → record keeps the speaker's timing. Returns what is left
-    // (16 kHz PCM) when the call drops midway — the caller plays it on the PC's speaker — or
-    // null once everything went out (or the playback was cancelled).
+    // (PCM at `sampleRate`) when the call drops midway — the caller plays it on the PC's speaker
+    // — or null once everything went out (or the playback was cancelled).
     public static async Task<byte[]?> PlayAsync(byte[] pcm, int sampleRate, CancellationToken ct = default)
     {
-        var frames = PhoneAudio.FramesFor(pcm, sampleRate);
+        var frames = PhoneAudio.FramesFor(pcm, sampleRate, DownRate);
         RelayClient? relay;
         lock (Gate) relay = _relay;
-        if (relay is null) return PhoneAudio.Join(frames, 0);
+        if (relay is null) return pcm;
         using var hold = Hold();
         SetAudio("speaking");
         var clock = Stopwatch.StartNew();
@@ -314,7 +320,7 @@ public static class PhoneCall
         {
             for (var i = 0; i < frames.Count; i++)
             {
-                if (!Active) return PhoneAudio.Join(frames, i);
+                if (!Active) return PhoneAudio.Rest(pcm, sampleRate, Math.Max(0, i - LeadFrames));
                 var due = TimeSpan.FromMilliseconds((i - LeadFrames) * PhoneAudio.FrameMs) - clock.Elapsed;
                 if (due > TimeSpan.Zero) await Task.Delay(due, ct);
                 await relay.SendAudioAsync(frames[i]);
