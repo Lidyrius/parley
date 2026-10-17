@@ -72,12 +72,12 @@ struct LineChart: View, Animatable {
                             Rectangle().frame(width: reveal == .draw ? max(0, tip.x) : geo.size.width)
                         }
                     (reveal == .draw ? line.trimmedPath(from: 0, to: p) : line)
-                        .stroke(Theme.claude, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                        .stroke(Theme.claude, style: StrokeStyle(lineWidth: compact ? 2 : 3, lineCap: .round, lineJoin: .round))
                     ForEach(pts.indices, id: \.self) { i in
                         let o = Self.pointOpacity(i, count: pts.count, x: pts[i].x, tip: tip.x, reveal: reveal, progress: p)
                         Circle().fill(Theme.claude)
-                            .frame(width: 8, height: 8)
-                            .overlay(Circle().stroke(Theme.card, lineWidth: 2))
+                            .frame(width: compact ? 4 : 8, height: compact ? 4 : 8)
+                            .overlay(Circle().stroke(Theme.card, lineWidth: compact ? 0 : 2))
                             .scaleEffect(0.4 + 0.6 * o)
                             .opacity(o)
                             .position(pts[i])
