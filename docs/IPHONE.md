@@ -72,3 +72,69 @@ to all phones and phone messages to the host; it inspects only `t` and keeps onl
 Trust: the relay runs in your own Cloudflare account and sees message contents (session names,
 last spoken lines) over TLS. End-to-end encryption with a key derived from the secret is planned
 together with audio (stage 2).
+
+## Protocol v2 — calls, wake word, routing, push, permissions (stages 2–5)
+
+Everything in v1 stays. Additions (unknown types are still ignored everywhere):
+
+### Audio (binary frames)
+- Raw **PCM 16-bit little-endian, mono, 16 kHz**, one frame per **20 ms (640 bytes)**. No header.
+- phone → host: the phone's microphone while a call is connected. host → phone: Parley's voice.
+- The relay forwards binary frames like text (host → phones, phone → host), never stores them;
+  frames over 64 KB are dropped.
+
+### Call control (text)
+| `t`         | direction      | body / meaning |
+|-------------|----------------|----------------|
+| `call`      | phone → host   | `{"state":"start"}` the phone's CallKit call is connected (outgoing "Parley anrufen" or an answered incoming call); `{"state":"end"}` it ended. While a call is connected the host routes **all** Parley audio through the phone (TTS out, listening in) instead of the Mac's speaker/mic. |
+| `audio`     | host → phone   | `{"state":"speaking"|"listening"|"idle"}` what the host is doing with the call audio (UI + the phone only listens for the wake word while `idle`). |
+| `wake`      | phone → host   | the phone heard the wake word ("Hey Parley") while the host was `idle`. |
+| `ring`      | host → phone   | `{"label":"<spoken project name>"}` an update wants the phone (sent alongside the VoIP push; a phone that is connected in the foreground can show its own incoming call from it). |
+| `push`      | phone → host   | `{"token":"<hex VoIP push token>","env":"production"|"development"}` (TestFlight/App Store builds use `production`). |
+| `away`      | phone → host   | `{"on":true|false}` **Unterwegs-Modus**: while on, updates ring the phone. |
+
+### Host behaviour
+- **Wake → greeting → listen → route.** On `wake` (host idle, call connected) the host plays a
+  pre-recorded greeting ("Ja, Sir, wie kann ich helfen?", 3 variants, cached like the resume lines),
+  listens on the phone audio, transcribes, and **routes** the utterance:
+  1. a running Parley session whose label the utterance names (or clearly means) → that session;
+  2. otherwise → the **Zentrale**.
+  Routing uses the existing Groq LLM (labels + utterance → target), with a label substring match as
+  fallback. Delivery reuses the resume paths: parked → `/wake` instruction; idle/working with the
+  mod → pending instruction on its next `/presence` (the mod submits it as a prompt). The host
+  confirms briefly ("Verstanden, ich gebe das an Tippfrei weiter.").
+- **Zentrale.** A Claude Code session in `zentraleDir` (default `~/workspace/privat/parley-zentrale`,
+  created from `zentrale/` in this repo: `CLAUDE.md` + `.parley.json` `{"name":"Zentrale"}`). If it
+  is not alive, the host starts it with the desktop deep link
+  `claude://code/new?folder=<abs path>&q=<url-encoded first prompt>` (first prompt `/parley:voice`),
+  and keeps the routed instruction **pending by cwd** until a presence from that folder arrives.
+  The Zentrale finds projects, creates projects under `projectsDir` (default `~/workspace/privat`:
+  folder, `git init`, `.parley.json`), and starts new sessions the same way (folder + first prompt
+  `/parley:voice` + the task delivered as pending-by-cwd via `POST /dispatch`).
+- **`POST /dispatch`** (local, for the Zentrale): `{"cwd":"<abs path>","instruction":"<task>","start":true}`
+  → starts a session there if none is alive (deep link) and delivers the instruction to it.
+- **Ringing (Unterwegs-Modus).** While `away` is on and no call is connected, a turn that is about to
+  be voiced instead sends a **VoIP push** (APNs, topic `de.developaway.parley.mobile.voip`, push type
+  `voip`, payload `{"label":…}`) plus a `ring` frame, and waits up to 45 s for `call start`; then it
+  is voiced over the phone. No answer → it falls back to the Mac's speaker.
+  APNs credentials in credentials.json: `apnsKeyId`, `apnsTeamId` (`384887N3UL`), `apnsKeyP8`
+  (the .p8 PEM text) — chosen once via the menu ("Push-Schlüssel wählen…", Key ID from the
+  `AuthKey_<KEYID>.p8` file name). ES256 JWT, HTTP/2 to `api.push.apple.com`
+  (`api.sandbox.push.apple.com` for `env: development`).
+- **Permission prompts aloud.** The plugin's `PermissionRequest` hook long-polls
+  `POST /permission` `{"session_id","cwd","tool_name","tool_input"}` (≤ 120 s). A session Parley
+  does not know (voice mode off) gets `{"decision":"ask"}` at once (normal on-screen prompt).
+  Otherwise it is queued like a turn: Parley says "<Projekt> möchte <kurze Beschreibung> — erlauben?",
+  listens, and answers `{"decision":"allow"}` (ja / okay / mach / erlaub…), `{"decision":"deny"}`
+  (nein / stopp…), or `{"decision":"ask"}` (unclear or no reply). The hook turns allow/deny into the
+  `PermissionRequest` decision and prints nothing for `ask`.
+
+### Phone behaviour
+- **"Parley anrufen"** (button, App Intent "Hey Siri, Parley" — works in CarPlay) starts an outgoing
+  CallKit call; on connect it sends `call start` and streams the mic (voice-processing I/O for echo
+  cancellation), plays received audio, and sends `call end` when it ends.
+- **Wake word**: during a connected call while the host reports `audio idle`, on-device speech
+  recognition listens for "Hey Parley" and sends `wake`.
+- **Incoming**: PushKit VoIP push → CallKit incoming call "Parley · <label>" → answering connects
+  the relay (if needed) and sends `call start`. The phone registers its VoIP token with `push`.
+- **Unterwegs-Modus** toggle in the app → `away`.
