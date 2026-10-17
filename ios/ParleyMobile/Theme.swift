@@ -39,6 +39,22 @@ final class Appearance {
 
     var palette: Palette { Palette.all.first { $0.id == paletteID } ?? .claude }
 
+    /// Light, dark, or as the iPhone is set — the app's own choice.
+    var scheme = SchemeChoice(rawValue: UserDefaults.standard.string(forKey: "scheme") ?? "") ?? .system {
+        didSet {
+            UserDefaults.standard.set(scheme.rawValue, forKey: "scheme")
+            applyScheme()
+        }
+    }
+
+    /// Set on the windows themselves (sheets and the call screen follow); SwiftUI's
+    /// `preferredColorScheme(nil)` doesn't reliably hand back to the system.
+    func applyScheme() {
+        for scene in UIApplication.shared.connectedScenes {
+            for window in (scene as? UIWindowScene)?.windows ?? [] { window.overrideUserInterfaceStyle = scheme.style }
+        }
+    }
+
     /// What Parley looks like in a call.
     var orbStyle = OrbStyle(rawValue: UserDefaults.standard.string(forKey: "orbStyle") ?? "") ?? .jarvis {
         didSet { UserDefaults.standard.set(orbStyle.rawValue, forKey: "orbStyle") }
@@ -52,6 +68,28 @@ final class Appearance {
     /// How line charts build up on a slide.
     var lineReveal = LineReveal(rawValue: UserDefaults.standard.string(forKey: "lineReveal") ?? "") ?? .draw {
         didSet { UserDefaults.standard.set(lineReveal.rawValue, forKey: "lineReveal") }
+    }
+}
+
+enum SchemeChoice: String, CaseIterable, Identifiable, Sendable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .system: "System"
+        case .light: "Hell"
+        case .dark: "Dunkel"
+        }
+    }
+
+    var style: UIUserInterfaceStyle {
+        switch self {
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
+        }
     }
 }
 

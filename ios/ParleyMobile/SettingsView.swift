@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsUnpair = false
     @AppStorage(CallController.speakerKey) private var speakerByDefault = true
+    @AppStorage(CallController.autoHangUpKey) private var autoHangUp = false
 
     var body: some View {
         @Bindable var model = model
@@ -31,12 +32,20 @@ struct SettingsView: View {
                     Toggle(isOn: $speakerByDefault) {
                         Label("Lautsprecher beim Anrufstart", systemImage: "speaker.wave.2.fill")
                     }
+                    Toggle(isOn: $autoHangUp) {
+                        Label("Nach dem Gespräch auflegen", systemImage: "phone.down.circle")
+                    }
                 } header: {
                     Text("Anrufe")
                 } footer: {
-                    Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Mit „Stumm“ kommt stattdessen eine Mitteilung; tippe darauf und antworte schriftlich. Anrufe starten auf dem Lautsprecher (AirPods und Auto bleiben, wie sie sind). Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“.")
+                    Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Mit „Stumm“ kommt stattdessen eine Mitteilung; tippe darauf und antworte schriftlich. Anrufe starten auf dem Lautsprecher (AirPods und Auto bleiben, wie sie sind). „Nach dem Gespräch auflegen“: Hat Parley zu Ende gesprochen, legt es eine halbe Sekunde später auf – gut, wenn danach wieder Musik laufen soll. Aus, bleibt Parley dran und du redest einfach weiter. Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“.")
                 }
                 Section("Darstellung") {
+                    Picker("Erscheinungsbild", selection: Binding(get: { Appearance.shared.scheme },
+                                                                   set: { Appearance.shared.scheme = $0 })) {
+                        ForEach(SchemeChoice.allCases) { Text($0.name).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
                     NavigationLink {
                         PalettePicker()
                     } label: {

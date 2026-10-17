@@ -297,7 +297,10 @@ struct RootView: View {
         .onOpenURL { url in
             do { try model.pair(url.absoluteString) } catch { linkError = error.localizedDescription }
         }
-        .onChange(of: scenePhase, initial: true) { _, phase in model.scenePhaseChanged(phase) }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            model.scenePhaseChanged(phase)
+            Appearance.shared.applyScheme()   // the window exists by now
+        }
         .sensoryFeedback(.success, trigger: model.pairing) { old, new in new != nil && old != new }
         .alert("Kopplung fehlgeschlagen", isPresented: Binding(get: { linkError != nil }, set: { if !$0 { linkError = nil } })) {
             Button("OK", role: .cancel) {}

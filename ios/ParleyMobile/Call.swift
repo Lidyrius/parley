@@ -233,6 +233,11 @@ final class CallController {
     }
 
     /// Settings → "Lautsprecher beim Anrufstart" (on unless turned off).
+    /// Hang up once Parley is done (Einstellungen → "Nach dem Gespräch auflegen"); off = stay on.
+    static let autoHangUpKey = "autoHangUp"
+    static var autoHangUp: Bool { UserDefaults.standard.bool(forKey: autoHangUpKey) }
+    @ObservationIgnored private var autoHangUpTask: Task<Void, Never>?
+
     static let speakerKey = "speakerByDefault"
     static var speakerByDefault: Bool { UserDefaults.standard.object(forKey: speakerKey) as? Bool ?? true }
 
@@ -283,7 +288,22 @@ final class CallController {
             if let uuid { provider?.reportCall(with: uuid, updated: Self.update(label: label)) }
         }
         guard state != hostAudio else { return }
+        let finished = state == .idle && hostAudio != .idle   // a turn just ended (its last line is out)
         hostAudio = state
+        autoHangUpTask?.cancel()
+        if finished, Self.autoHangUp, phase.isActive, !isTest {
+            // Once the phone has played the last line out, half a second, then hang up — unless
+            // another turn starts meanwhile.
+            autoHangUpTask = Task { [weak self] in
+                for _ in 0..<40 {
+                    guard let self, audio.played < audio.received else { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled, let self, hostAudio == .idle, phase.isActive else { return }
+                hangUp()
+            }
+        }
         if state != .idle {
             wakeArmed = true
             wakeSent = false
