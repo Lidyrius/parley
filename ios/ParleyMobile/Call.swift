@@ -388,6 +388,8 @@ final class CallController {
         uuid = nil
         label = nil
         hostAudio = .idle
+        caption = nil   // the next call starts clean: no old subtitles or slides
+        slides = []
         muted = false
         audio.muted = false
         speaker = false

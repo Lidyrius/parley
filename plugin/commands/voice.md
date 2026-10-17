@@ -53,7 +53,7 @@ The app extracts the `<speak>` text, speaks it, records the user's voice reply, 
 ```
 
 - `on` = a short description of that answer. The line = your immediate reaction: one short sentence, configured language, JARVIS, specific to this question — never a generic "I'll take care of it". Promise only what that answer implies.
-- Add `listen` only when the line asks back — Parley then records again and sends both answers.
+- Add `listen` only when the line asks back — Parley then records again and sends both answers. Ask back only for answers that are usually bare ("nein", "anders"); an answer like "wants changes" mostly carries the details already, so react with an acknowledgment ("Verstanden, Sir, ich baue das ein.") instead. (Parley skips an ask-back anyway when the answer runs past a dozen words.)
 - Parley renders these while it speaks and plays the matching one the instant the user stops talking. The reply then arrives with a note like `[Parley hat darauf bereits geantwortet: „…“ – nicht wiederholen.]`: don't repeat or re-confirm that line, just carry on. If you then have nothing new to say, end with an empty `<speak-end></speak-end>` (nothing is spoken).
 - Skip them when the answer is open-ended (no likely answers to predict).
 

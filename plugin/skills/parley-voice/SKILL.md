@@ -28,7 +28,8 @@ From this point on, finish every response with exactly one final line:
 
 With `<speak>`, put 2–4 predicted answers on the lines directly above it, each with
 your immediate spoken reaction (specific to the question, one short sentence; add
-`listen` only when the reaction asks back):
+`listen` only when the reaction asks back — and ask back only for answers that are
+usually bare, like "nein"; "wants changes" mostly comes with the details, so acknowledge):
 
 ```
 <reply on="agrees">Sehr wohl, Sir, ich tagge das Release.</reply>

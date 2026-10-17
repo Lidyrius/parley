@@ -281,6 +281,12 @@ public sealed class TurnPipeline
         (string say, byte[]? clip)? line = null;
         var picked = await pick;
         if (picked is null && replies.Count > 0) Log.Write($"reply: none of {replies.Count} fits");
+        // Asking back after an answer that already says what to do would be wrong: generic ack.
+        if (picked is int a && replies[a].Listen == true && text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > 12)
+        {
+            Log.Write($"reply: {replies[a].On} asks back, but the answer is already detailed → generic ack");
+            picked = null;
+        }
         if (picked is int i)
         {
             var r = replies[i];
