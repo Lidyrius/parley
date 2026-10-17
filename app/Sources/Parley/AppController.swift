@@ -432,10 +432,14 @@ final class AppController: ObservableObject {
                            slides: turn.slides ?? [], session: ControlServer.sessionKey(turn),
                            last: !turn.wantsListen && server.nothingQueued())
         Log.write("speak done")
+        // Barge-in: Sir talked over Parley — listen now (even after a speak-only line), with
+        // the seconds he already spoke.
+        let barged = phone.takeBarge()
+        if barged { Log.write("barge-in: listening") }
 
         // speak-only turn (<speak-end>): no mic, no pill. Resume media (queue permitting),
         // end cleanly so the hook exits — Claude reports back on its own.
-        if !turn.wantsListen {
+        if !turn.wantsListen && !barged {
             scheduleResume()
             setStatus(key, "idle")
             // Ich melde mich selbst zurück (Background-Arbeit fertig) — Notification fängt
@@ -453,7 +457,7 @@ final class AppController: ObservableObject {
         for hop in 0..<4 {
             setStatus(key, "listening")
             Log.write("record start")
-            wav = await record()
+            wav = await record(preroll: barged && hop == 0)
             Log.write("record done bytes=\(wav.count)")
 
             setStatus(key, "transcribing")
@@ -1145,11 +1149,14 @@ final class AppController: ObservableObject {
 
     // During a call the reply comes from the phone's mic. A call that ends before anything was
     // said hands the listening to the Mac (beep first, so the user knows); a started reply is kept.
-    private func record() async -> Data {
+    /// `preroll`: barge-in — Sir already started talking, so the phone's last seconds count too.
+    private func record(preroll: Bool = false) async -> Data {
         if phone.callActive {
             hud.show()
             let hud = self.hud
-            let outcome = await PhoneListener(link: phone).record { level in Task { @MainActor in hud.push(level) } }
+            let outcome = await PhoneListener(link: phone).record(preroll: preroll ? phone.recentMic() : []) { level in
+                Task { @MainActor in hud.push(level) }
+            }
             hud.finish()
             switch outcome {
             case .finished(let wav):

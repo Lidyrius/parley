@@ -277,6 +277,8 @@ enum Outgoing {
     static func activity(token: String?, env: PushEnvironment) -> String {
         encode(["t": .s("activity"), "token": .s(token ?? ""), "env": .s(env.rawValue)])
     }
+    /// v4: Sir talks over Parley — stop the line and listen (barge-in).
+    static let barge = encode(["t": .s("barge")])
     /// v4: a palette made by voice is saved (the host stops resending it).
     static func paletteSaved(_ name: String) -> String { encode(["t": .s("palette"), "saved": .s(name)]) }
     /// Can't talk now (on the ringing screen): ring again in `after` s, or nil = I'll call back.

@@ -256,8 +256,12 @@ public sealed class TurnPipeline
                                    last: !turn.WantsListen && _queuedTurns() == 0);
         }
         else Log.Write("no TTS audio (missing key or synth failed)");
+        // Barge-in: Sir talked over Parley — listen now (even after a speak-only line), with the
+        // seconds he already spoke.
+        var barged = PhoneCall.TakeBarge();
+        if (barged) Log.Write("barge-in: listening");
 
-        if (!turn.WantsListen)
+        if (!turn.WantsListen && !barged)
         {
             ScheduleResume();
             // Ich melde mich selbst zurück — Notification fängt dich, falls du weg bist.
@@ -272,7 +276,7 @@ public sealed class TurnPipeline
         var text = "";
         for (var hop = 0; hop < 4; hop++)
         {
-            (wav, text) = await ListenOnce(config);
+            (wav, text) = await ListenOnce(config, barged && hop == 0);
 
             var parked = _resumableList?.Invoke() ?? new List<Server.ParkedInfo>();
             if (text.Length == 0 || parked.Count == 0 || hop >= 3) break;
@@ -429,16 +433,19 @@ public sealed class TurnPipeline
         await SpeakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config);
     }
 
-    private async Task<(byte[] wav, string text)> ListenOnce(Config config)
+    private async Task<(byte[] wav, string text)> ListenOnce(Config config, bool barged = false)
     {
-        await AudioOut.PlayBeep();
-        await Task.Delay(100);
+        if (!barged)   // after a barge-in Sir is already talking: no beep
+        {
+            await AudioOut.PlayBeep();
+            await Task.Delay(100);
+        }
 
         LiveStatus.Set("listening");
         Log.Write("record start");
         ShowPill(true);
         _mic.OnLevel = level => { LiveStatus.Push(level); _pill?.BeginInvoke(() => _pill.Push(level)); };
-        var wav = await _mic.Record();
+        var wav = await _mic.Record(barged ? PhoneCall.RecentMic() : null);
         _mic.OnLevel = null;
         ShowPill(false);
         Log.Write($"record done bytes={wav.Length}");

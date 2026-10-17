@@ -244,4 +244,20 @@ final class WakeRouterTests: XCTestCase {
         hub.handle(.away(false))
         XCTAssertFalse(hub.away)
     }
+
+    // Barge-in: only during a call; taken once; the last 2 s of mic are kept for the listener.
+    func testBargeAndThePreroll() {
+        let hub = PhoneHub(store: .memory(), log: { _ in })
+        hub.handle(.barge)
+        XCTAssertFalse(hub.barged)                 // no call → nothing to stop
+        hub.handle(.call(true))
+        for i in 0..<(PhoneHub.prerollFrames + 5) { hub.audioIn(Data([UInt8(i % 250)])) }
+        XCTAssertEqual(hub.recentMic().count, PhoneHub.prerollFrames)
+        XCTAssertEqual(hub.recentMic().first, Data([5]))
+        hub.handle(.barge)
+        XCTAssertTrue(hub.barged)
+        XCTAssertTrue(hub.takeBarge())
+        XCTAssertFalse(hub.takeBarge())
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"barge"}"#), .barge)
+    }
 }

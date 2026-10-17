@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var confirmsUnpair = false
     @AppStorage(CallController.speakerKey) private var speakerByDefault = true
     @AppStorage(CallController.autoHangUpKey) private var autoHangUp = false
+    @AppStorage(CallController.bargeInKey) private var bargeIn = true
     /// Unlocked by tapping "Version" five times.
     @AppStorage("developer") private var developer = false
     @State private var versionTaps = 0
@@ -38,10 +39,13 @@ struct SettingsView: View {
                     Toggle(isOn: $autoHangUp) {
                         Label("Nach dem Gespräch auflegen", systemImage: "phone.down.circle")
                     }
+                    Toggle(isOn: $bargeIn) {
+                        Label("Parley unterbrechen", systemImage: "hand.raised")
+                    }
                 } header: {
                     Text("Anrufe")
                 } footer: {
-                    Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Mit „Stumm“ kommt stattdessen eine Mitteilung; tippe darauf und antworte schriftlich. Anrufe starten auf dem Lautsprecher (AirPods und Auto bleiben, wie sie sind). „Nach dem Gespräch auflegen“: Hat Parley zu Ende gesprochen, legt es sofort auf – gut, wenn danach wieder Musik laufen soll. Aus, bleibt Parley dran und du redest einfach weiter. Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“. Automatisch: Einstellungen → Fokus → z. B. „Fahren“ → Fokusfilter → Parley schaltet Unterwegs mit dem Fokus ein und aus; oder in Kurzbefehle → Automation (CarPlay verbunden, Zuhause verlassen) die Aktion „Unterwegs“.")
+                    Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Mit „Stumm“ kommt stattdessen eine Mitteilung; tippe darauf und antworte schriftlich. Anrufe starten auf dem Lautsprecher (AirPods und Auto bleiben, wie sie sind). „Nach dem Gespräch auflegen“: Hat Parley zu Ende gesprochen, legt es sofort auf – gut, wenn danach wieder Musik laufen soll. Aus, bleibt Parley dran und du redest einfach weiter. Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“. „Parley unterbrechen“: Fang einfach an zu reden, während Parley spricht (oder sag „Stopp“) – Parley verstummt sofort und hört zu. Automatisch: Einstellungen → Fokus → z. B. „Fahren“ → Fokusfilter → Parley schaltet Unterwegs mit dem Fokus ein und aus; oder in Kurzbefehle → Automation (CarPlay verbunden, Zuhause verlassen) die Aktion „Unterwegs“.")
                 }
                 Section("Darstellung") {
                     Picker("Erscheinungsbild", selection: Binding(get: { Appearance.shared.scheme },

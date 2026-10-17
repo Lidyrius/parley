@@ -30,10 +30,12 @@ protocol CallLink: AnyObject, Sendable {
     func setAudioState(_ state: PhoneAudioState)
     func setAudioSink(_ sink: (@Sendable (Data) -> Void)?)   // where the phone's mic frames go
     var downRate: Int { get }                       // Parley's voice to the phone: 16 or 24 kHz
+    var barged: Bool { get }                        // Sir talked over Parley: stop the line now
 }
 
 extension CallLink {
     var downRate: Int { PhoneAudioFormat.sampleRate }
+    var barged: Bool { false }
 }
 
 // MARK: - pure helpers
@@ -270,6 +272,7 @@ final class PhoneVoice: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var closed = false
     private var interrupted = false
+    private var cutShort = false        // barge-in: the rest of the line is dropped, not replayed
     private var restOffset = 0
     private var waiter: CheckedContinuation<Data?, Never>?
     static let margin: TimeInterval = 0.2    // network slack before "played"
@@ -298,7 +301,7 @@ final class PhoneVoice: @unchecked Sendable {
     func enqueue(_ pcm: Data) {
         queue.async {
             self.speech.append(pcm)
-            guard !self.interrupted else { return }
+            guard !self.interrupted, !self.cutShort else { return }
             self.carry.append(pcm)
             let even = self.carry.count & ~1
             guard even > 0 else { return }
@@ -314,7 +317,8 @@ final class PhoneVoice: @unchecked Sendable {
         await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
             queue.async {
                 if !self.interrupted {
-                    let tone = beep ? Tones.beep(sampleRate: Double(PhoneAudioFormat.ttsRate))
+                    if self.cutShort { self.closed = true; self.waiter = cont; self.tick(); return }
+            let tone = beep ? Tones.beep(sampleRate: Double(PhoneAudioFormat.ttsRate))
                                     : [Float](repeating: 0, count: PhoneAudioFormat.ttsRate / 50)
                     self.push(tone, stretched: false)
                     var tail = self.stretch?.flush() ?? []
@@ -347,7 +351,13 @@ final class PhoneVoice: @unchecked Sendable {
 
     private func tick() {
         if !interrupted, !link.isLive(generation) { interrupt() }
-        if !interrupted {
+        if !interrupted, !cutShort, link.barged {
+            // Sir talks over Parley: stop sending at once; nothing of it plays on the Mac.
+            cutShort = true
+            frames.removeAll()
+            head = 0
+        }
+        if !interrupted, !cutShort {
             let n = pacer.due(available: frames.count - head, now: now())
             for _ in 0..<n {
                 link.sendAudio(frames[head])
@@ -356,7 +366,9 @@ final class PhoneVoice: @unchecked Sendable {
             if head > 256 { frames.removeFirst(head); head = 0 }
         }
         guard closed, let waiter else { return }
-        if interrupted {
+        if cutShort {
+            resume(waiter, nil)
+        } else if interrupted {
             let from = min(restOffset, speech.count) & ~1
             resume(waiter, speech.subdata(in: from..<speech.count))
         } else if head >= frames.count, now() >= (pacer.playedOut ?? .distantPast).addingTimeInterval(Self.margin) {
@@ -415,12 +427,14 @@ final class PhoneListener: @unchecked Sendable {
         self.queue = queue
     }
 
-    func record(onLevel: (@Sendable (Float) -> Void)? = nil) async -> Outcome {
+    /// `preroll`: mic frames from just before (barge-in: Sir already started talking).
+    func record(preroll: [Data] = [], onLevel: (@Sendable (Float) -> Void)? = nil) async -> Outcome {
         await withCheckedContinuation { (cont: CheckedContinuation<Outcome, Never>) in
             queue.async {
                 self.waiter = cont
                 self.onLevel = onLevel
                 self.recorder.reset()
+                for frame in preroll { _ = self.recorder.feed(PCMFrames.samples(frame)) }
                 self.started = self.now()
                 guard self.link.isLive(self.generation) else { self.end(.callEnded(Data(), spoke: false)); return }
                 self.link.setAudioState(.listening)

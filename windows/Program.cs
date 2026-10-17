@@ -298,6 +298,9 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneSilent s: PhoneCall.SetSilent(s.On); break;
             case PhoneAlert a: PhoneCall.SetAlert(a.Token, a.Env); break;
             case PhoneActivityStart s: PhoneCall.SetActivityStart(s.Token, s.Env); break;
+            case PhoneBarge:
+                PhoneCall.OnBarge();
+                break;
             case PhoneHello:
                 if (_pendingPalette is { } pending) _ = PhoneCall.Reply(pending.Frame);
                 break;

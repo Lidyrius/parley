@@ -11,7 +11,9 @@ final class FakeLink: CallLink, @unchecked Sendable {
     private var _states: [PhoneAudioState] = []
     private var _sink: (@Sendable (Data) -> Void)?
     var dieAfterFrames: Int?
+    var bargeAfterFrames: Int?          // Sir talks over Parley after this many frames
     var down = PhoneAudioFormat.sampleRate
+    var barged: Bool { lock.withLock { bargeAfterFrames.map { _frames.count >= $0 } ?? false } }
     var downRate: Int { down }
 
     var live: Bool { get { lock.withLock { _live } } set { lock.withLock { _live = newValue } } }
@@ -205,6 +207,18 @@ final class PhoneVoiceTests: XCTestCase {
         XCTAssertEqual(rest, pcm.subdata(in: (pcm.count - rest.count)..<pcm.count))
     }
 
+    // Barge-in: Sir talks over Parley — the line stops at once, no beep, and nothing of it is
+    // handed back for the Mac's speaker.
+    func testBargeInStopsTheLineAndHandsNothingBack() async throws {
+        let link = FakeLink()
+        link.bargeAfterFrames = 20
+        let voice = PhoneVoice(link: link, rate: 1)
+        voice.enqueue(PCMFrames.bytes(PCMFrames.int16(sine(440, rate: 24000, seconds: 2))))
+        let finished = await voice.finish(beep: true)
+        XCTAssertNil(finished)
+        XCTAssertLessThan(link.frames.count, 25)    // 2 s would be 100 frames + the beep
+    }
+
     func testCallAlreadyGoneHandsBackEverything() async throws {
         let link = FakeLink()
         link.live = false
@@ -242,6 +256,19 @@ final class PhoneListenerTests: XCTestCase {
         XCTAssertEqual(wav.count, 44 + Int(16000 * 3.4) * 2, accuracy: 640 * 2)   // grace + speech + 1.8 s silence
         XCTAssertEqual(link.states, [.listening])
         XCTAssertNil(link.sink)
+    }
+
+    // The listener starts with what Sir already said (the phone's last seconds of mic).
+    func testTheListenerStartsWithThePreroll() async throws {
+        let link = FakeLink()
+        let listener = PhoneListener(link: link)
+        let preroll = voice(1)
+        let task = Task { await listener.record(preroll: preroll) }
+        let sink = try await attached(link)
+        for f in silence(2.2) { sink(f) }                      // then silence ends the utterance
+        let outcome = await task.value
+        guard case .finished(let wav) = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertGreaterThan(wav.count, 44 + 16000 * 2)        // the preroll's second of speech is in it
     }
 
     // Call ends before anything was said → the Mac takes over the listening.

@@ -3,6 +3,18 @@ import Testing
 @testable import ParleyMobile
 
 struct WakeWordTests {
+    /// Barge-in: Sir's words, not Parley's echo.
+    @Test func bargeInIsSirNotTheEcho() {
+        let spoken = Set(WakeWord.tokens("Die Tests sind grün, Sir. Einen Moment noch, ich deploye."))
+        #expect(!Barge.isInterruption("die tests sind grün", spoken: spoken))          // echo
+        #expect(!Barge.isInterruption("einen Moment", spoken: spoken))                 // its own "Moment"
+        #expect(Barge.isInterruption("Stopp", spoken: spoken))
+        #expect(Barge.isInterruption("nein mach erst staging", spoken: spoken))         // two foreign words
+        #expect(!Barge.isInterruption("Sir grün", spoken: spoken))
+        #expect(!Barge.isInterruption("nein mach erst staging", spoken: []))            // no captions: stop words only
+        #expect(Barge.isInterruption("warte mal", spoken: []))
+    }
+
     @Test(arguments: [
         "Hey Parley",
         "hey parley",

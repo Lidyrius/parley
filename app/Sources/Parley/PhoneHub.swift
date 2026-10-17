@@ -110,6 +110,8 @@ final class PhoneHub: CallLink, @unchecked Sendable {
                 rate = down
                 guard !active else { return (false, desired, nil) }   // a repeated start keeps the call
                 active = true
+                bargeFlag = false
+                recent.removeAll()
                 generation += 1
                 sentState = desired
                 return (true, desired, sendText)
@@ -167,6 +169,13 @@ final class PhoneHub: CallLink, @unchecked Sendable {
         case .later(let after):
             lock.withLock { later = .some(after) }
             log(after.map { "phone: not now — ring again in \(Int($0)) s" } ?? "phone: not now — Sir calls back")
+        case .barge:
+            guard lock.withLock({ () -> Bool in
+                guard active else { return false }
+                bargeFlag = true
+                return true
+            }) else { return }
+            log("phone: Sir interrupts — stopping the line")
         case .history, .image, .say, .hello, .paletteSaved:
             onChat?(event)
         case .resume:
@@ -176,9 +185,33 @@ final class PhoneHub: CallLink, @unchecked Sendable {
 
     // A binary frame from the relay: the phone's mic.
     func audioIn(_ frame: Data) {
-        let s = lock.withLock { active ? sink : nil }
+        let s = lock.withLock { () -> (@Sendable (Data) -> Void)? in
+            guard active else { return nil }
+            recent.append(frame)
+            if recent.count > Self.prerollFrames { recent.removeFirst(recent.count - Self.prerollFrames) }
+            return sink
+        }
         s?(frame)
     }
+
+    // MARK: - barge-in
+
+    static let prerollFrames = 100   // 2 s of the phone's mic (20 ms frames)
+    private var recent: [Data] = []
+    private var bargeFlag = false
+
+    /// Sir talked over Parley (the phone heard it): the line stops; the listener starts with `recentMic`.
+    var barged: Bool { lock.withLock { bargeFlag } }
+
+    func takeBarge() -> Bool {
+        lock.withLock {
+            defer { bargeFlag = false }
+            return bargeFlag
+        }
+    }
+
+    /// The last 2 s of the phone's mic — what Sir said before the host listened.
+    func recentMic() -> [Data] { lock.withLock { recent } }
 
     // `ring` to the phones (one in the foreground shows its own incoming call).
     func ring(label: String) {

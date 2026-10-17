@@ -132,6 +132,8 @@ public static class RelayFrame
                     };
                 case "hello":
                     return new PhoneHello();
+                case "barge":
+                    return new PhoneBarge();
                 case "palette":
                     return Str("saved") is { Length: > 0 } saved ? new PhonePaletteSaved(saved) : null;
                 case "wake":
@@ -193,6 +195,7 @@ public sealed record PhoneImage(string Id, string Key) : PhoneMessage;
 public sealed record PhoneSay(string Id, string Text) : PhoneMessage;
 // v4: the phone (re)connected; it saved and switched to a palette made by voice.
 public sealed record PhoneHello : PhoneMessage { }
+public sealed record PhoneBarge : PhoneMessage { }   // v4: Sir talks over Parley — stop the line, listen
 public sealed record PhonePaletteSaved(string Name) : PhoneMessage;
 // v4: the Live Activity's push-to-start token, and the running one's update token ("" = none).
 public sealed record PhoneActivityStart(string Token, string Env) : PhoneMessage;

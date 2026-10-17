@@ -133,6 +133,8 @@ enum RelayFrame {
             return f["kind"] as? String == "alert" ? .alert(token: token.lowercased(), env: env) : .push(token: token.lowercased(), env: env)
         case "hello":
             return .hello
+        case "barge":
+            return .barge
         case "palette":
             guard let saved = f["saved"] as? String, !saved.isEmpty else { return nil }
             return .paletteSaved(saved)
@@ -208,6 +210,7 @@ enum PhoneEvent: Equatable, Sendable {
     case say(id: String, text: String)        // a typed message for that session
     case later(TimeInterval?)                 // can't talk now: ring again in n s, or nil = Sir calls back
     case hello                                // the phone (re)connected to the relay
+    case barge                                // v4: Sir talks over Parley — stop the line, listen
     case paletteSaved(String)                 // v4: it saved and switched to a palette made by voice
     // v4 (docs/LIVE-ACTIVITIES.md): the Live Activity's push tokens.
     case activityStart(token: String, env: String)   // push-to-start: the host starts it

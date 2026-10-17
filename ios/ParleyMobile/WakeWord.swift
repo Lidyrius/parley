@@ -60,6 +60,20 @@ enum WakeWord {
     }
 }
 
+/// Sir talking over Parley (barge-in). The mic is echo-cancelled, but what leaks through is
+/// Parley's own words — so it counts only as an interruption when Sir says a stop word Parley
+/// didn't just say, or two words that aren't in Parley's line at all. Without the line's words
+/// (no captions) only stop words count.
+enum Barge {
+    static let stopWords: Set<String> = ["stopp", "stop", "halt", "moment", "warte", "warten", "parley"]
+
+    static func isInterruption(_ transcript: String, spoken: Set<String>) -> Bool {
+        let words = WakeWord.tokens(transcript).filter { $0.count >= 2 && !spoken.contains($0) }
+        if words.contains(where: stopWords.contains) { return true }
+        return !spoken.isEmpty && words.count >= 2
+    }
+}
+
 /// The mic tap's handle on the current recognition request (tap thread ↔ main actor).
 final class SpeechFeed: @unchecked Sendable {
     private let request = Locked<SFSpeechAudioBufferRecognitionRequest?>(nil)
@@ -76,13 +90,16 @@ final class SpeechFeed: @unchecked Sendable {
     }
 }
 
-/// On-device speech recognition on the call's mic, only for the wake word. Started while the
-/// host is idle, stopped otherwise (power). Tasks end by themselves (≈1 min, silence, errors);
-/// each end starts a fresh one while listening is wanted.
+/// On-device speech recognition on the call's mic: the wake word while the host is idle, an
+/// interruption while Parley speaks (`matcher` says which), stopped otherwise (power). Tasks end
+/// by themselves (≈1 min, silence, errors); each end starts a fresh one while listening is wanted.
 @MainActor
 final class WakeListener {
     let feed = SpeechFeed()
     var onWake: (() -> Void)?
+    /// What counts as heard: the wake word by default; `listenForBarge` swaps it.
+    private var matcher: (String) -> Bool = WakeWord.matches
+    private var ignoreUntil = Date.distantPast
     private(set) var isRunning = false
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "de-DE"))
     private var task: SFSpeechRecognitionTask?
@@ -109,6 +126,19 @@ final class WakeListener {
 
     func start() {
         guard !isRunning, isAvailable else { return }
+        matcher = WakeWord.matches
+        isRunning = true
+        failures = 0
+        begin()
+    }
+
+    /// While Parley speaks: a fresh recognition that fires on an interruption. The first 0.6 s
+    /// are ignored — the echo canceller is still settling then.
+    func listenForBarge(_ isInterruption: @escaping (String) -> Bool) {
+        stop()
+        guard isAvailable else { return }
+        matcher = isInterruption
+        ignoreUntil = Date().addingTimeInterval(0.6)
         isRunning = true
         failures = 0
         begin()
@@ -129,7 +159,7 @@ final class WakeListener {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
-        request.contextualStrings = ["Parley", "Hey Parley"]
+        request.contextualStrings = ["Parley", "Hey Parley", "Stopp", "Moment"]
         request.addsPunctuation = false
         feed.use(request)
         generation += 1
@@ -145,7 +175,7 @@ final class WakeListener {
     }
 
     private func heard(_ transcript: String, generation: Int) {
-        guard isRunning, generation == self.generation, WakeWord.matches(transcript) else { return }
+        guard isRunning, generation == self.generation, Date() >= ignoreUntil, matcher(transcript) else { return }
         stop()
         onWake?()
     }

@@ -102,9 +102,25 @@ final class CallAudio {
 
     // MARK: - Playback
 
+    /// Barge-in: quiet at once — the queued audio is dropped, and frames still arriving are too,
+    /// until `unsilence()` (the host stopped and listens).
+    private var silenced = false
+
+    func silence() {
+        guard isRunning else { return }
+        silenced = true
+        flushTimer?.cancel()
+        flushTimer = nil
+        jitter.reset()
+        player.stop()
+        player.play()
+    }
+
+    func unsilence() { silenced = false }
+
     /// One received wire frame (20 ms: 960 bytes at 24 kHz, or 640 at 16 kHz).
     func play(_ frame: Data) {
-        guard isRunning else { return }
+        guard isRunning, !silenced else { return }
         received += 1
         for f in jitter.push(frame) { schedule(f) }
         if !jitter.waiting.isEmpty, !jitter.isPlaying, flushTimer == nil {

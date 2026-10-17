@@ -247,3 +247,30 @@ all ten roles (background, card, raised, accent, waiting, working, purple, idle,
 phone saves it under "Eigene" (same name = replaced) and switches to it. The Zentrale researches
 the palette (Playwright) — see zentrale/CLAUDE.md, "Farbpalette erstellen".
 
+### Barge-in — Sir talks over Parley
+
+The call's mic is echo-cancelled (`.voiceChat` voice processing). While the host speaks, the
+phone runs its on-device recognizer on it and counts as an interruption only what can't be
+Parley's own echo: a stop word ("Stopp", "Moment", "Warte" …) Parley didn't just say, or two
+words not in its current / previous line (no captions → stop words only); the first 0.6 s are
+ignored while the echo canceller settles. Then the phone silences its playback at once (queued
+frames dropped until the host stops speaking) and sends `{"t":"barge"}`. The host stops the line
+(nothing of it moves to the Mac's speaker), skips the beep and listens — starting with the phone's
+last 2 s of mic, so the first words count; after a speak-only line too (the hook injects any
+transcript). Einstellungen → "Parley unterbrechen" (on by default).
+
+### Fragerunde, Wachhund, Unterwegs by itself
+
+- **Fragerunde:** for 4 min after a call ends, a new update doesn't ring: it waits (`queued`, the
+  Island shows it), others line up, then one ring for all — "Ich habe drei Updates für Sie, Sir."
+  Calling in starts the round at once; permission prompts never wait.
+- **Wachhund:** every 30 s, each working session's transcript tail (same tool call 4× in the last
+  8, the last 6 failed, or 10 min silent after 15 min of work) → Sir is asked "Soll ich
+  eingreifen?" (a `watchdog` dialog like a permission prompt) or notified when Unterwegs; a yes
+  sends the session a hint (pending instruction — read at its next step). Once per kind per
+  session per 30 min.
+- **Unterwegs by itself:** the phone's Focus filter (on with a Focus, off when it ends), the
+  Shortcuts actions (CarPlay, leaving home), and on the host "Unterwegs, wenn der Mac / PC
+  gesperrt ist" (locked ≥ 1 min; off by default) — the phone's own choice stays its own.
+- **Fortsetzen** also for sessions with work in the background (Claude Code takes a prompt then).
+

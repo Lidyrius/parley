@@ -18,11 +18,12 @@ public sealed class MicCapture
 
     /// Record until trailing silence (or timeout); returns 16 kHz mono 16-bit WAV bytes.
     /// In an iPhone call the phone's microphone is the input.
-    public async Task<byte[]> Record()
+    /// `preroll`: barge-in — Sir already started talking, so the phone's last seconds count too.
+    public async Task<byte[]> Record(IReadOnlyList<byte[]>? preroll = null)
     {
         if (PhoneCall.Active)
         {
-            var phone = await RecordFromPhone();
+            var phone = await RecordFromPhone(preroll ?? Array.Empty<byte[]>());
             if (phone is not null) return phone;
             Log.Write("mic: call ended before any speech → local mic");
         }
@@ -107,7 +108,7 @@ public sealed class MicCapture
     // same VAD, grace and limits as the local mic. null = the call ended before anything was
     // said → the caller listens on the local mic instead; once speech started, what was heard
     // is used.
-    private async Task<byte[]?> RecordFromPhone()
+    private async Task<byte[]?> RecordFromPhone(IReadOnlyList<byte[]> preroll)
     {
         var vad = new Vad();
         var samples = new List<short>(16000 * 30);
@@ -117,7 +118,7 @@ public sealed class MicCapture
         using var hold = PhoneCall.Hold();
         PhoneCall.SetAudio("listening");
         Log.Write("mic: listening on the phone");
-        using (PhoneCall.Listen(frame =>
+        void Feed(byte[] frame)
         {
             lock (gate)
             {
@@ -136,7 +137,9 @@ public sealed class MicCapture
                 else if (decision == Vad.Decision.Ended)
                     done.TrySetResult("vad-silence");
             }
-        }))
+        }
+        foreach (var frame in preroll) Feed(frame);
+        using (PhoneCall.Listen(Feed))
         {
             // Wall clock for the cap and the call: frames may simply stop coming.
             var start = DateTime.UtcNow;

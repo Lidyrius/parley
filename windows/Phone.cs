@@ -218,6 +218,7 @@ public static class PhoneCall
         {
             changed = _call != started;
             if (!started && !_call) _declined = true;
+            if (changed) { _barge = false; _recent.Clear(); }
             if (!started && _call) _lastCallEnd = DateTime.UtcNow;
             _call = started;
             if (started) _downRate = down;
@@ -238,8 +239,48 @@ public static class PhoneCall
         {
             _audioAt = DateTime.UtcNow;
             sink = _sink;
+            _recent.Enqueue(frame);
+            while (_recent.Count > PrerollFrames) _recent.Dequeue();
         }
         sink?.Invoke(frame);
+    }
+
+    // ---- barge-in (as macOS): Sir talks over Parley -----------------------------------
+
+    public const int PrerollFrames = 100;   // 2 s of the phone's mic (20 ms frames)
+    private static readonly Queue<byte[]> _recent = new();
+    private static bool _barge;
+
+    // The phone heard Sir talk over Parley: the line stops; the listener starts with RecentMic().
+    public static void OnBarge()
+    {
+        lock (Gate)
+        {
+            if (!_call) return;
+            _barge = true;
+        }
+        Log.Write("phone: Sir interrupts — stopping the line");
+    }
+
+    public static bool Barged
+    {
+        get { lock (Gate) return _barge; }
+    }
+
+    public static bool TakeBarge()
+    {
+        lock (Gate)
+        {
+            var b = _barge;
+            _barge = false;
+            return b;
+        }
+    }
+
+    // The last 2 s of the phone's mic — what Sir said before the PC listened.
+    public static byte[][] RecentMic()
+    {
+        lock (Gate) return _recent.ToArray();
     }
 
     // The relay (re)connected: the phone gets the current state again.
@@ -355,6 +396,7 @@ public static class PhoneCall
             for (var i = 0; i < frames.Count; i++)
             {
                 if (!Active) return PhoneAudio.Rest(pcm, sampleRate, Math.Max(0, i - LeadFrames));
+                if (Barged) return null;   // barge-in: stop at once, nothing of it on the PC's speaker
                 var due = TimeSpan.FromMilliseconds((i - LeadFrames) * PhoneAudio.FrameMs) - clock.Elapsed;
                 if (due > TimeSpan.Zero) await Task.Delay(due, ct);
                 await relay.SendAudioAsync(frames[i]);

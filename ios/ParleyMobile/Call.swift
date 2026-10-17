@@ -77,7 +77,10 @@ final class CallController {
         isDemo = demo
         let out = relay.audioOut
         audio = CallAudio(meter: meter, speech: wake.feed, send: { out.send($0) })
-        wake.onWake = { [weak self] in self?.wakeHeard() }
+        wake.onWake = { [weak self] in
+            guard let self else { return }
+            if listeningForBarge { bargeHeard() } else { wakeHeard() }
+        }
         #if !targetEnvironment(simulator)
         if !demo { setUpCallKit() }
         #endif
@@ -276,6 +279,13 @@ final class CallController {
     static var autoHangUp: Bool { UserDefaults.standard.bool(forKey: autoHangUpKey) }
     @ObservationIgnored private var autoHangUpTask: Task<Void, Never>?
     @ObservationIgnored private var hangUpAtEnd: Task<Void, Never>?
+    /// Barge-in: the recognizer listens for Sir talking over Parley (Einstellungen → "Unterbrechen").
+    static let bargeInKey = "bargeIn"
+    static var bargeIn: Bool { UserDefaults.standard.object(forKey: bargeInKey) as? Bool ?? true }
+    @ObservationIgnored private var listeningForBarge = false
+    /// The words of Parley's current and previous line: their echo is not Sir talking.
+    @ObservationIgnored private var spokenWords: Set<String> = []
+    @ObservationIgnored private var previousLine: Set<String> = []
 
     static let speakerKey = "speakerByDefault"
     static var speakerByDefault: Bool { UserDefaults.standard.object(forKey: speakerKey) as? Bool ?? true }
@@ -289,6 +299,9 @@ final class CallController {
     /// A `caption` frame: it arrives just before its line's first audio frame.
     func captionReceived(_ c: Caption) {
         caption = c
+        let words = Set(WakeWord.tokens(c.words.joined(separator: " ")))
+        spokenWords = previousLine.union(words)
+        previousLine = words
         slides = []   // a new line: its slides (if any) come right after
         captionBase = audio.received
         captionAt = .now
@@ -365,6 +378,7 @@ final class CallController {
             autoHangUpTask?.cancel()
             hangUpAtEnd?.cancel()
         }
+        if state != .speaking { audio.unsilence() }
         guard state != hostAudio else { return }
         if state == .idle, hostAudio != .idle, Self.autoHangUp, phase.isActive, !isTest {
             // The talk is over (the host sends idle only when no turn waits) and we hang up: the
@@ -540,7 +554,32 @@ final class CallController {
     // MARK: - Wake word
 
     private func updateWake() {
-        if phase.isActive, hostAudio == .idle, !muted, wakeArmed, !isDemo { wake.start() } else { wake.stop() }
+        guard phase.isActive, !muted, !isDemo else { stopListening(); return }
+        if hostAudio == .idle, wakeArmed {
+            if listeningForBarge { stopListening() }
+            wake.start()
+        } else if hostAudio == .speaking, Self.bargeIn {
+            guard !listeningForBarge else { return }
+            listeningForBarge = true
+            wake.listenForBarge { [weak self] heard in Barge.isInterruption(heard, spoken: self?.spokenWords ?? []) }
+        } else {
+            stopListening()
+        }
+    }
+
+    private func stopListening() {
+        listeningForBarge = false
+        wake.stop()
+    }
+
+    /// Sir talks over Parley: quiet at once, and the host stops the line and listens — what was
+    /// just said is in its last seconds of mic audio. No hang-up after this line, of course.
+    private func bargeHeard() {
+        guard phase.isActive, hostAudio == .speaking else { return }
+        audio.silence()
+        hangUpAtEnd?.cancel()
+        autoHangUpTask?.cancel()
+        relay.send(Outgoing.barge)
     }
 
     private func wakeHeard() {
