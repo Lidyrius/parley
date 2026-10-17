@@ -5,7 +5,7 @@ import AppIntents
 /// the call to the car).
 struct CallParleyIntent: AppIntent {
     static var title: LocalizedStringResource { "Parley anrufen" }
-    static var description: IntentDescription { IntentDescription("Ruft Parley auf deinem Mac an – freihändig, auch in CarPlay.") }
+    static var description: IntentDescription { IntentDescription("Startet einen Anruf mit Parley – freihändig, auch in CarPlay.") }
     static var openAppWhenRun: Bool { false }
 
     @MainActor
@@ -26,7 +26,7 @@ enum CallParleyError: Error, CustomLocalizedStringResourceConvertible {
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
-        case .notPaired: "Parley ist noch nicht mit deinem Mac gekoppelt. Öffne Parley und scanne den QR-Code."
+        case .notPaired: "Parley ist noch nicht gekoppelt. Öffne Parley und scanne den QR-Code."
         case .failed: "Der Anruf bei Parley ließ sich nicht starten."
         }
     }
