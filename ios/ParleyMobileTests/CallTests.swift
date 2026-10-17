@@ -50,6 +50,10 @@ struct CallTests {
         #expect(call.speaker)
         call.hostAudioChanged(.speaking, label: "Shirts")
         #expect(call.hostAudio == .speaking && call.label == "Shirts")
+        call.hostAudioChanged(.speaking, label: "Zentrale")   // same state, new speaker
+        #expect(call.label == "Zentrale")
+        call.hostAudioChanged(.listening, label: nil)          // no label → keeps the last one
+        #expect(call.label == "Zentrale")
         call.hangUp()
         #expect(call.phase == .none && !call.showsScreen && !call.muted && call.label == nil)
     }

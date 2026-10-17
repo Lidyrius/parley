@@ -116,7 +116,8 @@ public static class PhoneCall
     private static Action<byte[]>? _sink;      // the recorder, while it listens on the phone
     private static int _holds;                 // turns / dialogs / acks in progress (0 = idle)
     private static string _audio = "idle";     // speaking | listening | idle
-    private static string? _sent;              // the state the phone has (null = unknown → send)
+    private static string? _speaker;           // the session voiced now — rides on every `audio` frame
+    private static string? _sent;              // the state|speaker the phone has (null = unknown → send)
     private static bool _away;
     private static string _pushToken = "", _pushEnv = "production";
 
@@ -237,6 +238,17 @@ public static class PhoneCall
         _ = PushState();
     }
 
+    // The session whose turn is voiced now: the phone's call screen (and CallKit) names it.
+    public static void SetSpeaker(string label)
+    {
+        lock (Gate)
+        {
+            if (_speaker == label) return;
+            _speaker = label;
+        }
+        _ = PushState();
+    }
+
     // Sends the CURRENT state if the phone doesn't have it yet. One sender at a time and the
     // state is read after the gate, so quick changes can't arrive out of order.
     private static async Task PushState()
@@ -244,16 +256,19 @@ public static class PhoneCall
         await StateGate.WaitAsync();
         try
         {
-            string state;
+            string state, key;
+            string? speaker;
             RelayClient? relay;
             lock (Gate)
             {
-                if (!_call || _relay is null || _audio == _sent) return;
+                key = $"{_audio}|{_speaker}";
+                if (!_call || _relay is null || key == _sent) return;
                 state = _audio;
+                speaker = _speaker;
                 relay = _relay;
             }
-            var ok = await relay.SendTextAsync(RelayFrame.Audio(state));
-            lock (Gate) _sent = ok ? state : null;
+            var ok = await relay.SendTextAsync(RelayFrame.Audio(state, speaker));
+            lock (Gate) _sent = ok ? key : null;
         }
         catch (Exception e) { Log.Write($"phone: state frame failed: {e.Message}"); }
         finally { StateGate.Release(); }

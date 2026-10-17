@@ -143,7 +143,10 @@ public static class RelayFrame
     }
 
     // host → phone (v2): what the host does with the call audio — speaking | listening | idle.
-    public static string Audio(string state) => JsonSerializer.Serialize(new { t = "audio", state });
+    // `label` = the session voiced now (the call screen's name).
+    public static string Audio(string state, string? label = null) => label is null
+        ? JsonSerializer.Serialize(new { t = "audio", state })
+        : JsonSerializer.Serialize(new { t = "audio", state, label });
 
     // host → phone (v2): an update wants the phone (next to the VoIP push).
     public static string Ring(string label) => JsonSerializer.Serialize(new { t = "ring", label });

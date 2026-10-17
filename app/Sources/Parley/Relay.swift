@@ -143,8 +143,14 @@ enum RelayFrame {
         if case .resume(let id)? = parse(text) { resume(id) }
     }
 
-    // host → phone: what the host does with the call audio.
-    static func audio(_ state: PhoneAudioState) -> String { #"{"t":"audio","state":"\#(state.rawValue)"}"# }
+    // host → phone: what the host does with the call audio, and for which session (the call
+    // screen's name).
+    static func audio(_ state: PhoneAudioState, label: String? = nil) -> String {
+        struct Wire: Encodable { let t = "audio"; let state: String; let label: String }
+        guard let label, let data = try? JSONEncoder().encode(Wire(state: state.rawValue, label: label)),
+              let json = String(data: data, encoding: .utf8) else { return #"{"t":"audio","state":"\#(state.rawValue)"}"# }
+        return json
+    }
 
     // host → phone: an update wants the phone (sent alongside the VoIP push).
     static func ring(label: String) -> String {

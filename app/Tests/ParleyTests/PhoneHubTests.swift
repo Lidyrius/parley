@@ -23,6 +23,8 @@ final class PhoneFrameTests: XCTestCase {
     func testHostFrames() throws {
         XCTAssertEqual(RelayFrame.audio(.speaking), #"{"t":"audio","state":"speaking"}"#)
         XCTAssertEqual(RelayFrame.audio(.idle), #"{"t":"audio","state":"idle"}"#)
+        let audio = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(RelayFrame.audio(.speaking, label: "Tipp\"frei").utf8)) as? [String: String])
+        XCTAssertEqual(audio, ["t": "audio", "state": "speaking", "label": "Tipp\"frei"])
         let ring = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(RelayFrame.ring(label: #"Tipp "frei""#).utf8)) as? [String: String])
         XCTAssertEqual(ring, ["t": "ring", "label": #"Tipp "frei""#])
     }
@@ -47,6 +49,19 @@ final class PhoneHubTests: XCTestCase {
         hub.attach(text: { t in w.lock.withLock { w.text.append(t) } }, audio: { d in w.lock.withLock { w.audio.append(d) } })
         hub.onChange = { w.lock.withLock { w.changes += 1 } }
         hub.onWake = { w.lock.withLock { w.wakes += 1 } }
+    }
+
+    func testSpeakerRidesOnAudioFramesAndAChangeIsSentAtOnce() throws {
+        hub.setSpeaker("Zentrale")                         // no call: kept, not sent
+        XCTAssertEqual(wire.text, [])
+        hub.handle(.call(true))
+        hub.setSpeaker("Zentrale")                         // unchanged → nothing
+        hub.setSpeaker("workspace")
+        hub.setAudioState(.speaking)
+        let frames = try wire.text.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String]) }
+        XCTAssertEqual(frames, [["t": "audio", "state": "idle", "label": "Zentrale"],
+                                ["t": "audio", "state": "idle", "label": "workspace"],
+                                ["t": "audio", "state": "speaking", "label": "workspace"]])
     }
 
     func testCallStartSendsTheCurrentStateAndEndKillsTheGeneration() {

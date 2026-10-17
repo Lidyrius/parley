@@ -212,7 +212,11 @@ final class CallController {
 
     /// An `audio` frame.
     func hostAudioChanged(_ state: HostAudio, label: String?) {
-        if let label { self.label = label }
+        // Another session took the voice → the screen and CallKit's caller name follow.
+        if let label, label != self.label {
+            self.label = label
+            if let uuid { provider?.reportCall(with: uuid, updated: Self.update(label: label)) }
+        }
         guard state != hostAudio else { return }
         hostAudio = state
         if state != .idle {

@@ -137,6 +137,7 @@ final class AppController: ObservableObject {
     private func runTurn(_ turn: TurnPayload) async -> TurnReply {
         let key = routeKey(turn.tmux_pane, turn.session_id)
         LiveStatus.begin(session: turn.session_id)
+        phone.setSpeaker(turn.spokenLabel.isEmpty ? "Parley" : turn.spokenLabel)   // wake dialog: Parley itself
         defer { LiveStatus.set(phase: "idle") }
         switch turn.event {
         case ControlServer.resumeEvent: return await runResume(turn)

@@ -39,6 +39,7 @@ public sealed class TurnPipeline
     public async Task<(string transcript, bool park, int wait, string resume)> Run(TurnPayload turn)
     {
         LiveStatus.Begin(turn.SessionId);
+        PhoneCall.SetSpeaker(turn.SpokenLabel.Length == 0 ? "Parley" : turn.SpokenLabel);   // wake dialog: Parley itself
         try
         {
             if (turn.Event == Server.ResumeEvent) return await RunResume(turn);

@@ -33,6 +33,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     private var generation = 0
     private var desired: PhoneAudioState = .idle
     private var sentState: PhoneAudioState?
+    private var speaker: String?   // the session Parley voices now — sent with every `audio` frame
     private var sink: (@Sendable (Data) -> Void)?
     private var sendText: (@Sendable (String) -> Void)?
     private var sendBinary: (@Sendable (Data) -> Void)?
@@ -78,7 +79,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             }
             guard changed else { return }
             log("phone: call connected")
-            send?(RelayFrame.audio(state))
+            send?(RelayFrame.audio(state, label: lock.withLock { speaker }))
             onChange?()
         case .call(false):
             let changed = lock.withLock { () -> Bool in
@@ -150,7 +151,20 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             sentState = state
             return sendText
         }
-        send?(RelayFrame.audio(state))
+        send?(RelayFrame.audio(state, label: lock.withLock { speaker }))
+    }
+
+    // The session whose turn is voiced now: the phone's call screen (and CallKit) names it.
+    // A change mid-call goes out at once with the current state.
+    func setSpeaker(_ label: String) {
+        let out = lock.withLock { () -> (String, (@Sendable (String) -> Void)?)? in
+            guard speaker != label else { return nil }
+            speaker = label
+            guard active else { return nil }
+            sentState = desired
+            return (RelayFrame.audio(desired, label: label), sendText)
+        }
+        if let (frame, send) = out { send?(frame) }
     }
 
     func setAudioSink(_ sink: (@Sendable (Data) -> Void)?) {
