@@ -143,8 +143,15 @@ enum SessionCloser {
         if getpgid(p.pid) == p.pid { killpg(p.pid, SIGTERM) } else { kill(p.pid, SIGTERM) }
         Log.write("close: SIGTERM to claude \(p.pid) on \(p.tty)")
         DispatchQueue.global().async {
-            for _ in 0..<50 where kill(p.pid, 0) == 0 { usleep(100_000) }
-            if kill(p.pid, 0) == 0 { kill(p.pid, SIGKILL); usleep(300_000) }
+            // Terminal asks before closing a window with anything but the shell in it, so first
+            // claude, then what it leaves behind (MCP servers) must be gone.
+            let tty = { onlyShell(run("/bin/ps", ["-t", p.tty, "-o", "ucomm="])) }
+            for _ in 0..<50 where !tty() { usleep(100_000) }
+            if !tty() {
+                if getpgid(p.pid) == p.pid || kill(p.pid, 0) != 0 { killpg(p.pid, SIGKILL) } else { kill(p.pid, SIGKILL) }
+                for _ in 0..<20 where !tty() { usleep(100_000) }
+            }
+            guard tty() else { return Log.write("close: \(p.tty) still busy — its window stays") }
             closeTerminal(tty: "/dev/" + p.tty)
         }
         return nil
@@ -186,12 +193,17 @@ enum SessionCloser {
         return out
     }
 
+    // `ps -t <tty> -o ucomm=`: nothing but login and a shell left.
+    static func onlyShell(_ ps: String) -> Bool {
+        ps.split(separator: "\n").allSatisfy { ["login", "zsh", "-zsh", "bash", "-bash", "sh", "fish"].contains($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
     // The window of that tty, when it is its only tab (a window of several keeps its others).
     // Not Terminal (iTerm, tmux…): the shell simply stays.
     static func closeTerminal(tty: String) {
         let script = ["on run argv", #"if application "Terminal" is not running then return"#, #"tell application "Terminal""#,
                       "repeat with w in windows", "repeat with t in tabs of w", "if tty of t is (item 1 of argv) then",
-                      "if (count of tabs of w) is 1 then close w", "return", "end if", "end repeat", "end repeat",
+                      "if (count of tabs of w) is 1 then", "with timeout of 10 seconds", "close w", "end timeout", "end if", "return", "end if", "end repeat", "end repeat",
                       "end tell", "end run"]
         _ = run("/usr/bin/osascript", script.flatMap { ["-e", $0] } + [tty])
     }

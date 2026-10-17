@@ -151,4 +151,10 @@ final class CloseTests: XCTestCase {
         XCTAssertEqual(SessionCloser.parse(ps).map(\.pid), [91480, 47710, 64946, 50950, 700])
         XCTAssertEqual(SessionCloser.parse(ps).first?.tty, "ttys023")
     }
+
+    func testTheWindowClosesOnlyWithNothingButTheShellLeft() {
+        XCTAssertTrue(SessionCloser.onlyShell("login\n-zsh\n"))
+        XCTAssertFalse(SessionCloser.onlyShell("login\nzsh\nnode\n"))   // an MCP server still exiting
+        XCTAssertFalse(SessionCloser.onlyShell("login\nzsh\n2.1.302\n"))   // claude itself
+    }
 }
