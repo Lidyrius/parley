@@ -1,0 +1,9 @@
+/* App Shortcut phrases for Siri in English (keys: the German phrases in Intents.swift). */
+"Sprich mit ${applicationName}" = "Talk to ${applicationName}";
+"Mit ${applicationName} sprechen" = "Speak with ${applicationName}";
+"Verbinde mich mit ${applicationName}" = "Connect me to ${applicationName}";
+"Starte einen ${applicationName} Anruf" = "Start a ${applicationName} call";
+"${applicationName} Anruf starten" = "Start ${applicationName} call";
+"Hey ${applicationName}" = "Hey ${applicationName}";
+"${applicationName} anrufen" = "Call ${applicationName}";
+"Ruf ${applicationName} an" = "Ring ${applicationName}";

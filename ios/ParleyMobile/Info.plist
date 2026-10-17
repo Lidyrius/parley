@@ -31,6 +31,21 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Parlay</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Parlei</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Parle</string>
+		</dict>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSAppTransportSecurity</key>

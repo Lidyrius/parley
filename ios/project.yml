@@ -11,7 +11,7 @@ settings:
     DEVELOPMENT_TEAM: 384887N3UL
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "8"
+    CURRENT_PROJECT_VERSION: "9"
 targets:
   ParleyMobile:
     type: application
@@ -21,6 +21,11 @@ targets:
       path: ParleyMobile/Info.plist
       properties:
         CFBundleDisplayName: Parley
+        # What Siri hears for "Parley" (German speech) — App Shortcut phrases match these too.
+        INAlternativeAppNames:
+          - INAlternativeAppName: Parlay
+          - INAlternativeAppName: Parlei
+          - INAlternativeAppName: Parle
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}

@@ -36,13 +36,18 @@ struct ParleyShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: CallParleyIntent(),
+            // Phrases without "anrufen" first: "Ruf Parley an" alone goes to the Phone app (a contact
+            // named Parley). The app name also matches its INAlternativeAppNames ("Parlay", …) —
+            // what Siri hears in German. English phrases: en.lproj/AppShortcuts.strings.
             phrases: [
+                "Sprich mit \(.applicationName)",
+                "Mit \(.applicationName) sprechen",
+                "Verbinde mich mit \(.applicationName)",
+                "Starte einen \(.applicationName) Anruf",
+                "\(.applicationName) Anruf starten",
+                "Hey \(.applicationName)",
                 "\(.applicationName) anrufen",
                 "Ruf \(.applicationName) an",
-                "Rufe \(.applicationName) an",
-                "Hey \(.applicationName)",
-                "Mit \(.applicationName) sprechen",
-                "Sprich mit \(.applicationName)",
             ],
             shortTitle: "Parley anrufen",
             systemImageName: "phone.fill"
