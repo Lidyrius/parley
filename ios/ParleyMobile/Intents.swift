@@ -20,6 +20,14 @@ enum ParleyActions {
         await AppModel.shared.syncSwitches()
     }
 
+    /// A tapped answer: to the host (dialling the relay in the background), and the activity
+    /// shows it at once — the host's next update confirms.
+    static func reply(session: String, text: String) async {
+        let model = AppModel.shared
+        await model.withRelay { model.say(text, to: session) }
+        await model.activity.answered(text)
+    }
+
     static func setSilent(_ on: Bool) async {
         if on { AppModel.shared.away = true }
         AppModel.shared.silent = on

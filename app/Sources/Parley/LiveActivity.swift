@@ -15,16 +15,44 @@ enum LiveActivity {
         var callback: Double?         // epoch s; 0 = waits for Sir's call back
     }
 
+    /// Stumm: Parley's question, waiting for Sir — answered with a tap on a predicted answer.
+    struct Ask: Codable, Equatable, Sendable {
+        var id: String                // the session
+        var label: String
+        var text: String
+        var options: [String] = []
+
+        /// From a voiced turn: the line and its predicted answers (`<reply on>`), trimmed to fit.
+        init(id: String, label: String, text: String, options: [String]) {
+            self.id = id
+            self.label = String(label.prefix(32))
+            self.text = String(text.prefix(160))
+            self.options = options.map { String($0.trimmingCharacters(in: .whitespaces).prefix(40)) }.filter { !$0.isEmpty }.prefix(3).map { $0 }
+        }
+    }
+
     struct Content: Codable, Equatable, Sendable {
         var sessions: [Row] = []
         var alive = 0
         var line: String?
         var from: String?
+        var ask: Ask?
 
-        /// Sir is wanted: a call back, a ring to come, Parley talking or wanting to.
+        /// Sir is wanted: a question, a call back, a ring to come, Parley talking or wanting to.
         var wantsSir: Set<String> {
-            Set(sessions.filter { $0.callback != nil || ["speaking", "listening", "transcribing", "queued"].contains($0.state) }.map(\.id))
+            var ids = Set(sessions.filter { $0.callback != nil || ["speaking", "listening", "transcribing", "queued"].contains($0.state) }.map(\.id))
+            if let ask { ids.insert("ask:" + ask.id) }
+            return ids
         }
+    }
+
+    /// A question stays while its session waits (parked, or idle / paused / in the background
+    /// after it); once it works again, talks, or stopped, it was answered some other way.
+    static func isOpen(_ ask: Ask, sessions json: String) -> Bool {
+        guard let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
+              let list = obj["sessions"] as? [[String: Any]],
+              let s = list.first(where: { $0["id"] as? String == ask.id }) else { return false }
+        return ["parked", "idle", "waiting", "background"].contains(s["state"] as? String ?? "")
     }
 
     static let maxRows = 4
@@ -46,7 +74,7 @@ enum LiveActivity {
 
     /// GET /sessions (the registry's JSON, times in epoch ms) → the activity's content. Stopped
     /// sessions are left out; the line is the most urgent session's last spoken one.
-    static func content(fromSessions json: String) -> Content {
+    static func content(fromSessions json: String, ask: Ask? = nil) -> Content {
         guard let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
               let list = obj["sessions"] as? [[String: Any]] else { return Content() }
         var rows: [(row: Row, line: String?)] = []
@@ -61,7 +89,7 @@ enum LiveActivity {
         rows.sort { rank($0.row) != rank($1.row) ? rank($0.row) < rank($1.row) : $0.row.since > $1.row.since }
         let spoken = rows.first { !($0.line ?? "").isEmpty }
         return Content(sessions: rows.prefix(maxRows).map(\.row), alive: rows.count,
-                       line: spoken?.line.map { String($0.prefix(120)) }, from: spoken?.row.label)
+                       line: spoken?.line.map { String($0.prefix(120)) }, from: spoken?.row.label, ask: ask)
     }
 
     // MARK: - payloads (APNs `liveactivity`)

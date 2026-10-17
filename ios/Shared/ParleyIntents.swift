@@ -47,6 +47,26 @@ struct SetSilentIntent: SetValueIntent, LiveActivityIntent {
     }
 }
 
+/// A predicted answer, tapped in the Live Activity (Stumm): goes to that session as typed text.
+struct ReplyIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource { "Parley antworten" }
+    static var isDiscoverable: Bool { false }
+
+    @Parameter(title: "Session") var session: String
+    @Parameter(title: "Antwort") var text: String
+
+    init() {}
+    init(session: String, text: String) {
+        self.session = session
+        self.text = text
+    }
+
+    func perform() async throws -> some IntentResult {
+        await ParleyActions.reply(session: session, text: text)
+        return .result()
+    }
+}
+
 enum CallParleyError: Error, CustomLocalizedStringResourceConvertible {
     case notPaired, failed
 

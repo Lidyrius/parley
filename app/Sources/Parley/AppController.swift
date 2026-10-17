@@ -94,7 +94,11 @@ final class AppController: ObservableObject {
         phone.onWake = { server.wakeFromPhone() }
         // v3: the phone's session view — history (from Claude Code's transcript), its images,
         // and typed messages (delivered like a routed instruction).
-        phone.onChat = { [phone] event in
+        phone.onChat = { [phone, weak self] event in
+            // An answer (typed, or tapped in the Live Activity) closes that session's question there.
+            if case .say(let id, _) = event {
+                Task { @MainActor in if self?.activityAsk?.id == id { self?.activityAsk = nil } }
+            }
             DispatchQueue.global(qos: .userInitiated).async {
                 switch event {
                 case .history(let id, let before):
@@ -126,6 +130,7 @@ final class AppController: ObservableObject {
     // MARK: - the iPhone's Live Activity (docs/LIVE-ACTIVITIES.md)
 
     private var activityFeed = LiveActivityFeed()
+    private var activityAsk: LiveActivity.Ask?   // Stumm: the latest question, until answered
     private var activityTimer: Timer?
     private var seenActivityToken: String?
 
@@ -139,7 +144,9 @@ final class AppController: ObservableObject {
         }
         guard apns.configured else { return }
         let start = phone.activityStartTarget
-        let content = LiveActivity.content(fromSessions: server.sessionsJSON())
+        let sessions = server.sessionsJSON()
+        if let ask = activityAsk, !LiveActivity.isOpen(ask, sessions: sessions) { activityAsk = nil }
+        let content = LiveActivity.content(fromSessions: sessions, ask: activityAsk)
         guard let action = activityFeed.step(content, away: phone.away, canStart: start != nil,
                                              canUpdate: update != nil, now: now) else { return }
         let (target, body, priority, what): ((token: String, env: String)?, Data, Int, String) = switch action {
@@ -503,6 +510,11 @@ final class AppController: ObservableObject {
             Log.write("phone: no notification token yet — open the app once with Stumm on")
         }
         setStatus(key, "paused")
+        // The question with its predicted answers into the Live Activity: a tap answers it.
+        if turn.wantsListen {
+            activityAsk = LiveActivity.Ask(id: ControlServer.sessionKey(turn), label: turn.spokenLabel, text: turn.speak,
+                                           options: (turn.replies ?? []).map(\.on))
+        }
         return TurnReply(transcript: "", park: turn.wantsListen)
     }
 

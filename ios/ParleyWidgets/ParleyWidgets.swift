@@ -21,4 +21,5 @@ enum ParleyActions {
         if on { SharedState.away = true }
         SharedState.silent = on
     }
+    static func reply(session: String, text: String) async {}
 }

@@ -16,22 +16,72 @@ public static class LiveActivity
         [property: JsonPropertyName("until")] double? Until = null,
         [property: JsonPropertyName("callback")] double? Callback = null);  // epoch s; 0 = waits for Sir's call back
 
+    // Stumm (or a ring not answered): Parley's question, waiting for Sir — answered with a tap on
+    // a predicted answer.
+    public sealed record Ask(
+        [property: JsonPropertyName("id")] string Id,                       // the session
+        [property: JsonPropertyName("label")] string Label,
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("options")] IReadOnlyList<string> Options)
+    {
+        // From a voiced turn: the line and its predicted answers (<reply on>), trimmed to fit.
+        public static Ask From(string id, string label, string text, IEnumerable<string> options) => new(
+            id, label.Length > 32 ? label[..32] : label, text.Length > 160 ? text[..160] : text,
+            options.Select(o => o.Trim()).Where(o => o.Length > 0).Select(o => o.Length > 40 ? o[..40] : o).Take(3).ToList());
+
+        public bool SameAs(Ask? o) => o is not null && Id == o.Id && Label == o.Label && Text == o.Text && Options.SequenceEqual(o.Options);
+    }
+
     public sealed record Content(
         [property: JsonPropertyName("sessions")] IReadOnlyList<Row> Sessions,
         [property: JsonPropertyName("alive")] int Alive,
         [property: JsonPropertyName("line")] string? Line = null,
-        [property: JsonPropertyName("from")] string? From = null)
+        [property: JsonPropertyName("from")] string? From = null,
+        [property: JsonPropertyName("ask")] Ask? Ask = null)
     {
         public static readonly Content Empty = new(Array.Empty<Row>(), 0);
 
-        // Sir is wanted: a call back, a ring to come, Parley talking or wanting to.
-        public IReadOnlySet<string> WantsSir => Sessions
-            .Where(r => r.Callback is not null || r.State is "speaking" or "listening" or "transcribing" or "queued")
-            .Select(r => r.Id).ToHashSet();
+        // Sir is wanted: a question, a call back, a ring to come, Parley talking or wanting to.
+        public IReadOnlySet<string> WantsSir
+        {
+            get
+            {
+                var ids = Sessions.Where(r => r.Callback is not null || r.State is "speaking" or "listening" or "transcribing" or "queued")
+                    .Select(r => r.Id).ToHashSet();
+                if (Ask is not null) ids.Add("ask:" + Ask.Id);
+                return ids;
+            }
+        }
 
         // Records compare lists by reference; the feed needs the values.
         public bool SameAs(Content? o) =>
-            o is not null && Alive == o.Alive && Line == o.Line && From == o.From && Sessions.SequenceEqual(o.Sessions);
+            o is not null && Alive == o.Alive && Line == o.Line && From == o.From && Sessions.SequenceEqual(o.Sessions)
+            && (Ask is null ? o.Ask is null : Ask.SameAs(o.Ask));
+    }
+
+    // The latest question (set by the turn, cleared by an answer or when its session moves on).
+    private static readonly object AskGate = new();
+    private static Ask? _ask;
+    public static Ask? CurrentAsk
+    {
+        get { lock (AskGate) return _ask; }
+        set { lock (AskGate) _ask = value; }
+    }
+
+    // A question stays while its session waits (parked, or idle / paused / in the background
+    // after it); once it works again, talks, or stopped, it was answered some other way.
+    public static bool IsOpen(Ask ask, string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("sessions", out var list) || list.ValueKind != JsonValueKind.Array) return false;
+            foreach (var s in list.EnumerateArray())
+                if (s.TryGetProperty("id", out var id) && id.GetString() == ask.Id)
+                    return s.TryGetProperty("state", out var st) && st.GetString() is "parked" or "idle" or "waiting" or "background";
+            return false;
+        }
+        catch (JsonException) { return false; }
     }
 
     public const int MaxRows = 4;
@@ -57,7 +107,7 @@ public static class LiveActivity
 
     // GET /sessions (times in epoch ms) → the activity's content. Stopped sessions are left out;
     // the line is the most urgent session's last spoken one.
-    public static Content FromSessions(string json)
+    public static Content FromSessions(string json, Ask? ask = null)
     {
         try
         {
@@ -77,7 +127,7 @@ public static class LiveActivity
             rows.Sort((a, b) => Rank(a.Row) != Rank(b.Row) ? Rank(a.Row).CompareTo(Rank(b.Row)) : b.Row.Since.CompareTo(a.Row.Since));
             var spoken = rows.FirstOrDefault(r => !string.IsNullOrEmpty(r.Line));
             var text = spoken.Line is { } t ? (t.Length > 120 ? t[..120] : t) : null;
-            return new Content(rows.Take(MaxRows).Select(r => r.Row).ToList(), rows.Count, text, text is null ? null : spoken.Row.Label);
+            return new Content(rows.Take(MaxRows).Select(r => r.Row).ToList(), rows.Count, text, text is null ? null : spoken.Row.Label, ask);
         }
         catch (JsonException) { return Content.Empty; }
     }

@@ -156,6 +156,14 @@ public sealed class TurnPipeline
         return (text, false, 0, "");
     }
 
+    // The question with its predicted answers into the iPhone's Live Activity: a tap answers it.
+    private static void AskInLiveActivity(TurnPayload turn)
+    {
+        if (!turn.WantsListen) return;
+        LiveActivity.CurrentAsk = LiveActivity.Ask.From(Server.SessionKey(turn), turn.SpokenLabel, turn.Speak,
+                                                        (turn.Replies ?? new List<Reply>()).Select(r => r.On));
+    }
+
     private async Task<(string transcript, bool park, int wait, string resume)> RunTurn(TurnPayload turn)
     {
         var config = Config.Load();
@@ -168,6 +176,7 @@ public sealed class TurnPipeline
         {
             Log.Write($"Unterwegs + Stumm → notification for {turn.SpokenLabel}");
             _ = Apns.SendAlert($"Parley · {turn.SpokenLabel}", turn.Speak, Server.SessionKey(turn));
+            AskInLiveActivity(turn);
             return ("", turn.WantsListen, 0, "");
         }
 
@@ -204,6 +213,7 @@ public sealed class TurnPipeline
         {
             Log.Write($"Unterwegs, phone not reached → notification for {turn.SpokenLabel}");
             _ = Apns.SendAlert($"Parley · {turn.SpokenLabel}", turn.Speak, Server.SessionKey(turn));
+            AskInLiveActivity(turn);
             return ("", turn.WantsListen, 0, "");
         }
         if (calledBack) await ThankForCallingBack(config);

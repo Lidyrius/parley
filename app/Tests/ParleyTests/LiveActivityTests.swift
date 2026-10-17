@@ -152,4 +152,32 @@ final class LiveActivityTests: XCTestCase {
         hub.handle(.activity(token: "", env: "development"))
         XCTAssertNil(hub.activityTarget)
     }
+
+    // MARK: - Stumm: a question with answers to tap
+
+    func testAQuestionRidesAlongWhileItsSessionWaits() throws {
+        let ask = LiveActivity.Ask(id: "c", label: "Website", text: String(repeating: "x", count: 300),
+                                   options: [" Ja, deployen ", "", "Erst Staging", "Warte noch", "Vierte"])
+        XCTAssertEqual(ask.text.count, 160)
+        XCTAssertEqual(ask.options, ["Ja, deployen", "Erst Staging", "Warte noch"])
+        XCTAssertTrue(LiveActivity.isOpen(ask, sessions: sessions))          // "c" is idle (waiting for Sir)
+        XCTAssertFalse(LiveActivity.isOpen(LiveActivity.Ask(id: "w", label: "", text: "", options: []), sessions: sessions))   // works again
+        XCTAssertFalse(LiveActivity.isOpen(LiveActivity.Ask(id: "gone", label: "", text: "", options: []), sessions: sessions))
+
+        let c = LiveActivity.content(fromSessions: sessions, ask: ask)
+        XCTAssertEqual(c.ask, ask)
+        let o = try XCTUnwrap(JSONSerialization.jsonObject(with: LiveActivity.payload(.update, c, now: Date())) as? [String: Any])
+        let state = try XCTUnwrap((o["aps"] as? [String: Any])?["content-state"] as? [String: Any])
+        XCTAssertEqual((state["ask"] as? [String: Any])?["options"] as? [String], ["Ja, deployen", "Erst Staging", "Warte noch"])
+
+        // A new question is worth a priority push; the same one again is not.
+        var feed = LiveActivityFeed()
+        let t = Date(timeIntervalSince1970: 0)
+        let plain = LiveActivity.content(fromSessions: sessions)
+        _ = feed.step(plain, away: true, canStart: true, canUpdate: true, now: t)
+        feed.phoneReports(running: true, at: t)
+        XCTAssertEqual(feed.step(c, away: true, canStart: true, canUpdate: true, now: t + 5), .update(c, priority: 10))
+        XCTAssertNil(feed.step(c, away: true, canStart: true, canUpdate: true, now: t + 10))
+        XCTAssertEqual(feed.step(plain, away: true, canStart: true, canUpdate: true, now: t + 15), .update(plain, priority: 5))
+    }
 }

@@ -1,8 +1,8 @@
 # Konzept: Parley in Dynamic Island, Live-Aktivitäten, Widgets und Steuerelementen
 
-Status: **Stufe 1 und 2 gebaut** (Steuerelemente; Parley-Aktivität mit Rückruf / Später /
-Pausiert, gestartet und aktualisiert per Push vom Mac und von Windows — Protokoll in
-docs/IPHONE.md, „Protocol v4“). Offen: Antworten ohne App (4), Widgets (5), Untertitel im
+Status: **Stufen 1–4 gebaut** (Steuerelemente; Parley-Aktivität mit Rückruf / Später /
+Pausiert und Antworten per Tipp im Stumm-Modus, gestartet und aktualisiert per Push vom Mac und
+von Windows — Protokoll in docs/IPHONE.md, „Protocol v4“). Offen: Widgets (5), Untertitel im
 Anruf (6). Apple-Stand: iOS 26 / iOS 27 (geprüft gegen Apples Doku, Oktober 2026).
 
 ## Die Idee in einem Satz

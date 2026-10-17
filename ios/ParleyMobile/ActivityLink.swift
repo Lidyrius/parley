@@ -12,7 +12,8 @@ final class ActivityLink {
     private(set) var updateToken: String?
     /// A token changed: send them.
     var onChange: (() -> Void)?
-    private var watched: Set<String> = []
+    private var watched: [String] = []   // in the order they appeared
+    private var demoStarted = false
 
     func start() {
         if #available(iOS 17.2, *) {
@@ -31,12 +32,14 @@ final class ActivityLink {
         for activity in Activity<ParleyAttributes>.activities { watch(activity) }
     }
 
-    /// One activity at a time: a newer one (a second push-to-start) replaces the older.
+    /// One activity at a time: a newer one (a second push-to-start) replaces the older ones —
+    /// only older ones, so two arriving together can't end each other.
     private func watch(_ activity: Activity<ParleyAttributes>) {
-        guard watched.insert(activity.id).inserted else { return }
-        let id = activity.id
+        guard !watched.contains(activity.id) else { return }
+        let older = Set(watched)
+        watched.append(activity.id)
         Task {
-            for other in Activity<ParleyAttributes>.activities where other.id != id && other.activityState == .active {
+            for other in Activity<ParleyAttributes>.activities where older.contains(other.id) && other.activityState == .active {
                 await other.end(nil, dismissalPolicy: .immediate)
             }
         }
@@ -55,6 +58,17 @@ final class ActivityLink {
         }
     }
 
+    /// A tapped answer: the question goes, the answer shows as the last line.
+    func answered(_ text: String) async {
+        for activity in Activity<ParleyAttributes>.activities where activity.activityState == .active {
+            var state = activity.content.state
+            state.ask = nil
+            state.line = text
+            state.from = ParleyAttributes.ContentState.you
+            await activity.update(.init(state: state, staleDate: activity.content.staleDate))
+        }
+    }
+
     func endAll() async {
         for activity in Activity<ParleyAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
@@ -63,9 +77,13 @@ final class ActivityLink {
 
     /// `-demoActivity` (simulator, screenshots): the demo content, started locally.
     func startDemo() async {
+        guard !demoStarted else { return }
+        demoStarted = true
         await endAll()
         do {
-            _ = try Activity.request(attributes: ParleyAttributes(), content: .init(state: .demo(), staleDate: nil, relevanceScore: 50))
+            let ask = ProcessInfo.processInfo.arguments.contains("ask")
+            _ = try Activity.request(attributes: ParleyAttributes(),
+                                     content: .init(state: ask ? .demoAsk() : .demo(), staleDate: nil, relevanceScore: 50))
         } catch {
             NSLog("demo activity: %@", "\(error)")
         }

@@ -149,7 +149,9 @@ internal sealed class TrayApp : ApplicationContext
             var c = Config.Load();
             if (c.ApnsKeyId.Length == 0 || c.ApnsKeyP8.Length == 0) return;
             var start = PhoneCall.ActivityStart;
-            var content = LiveActivity.FromSessions(_server.Sessions.Json());
+            var sessions = _server.Sessions.Json();
+            if (LiveActivity.CurrentAsk is { } ask && !LiveActivity.IsOpen(ask, sessions)) LiveActivity.CurrentAsk = null;
+            var content = LiveActivity.FromSessions(sessions, LiveActivity.CurrentAsk);
             var action = _activityFeed.Step(content, PhoneCall.Away, start.Token.Length > 0, update.Token.Length > 0, now);
             if (action is null) return;
             var (target, ev, priority) = action switch
@@ -227,6 +229,8 @@ internal sealed class TrayApp : ApplicationContext
                 break;
             case PhoneSay s:
                 Log.Write($"phone: typed message for {s.Id} ({s.Text.Length} chars)");
+                // An answer (typed, or tapped in the Live Activity) closes that session's question there.
+                if (LiveActivity.CurrentAsk?.Id == s.Id) LiveActivity.CurrentAsk = null;
                 _server.Resume(s.Id, s.Text);
                 break;
         }

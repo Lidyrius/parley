@@ -203,7 +203,9 @@ The host owns the activity (macOS `LiveActivity.swift`, Windows `LiveActivity.cs
 turns `GET /sessions` into the `content-state` — `sessions` (at most 4, most urgent first: owed
 call back, ring to come, talking, wanting to talk, paused, working, background, parked, ready;
 `id`, `label`, `state`, `since`, `until`, `callback` in epoch **seconds**), `alive`, `line` / `from`
-(the most urgent session's last spoken line) — and pushes `apns-push-type: liveactivity` to
+(the most urgent session's last spoken line), `ask` (Stumm, or a ring not answered: the
+latest question — `id`, `label`, `text`, up to 3 `options` from its `<reply on>` predictions —
+until it is answered or its session works again) — and pushes `apns-push-type: liveactivity` to
 `de.developaway.parley.mobile.push-type.liveactivity`:
 
 - **start** (push-to-start, priority 10, with an alert "Parley unterwegs"): Unterwegs on and a
@@ -215,7 +217,8 @@ call back, ring to come, talking, wanting to talk, paused, working, background, 
   new one (iOS's limit). An end the host did not push is Sir's swipe: no new start until
   Unterwegs goes off and on again. 410 / BadDeviceToken drops that token.
 
-The phone (`ActivityLink`) only hands over tokens, keeps one activity (a newer one ends the
+A tapped option goes to the session as a `say` (typed text); the activity shows it as sent at
+once. The phone (`ActivityLink`) otherwise only hands over tokens, keeps one activity (a newer one ends the
 older) and ends it at once when Unterwegs goes off. Its controls (Control Center, Lock Screen,
 Action Button: "Parley anrufen", "Unterwegs", "Stumm") and the activity's call button are
 `LiveActivityIntent`s — they run in the app's process, which dials the relay in the background

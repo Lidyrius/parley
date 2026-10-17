@@ -12,6 +12,16 @@ struct ParleyAttributes: ActivityAttributes {
         var alive = 0                 // sessions not stopped
         var line: String?             // Parley's latest spoken line…
         var from: String?             // …and whose session it was
+        var ask: Ask?                 // Stumm: a question waiting for Sir, with answers to tap
+    }
+
+    /// A question Parley asked while Stumm is on: answered with a tap (the predicted answers)
+    /// or in the app.
+    struct Ask: Codable, Hashable, Sendable {
+        var id: String                // the session
+        var label: String
+        var text: String              // Parley's line
+        var options: [String] = []    // at most 3
     }
 
     struct Row: Codable, Hashable, Sendable, Identifiable {
@@ -92,6 +102,12 @@ extension ParleyAttributes.ContentState {
     /// The row the compact Island shows: the first (most urgent).
     var top: ParleyAttributes.Row? { sessions.first }
 
+    /// `from` of an answer Sir just tapped (shown as sent until the host's next update).
+    static let you = "Du"
+
+    /// The rest, shown as names only.
+    var others: ArraySlice<ParleyAttributes.Row> { sessions.dropFirst() }
+
     /// Demo content for previews and the simulator (`-demoActivity`).
     static func demo(now: Date = Date()) -> Self {
         let t = now.timeIntervalSince1970
@@ -101,6 +117,14 @@ extension ParleyAttributes.ContentState {
             .init(id: "c", label: "Tippfrei", state: "background", since: t - 1240),
             .init(id: "d", label: "Zentrale", state: "idle", since: t - 3000),
         ], alive: 4, line: "Die Tests sind grün, Sir. Soll ich deployen?", from: "Shirts")
+    }
+
+    /// `-demoActivity ask`: Stumm with a question waiting.
+    static func demoAsk(now: Date = Date()) -> Self {
+        var s = demo(now: now)
+        s.ask = .init(id: "a", label: "Shirts", text: "Die Tests sind grün, Sir. Soll ich auf Produktion deployen?",
+                      options: ["Ja, deployen", "Erst Staging", "Warte noch"])
+        return s
     }
 }
 
