@@ -27,7 +27,7 @@ struct SlideCard: View {
                     RadialGradient(colors: [Theme.claude.opacity(0.16), .clear], center: .topLeading, startRadius: 0, endRadius: 260)
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 }
-                .shadow(color: .black.opacity(0.22), radius: 24, y: 10)
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)   // stays inside the pager's page padding
         }
         .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Theme.stroke))
         .onAppear {

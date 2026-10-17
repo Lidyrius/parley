@@ -664,6 +664,7 @@ final class AppController: ObservableObject {
                     let t = config.useGoogle
                         ? Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate) : nil
                     if let t { phone.reply(Captions.frame(t)) }
+                    Log.write("phone: caption \(t.map { "\($0.words.count) words, \(Int($0.end)) s" } ?? "none")")
                     if !slides.isEmpty { sendSlides(slides, timed: t, session: session) }
                 }
                 captioned = true

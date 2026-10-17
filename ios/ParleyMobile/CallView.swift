@@ -90,7 +90,8 @@ struct CallView: View {
                     .padding(.horizontal, 8)
                     .accessibilityHidden(true)
                 Group {
-                    if look.mood == .speaking, let c = call.caption, !call.muted {
+                    // The line stays readable while Parley listens (an app opened late still shows it).
+                    if look.mood == .speaking || look.mood == .listening, let c = call.caption, !call.muted {
                         LiveCaption(call: call, caption: c)
                     } else {
                         caption(call, look: look, line: voiced?.stats?.lastLine)
@@ -166,13 +167,16 @@ struct CallView: View {
                 SlideCard(slide: s, image: model.images[s.id], index: i, count: order.count) {
                     zoomed = ZoomedImage(id: s.id, image: $0)
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 16)   // room for the card's shadow: the pager clips its pages
+                .padding(.top, 6)
+                .padding(.bottom, 20)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .tag(s.id)
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 330)
+        .frame(height: 356)
+        .padding(.horizontal, -12)
         .animation(.easeInOut(duration: 0.45), value: shown)
     }
 
@@ -227,7 +231,7 @@ struct CallView: View {
                 ? Text("Sag „Hey Parley“, wenn du etwas brauchst.")
                 : Text("Parley meldet sich, sobald es Neues gibt.")
         case .listening:
-            Text("Parley hört zu – sprich einfach.")
+            Text("")
         case .speaking:
             line.map { Text("„\($0)“").italic() } ?? Text("Parley spricht.")
         }

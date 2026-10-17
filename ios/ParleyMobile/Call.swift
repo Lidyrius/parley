@@ -433,7 +433,7 @@ final class CallController {
             phase = .active(since: .now.addingTimeInterval(-167))
             hostAudio = HostAudio(rawValue: state.rawValue) ?? .idle
             wakeSent = state == .listening
-            if state == .speaking {
+            if state != .idle {   // listening: the line just spoken stays
                 captionReceived(Demo.caption)
                 slidesReceived(Demo.slides)
             }
