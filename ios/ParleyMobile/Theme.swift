@@ -39,6 +39,11 @@ final class Appearance {
 
     var palette: Palette { Palette.all.first { $0.id == paletteID } ?? .claude }
 
+    /// What Parley looks like in a call.
+    var orbStyle = OrbStyle(rawValue: UserDefaults.standard.string(forKey: "orbStyle") ?? "") ?? .jarvis {
+        didSet { UserDefaults.standard.set(orbStyle.rawValue, forKey: "orbStyle") }
+    }
+
     /// How an incoming call moves around the caller's ring.
     var ringStyle = RingStyle(rawValue: UserDefaults.standard.string(forKey: "ringStyle") ?? "") ?? .ripples {
         didSet { UserDefaults.standard.set(ringStyle.rawValue, forKey: "ringStyle") }

@@ -161,8 +161,33 @@ final class CallController {
     }
 
     /// The in-app "Annehmen" (CallKit's own answer UI goes straight to `performAnswer`).
+    /// A pretend call from the settings (Probeanruf): it rings in the app; answering shows Parley
+    /// speaking for a few seconds, then it ends by itself — no CallKit, relay or audio.
+    private(set) var isTest = false
+    @ObservationIgnored private var testEnd: Task<Void, Never>?
+
+    func startTest() {
+        guard phase == .none else { return }
+        isTest = true
+        label = "Probeanruf"
+        phase = .ringing
+    }
+
     func answer() {
         guard phase == .ringing else { return }
+        if isTest {
+            phase = .active(since: .now)
+            hostAudio = .speaking
+            testEnd = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(6))
+                guard !Task.isCancelled else { return }
+                self?.hostAudio = .listening
+                try? await Task.sleep(for: .seconds(2.5))
+                guard !Task.isCancelled else { return }
+                self?.reset()
+            }
+            return
+        }
         if isDemo { phase = .active(since: .now); return }
         guard let uuid else { return }
         showsScreen = true
@@ -189,6 +214,7 @@ final class CallController {
 
     func hangUp() {
         guard phase != .none else { return }
+        if isTest { reset(); return }
         guard let uuid, provider != nil, !isDemo else {
             finish()
             if !isDemo { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
@@ -212,7 +238,7 @@ final class CallController {
 
     func setSpeaker(_ on: Bool) {
         speaker = on
-        guard !isDemo else { return }
+        guard !isDemo, !isTest else { return }
         try? AVAudioSession.sharedInstance().overrideOutputAudioPort(on ? .speaker : .none)
     }
 
@@ -290,7 +316,7 @@ final class CallController {
 
     /// The level the waveform shows: the host's voice while it speaks, else the mic.
     func level(at date: Date) -> Float {
-        if isDemo { return Demo.level(hostAudio, at: date) }
+        if isDemo || isTest { return Demo.level(hostAudio, at: date) }
         return hostAudio == .speaking ? meter.out : meter.mic
     }
 
@@ -388,6 +414,8 @@ final class CallController {
         uuid = nil
         label = nil
         hostAudio = .idle
+        isTest = false
+        testEnd?.cancel()
         caption = nil   // the next call starts clean: no old subtitles or slides
         slides = []
         muted = false

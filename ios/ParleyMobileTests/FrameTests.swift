@@ -220,6 +220,16 @@ struct FrameTests {
         #expect(SlideCard.format(24) == "24")
     }
 
+    @Test func orbParticlesSitOnTheSphere() {
+        for i in [0, 1, 400, 819] {
+            let p = ParticleOrb.sphere(i, of: 820)
+            #expect(abs((p * p).sum().squareRoot() - 1) < 1e-9)
+            #expect((0..<1).contains(ParticleOrb.rand(i, 3)))
+        }
+        let ys = (0..<820).map { ParticleOrb.sphere($0, of: 820).y }
+        #expect(abs(ys.reduce(0, +) / 820) < 0.01)   // spread evenly, no pole crowding
+    }
+
     @Test func lineRevealsEndOnTheData() {
         let v = [5.0, 11, 20, 41]
         for r in LineReveal.allCases {

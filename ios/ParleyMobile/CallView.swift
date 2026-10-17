@@ -119,7 +119,7 @@ struct CallView: View {
 
     private func topBar(_ call: CallController) -> some View {
         HStack {
-            Button { call.showsScreen = false } label: {
+            Button { if call.isTest { call.hangUp() } else { call.showsScreen = false } } label: {
                 Image(systemName: "chevron.down")
                     .font(.headline)
                     .frame(width: 44, height: 44)
@@ -142,10 +142,9 @@ struct CallView: View {
         VStack(spacing: 18) {
             // Ringing: the picked motion around the ring; answered, it draws back in (the morph).
             RingingStage(style: Appearance.shared.ringStyle, color: look.color, active: call.phase == .ringing,
-                         paused: reduceMotion) {
-                ZStack {
-                    Circle().fill(look.color.opacity(0.10)).frame(width: 168, height: 168)
-                    RingView(session: Session(id: "call", state: look.state), skew: 0, size: 128)
+                         ring: 112, paused: reduceMotion) {
+                ParticleOrb(style: Appearance.shared.orbStyle, color: look.color, size: 168, paused: reduceMotion) {
+                    Double(call.level(at: $0))
                 }
             }
             .animation(.easeInOut(duration: 0.4), value: look)
@@ -221,8 +220,9 @@ struct CallView: View {
     /// The session's name and state, small — above a slide.
     private func compactIdentity(_ call: CallController, look: CallLook, name: String) -> some View {
         HStack(spacing: 12) {
-            RingView(session: Session(id: "call", state: look.state), skew: 0, size: 34)
-                .accessibilityHidden(true)
+            ParticleOrb(style: Appearance.shared.orbStyle, color: look.color, size: 40, paused: reduceMotion) {
+                Double(call.level(at: $0))
+            }
             VStack(alignment: .leading, spacing: 1) {
                 Text(name).font(.title3.bold()).lineLimit(1)
                 statusLine(call, look: look).font(.subheadline).monospacedDigit()

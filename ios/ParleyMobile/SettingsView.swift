@@ -47,6 +47,15 @@ struct SettingsView: View {
                         }
                     }
                     NavigationLink {
+                        OrbPicker()
+                    } label: {
+                        LabeledContent {
+                            Text(Appearance.shared.orbStyle.name)
+                        } label: {
+                            Label("Parley im Anruf", systemImage: "sparkles")
+                        }
+                    }
+                    NavigationLink {
                         RingPicker()
                     } label: {
                         LabeledContent {
@@ -277,5 +286,95 @@ struct RingPicker: View {
         }
         .navigationTitle("Anruf-Animation")
         .navigationBarTitleDisplayMode(.inline)
+        .testCall()
+    }
+}
+
+/// Einstellungen → Parley im Anruf: the five particle orbs, each moving live.
+struct OrbPicker: View {
+    private let appearance = Appearance.shared
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(OrbStyle.allCases) { o in
+                    let picked = o == appearance.orbStyle
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) { appearance.orbStyle = o }
+                    } label: {
+                        HStack(spacing: 14) {
+                            OrbPreview(style: o)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(o.name).font(.headline).foregroundStyle(.primary)
+                                Text(o.note).font(.subheadline).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(picked ? Theme.claude : Color.secondary.opacity(0.4))
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(picked ? .isSelected : [])
+                }
+            } footer: {
+                Text("So sieht Parley im Anruf aus. Die Teilchen bewegen sich von selbst und reagieren auf die Stimme – beim Sprechen auf Parleys, beim Zuhören auf deine.")
+            }
+        }
+        .navigationTitle("Parley im Anruf")
+        .navigationBarTitleDisplayMode(.inline)
+        .testCall()
+    }
+}
+
+/// A small orb that "speaks" now and then, so the previews show how each reacts to a voice.
+private struct OrbPreview: View {
+    let style: OrbStyle
+
+    var body: some View {
+        ParticleOrb(style: style, color: Theme.claude, size: 76) { date in
+            let t = date.timeIntervalSinceReferenceDate
+            let talking = t.truncatingRemainder(dividingBy: 6) < 3.5
+            return talking ? 0.35 + 0.3 * abs(sin(t * 7.3)) * abs(cos(t * 3.1)) : 0
+        }
+        .frame(width: 96, height: 80)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.background))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.stroke))
+    }
+}
+
+extension View {
+    /// A "Probeanruf" button in the toolbar: the call screen rings with the picked look; answering
+    /// shows Parley speaking for a few seconds, any button ends it.
+    func testCall() -> some View { modifier(TestCall()) }
+}
+
+private struct TestCall: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @State private var showing = false
+
+    func body(content: Content) -> some View {
+        content
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        model.call.startTest()
+                        showing = model.call.isTest
+                    } label: {
+                        Text("Probeanruf")
+                    }
+                    .disabled(model.call.phase != .none)
+                }
+            }
+            .fullScreenCover(isPresented: $showing) {
+                CallView()
+            }
+            .onChange(of: model.call.phase) { _, phase in
+                if phase == .none { showing = false }
+            }
     }
 }
