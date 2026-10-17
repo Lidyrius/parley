@@ -114,6 +114,102 @@ enum SessionStarter {
     }
 }
 
+// POST /close: ends a terminal Claude Code session — SIGTERM to its `claude` process group
+// (claude with its hooks and MCP servers; the transcript is already on disk, so /past +
+// /dispatch resume continue it), then closes its Terminal window once only the shell is left.
+// Desktop sessions have no terminal: the Claude app closes those.
+enum SessionCloser {
+    struct Proc: Equatable { let pid: Int32; let tty: String; let args: String }
+
+    /// Session `id`'s claude process: the one ~/.claude/sessions/<pid>.json names (`claimed`),
+    /// else one with the id in its arguments (`--resume <id>`), else the only unclaimed terminal
+    /// one working in `cwd` (a fresh `claude '/parley:voice'` names no id anywhere).
+    static func pick(id: String, cwd: String, procs: [Proc], claimed: [Int32: String], cwds: [Int32: String]) -> Proc? {
+        if let p = procs.first(where: { claimed[$0.pid] == id }) { return p }
+        if let p = procs.first(where: { $0.args.contains(id) }) { return p }
+        let here = procs.filter { $0.tty != "??" && claimed[$0.pid] == nil && !cwd.isEmpty && cwds[$0.pid] == cwd }
+        return here.count == 1 ? here[0] : nil
+    }
+
+    /// nil = it is closing; else why not.
+    static func close(id: String, cwd: String) -> String? {
+        let procs = running()
+        let tty = procs.filter { $0.tty != "??" }.map(\.pid)
+        guard let p = pick(id: id, cwd: cwd, procs: procs, claimed: claimed(), cwds: cwds(tty)) else {
+            return "no running claude process found for that session"
+        }
+        guard p.tty != "??" else { return "not a terminal session (desktop app?) — close it there" }
+        // A shell job is its own process group: claude, its hooks and MCP servers end together.
+        if getpgid(p.pid) == p.pid { killpg(p.pid, SIGTERM) } else { kill(p.pid, SIGTERM) }
+        Log.write("close: SIGTERM to claude \(p.pid) on \(p.tty)")
+        DispatchQueue.global().async {
+            for _ in 0..<50 where kill(p.pid, 0) == 0 { usleep(100_000) }
+            if kill(p.pid, 0) == 0 { kill(p.pid, SIGKILL); usleep(300_000) }
+            closeTerminal(tty: "/dev/" + p.tty)
+        }
+        return nil
+    }
+
+    // Every claude process, by argv[0]: `claude …`, a path to it (the desktop's has spaces), or
+    // node running the npm cli.js. Not by process name — the native binary is named after its
+    // version (2.1.302), and Claude Code's own grep (ugrep) runs as `claude` with any pattern.
+    static func running() -> [Proc] { parse(run("/bin/ps", ["-axo", "pid=,tty=,args="])) }
+
+    static func parse(_ ps: String) -> [Proc] {
+        let argv0 = #"^(\S*/)?claude( |$)|^/.*/MacOS/claude( |$)|^(\S*/)?node \S*claude-code/cli\.js"#
+        return ps.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: " ", maxSplits: 2)
+            guard f.count == 3, let pid = Int32(f[0]) else { return nil }
+            let args = f[2].trimmingCharacters(in: .whitespaces)
+            guard args.range(of: argv0, options: .regularExpression) != nil else { return nil }
+            return Proc(pid: pid, tty: String(f[1]), args: args)
+        }
+    }
+
+    // ~/.claude/sessions/<pid>.json: Claude Code's own pid → session id (not every session has one).
+    static func claimed() -> [Int32: String] {
+        struct File: Decodable { let pid: Int32; let sessionId: String }
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/sessions")
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        let all = files.filter { $0.pathExtension == "json" }
+            .compactMap { (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(File.self, from: $0) } }
+        return Dictionary(all.map { ($0.pid, $0.sessionId) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    static func cwds(_ pids: [Int32]) -> [Int32: String] {
+        guard !pids.isEmpty else { return [:] }
+        var out: [Int32: String] = [:], pid: Int32 = 0
+        for line in run("/usr/sbin/lsof", ["-a", "-d", "cwd", "-Fpn", "-p", pids.map(String.init).joined(separator: ",")]).split(separator: "\n") {
+            if line.hasPrefix("p") { pid = Int32(line.dropFirst()) ?? 0 }
+            if line.hasPrefix("n") { out[pid] = Zentrale.normalize(String(line.dropFirst())) }
+        }
+        return out
+    }
+
+    // The window of that tty, when it is its only tab (a window of several keeps its others).
+    // Not Terminal (iTerm, tmux…): the shell simply stays.
+    static func closeTerminal(tty: String) {
+        let script = ["on run argv", #"if application "Terminal" is not running then return"#, #"tell application "Terminal""#,
+                      "repeat with w in windows", "repeat with t in tabs of w", "if tty of t is (item 1 of argv) then",
+                      "if (count of tabs of w) is 1 then close w", "return", "end if", "end repeat", "end repeat",
+                      "end tell", "end run"]
+        _ = run("/usr/bin/osascript", script.flatMap { ["-e", $0] } + [tty])
+    }
+
+    private static func run(_ exe: String, _ args: [String]) -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: exe)
+        p.arguments = args
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return "" }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
 // Instructions waiting for a session in a folder (POST /dispatch, a routed wake to a Zentrale
 // that is not running): handed over when a session there shows up, dropped after 10 min.
 struct PendingInstructions {

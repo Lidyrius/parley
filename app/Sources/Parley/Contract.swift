@@ -112,6 +112,14 @@ struct DispatchPayload: Codable, Equatable {
     var resume: String?       // a past session's id: started as `claude --resume <id>`
 }
 
+// POST /close — end running sessions: one id, several, or every running one of a project
+// (its spoken label or folder name).
+struct ClosePayload: Codable, Equatable {
+    var id: String?
+    var ids: [String]?
+    var project: String?
+}
+
 struct ReadyPayload: Codable, Equatable {
     var event: String
     var session_id: String?
@@ -138,5 +146,8 @@ enum Contract {
     }
     static func decodeDispatch(_ body: Data) -> DispatchPayload? {
         try? JSONDecoder().decode(DispatchPayload.self, from: body)
+    }
+    static func decodeClose(_ body: Data) -> ClosePayload? {
+        try? JSONDecoder().decode(ClosePayload.self, from: body)
     }
 }

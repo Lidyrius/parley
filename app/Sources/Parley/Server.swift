@@ -44,6 +44,9 @@ final class ControlServer: @unchecked Sendable {
     // Starts a session in a folder (Terminal + `claude '/parley:voice'`); a stub in tests.
     var starter: (String, String?) -> Void = { SessionStarter.start(folder: $0, resume: $1) }   // folder, resume id
     var transcripts = Transcript.projects   // Claude Code's transcripts (/past, /dispatch resume)
+    // Ends a session's process (POST /close; a stub in tests): nil = closing, else why not.
+    var closer: (_ id: String, _ cwd: String) -> String? = { SessionCloser.close(id: $0, cwd: $1) }
+    var zentraleDir: () -> String = { ZentraleSettings.load().zentraleDir }
 
     // POST /permission holds the hook at most this long, then answers "ask".
     var permissionHold: TimeInterval = 110
@@ -536,6 +539,11 @@ final class ControlServer: @unchecked Sendable {
             let query = try? JSONDecoder().decode(Query.self, from: req.body)
             let list = Transcript.past(query: query?.q, limit: min(50, max(1, query?.limit ?? 10)), root: transcripts)
             return (200, Transcript.pastJSON(list))
+        case ("POST", "/close"):
+            guard let c = Contract.decodeClose(req.body) else {
+                return (400, #"{"ok":false,"error":"bad close payload"}"#)
+            }
+            return close(c)
         case ("POST", "/resume"):
             // The mod's resume button: answer at once, then run the short voice dialog for
             // that session through the turn queue. Only parked / idle-with-mod sessions.
@@ -546,6 +554,44 @@ final class ControlServer: @unchecked Sendable {
         default:
             return (404, #"{"ok":false,"error":"not found"}"#)
         }
+    }
+}
+
+extension ControlServer {
+    // POST /close: {"id"} | {"ids":[…]} | {"project":"<label or folder name>"} (every running
+    // session of it). Each closed one shows stopped and stays resumable (/past + /dispatch
+    // resume). The Zentrale never closes itself. 200 when any closed, else the first failure's
+    // code: 404 unknown, 403 the Zentrale, 409 not running / not closable here.
+    func close(_ c: ClosePayload) -> (Int, String) {
+        var ids = (c.ids ?? []) + (c.id.map { [$0] } ?? [])
+        let project = c.project?.trimmingCharacters(in: .whitespaces) ?? ""
+        if !project.isEmpty { ids += sessions.running(named: project) }
+        struct Closed: Encodable { let id: String; let label: String }
+        struct Failed: Encodable { let id: String; let error: String }
+        struct Wire: Encodable { let ok: Bool; let closed: [Closed]; let failed: [Failed] }
+        var closed: [Closed] = [], failed: [Failed] = [], codes: [Int] = []
+        func fail(_ id: String, _ code: Int, _ why: String) { failed.append(Failed(id: id, error: why)); codes.append(code) }
+        let zentrale = zentraleDir()
+        var seen = Set<String>()
+        for id in ids where seen.insert(id).inserted {
+            guard let s = sessions.info(id) else { fail(id, 404, "unknown session"); continue }
+            if s.label == Zentrale.label || (!s.cwd.isEmpty && s.cwd == zentrale) {
+                fail(id, 403, "the Zentrale does not close itself"); continue
+            }
+            if s.state == "stopped" { fail(id, 409, "already stopped"); continue }
+            if let why = closer(id, s.cwd) { fail(id, 409, why); continue }
+            sessions.closed(id: id)
+            parked[id] = nil
+            Log.write("close: \(s.label) (\(id))")
+            closed.append(Closed(id: id, label: s.label))
+        }
+        if !closed.isEmpty { notifyParked() }
+        if ids.isEmpty {
+            return project.isEmpty ? (400, #"{"ok":false,"error":"give id, ids or project"}"#)
+                                   : (404, #"{"ok":false,"error":"no running session of that project"}"#)
+        }
+        let data = try? JSONEncoder().encode(Wire(ok: failed.isEmpty, closed: closed, failed: failed))
+        return (closed.isEmpty ? codes.first ?? 400 : 200, data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}")
     }
 }
 

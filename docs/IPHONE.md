@@ -180,3 +180,16 @@ the newest of the 400 most recently written transcripts whose title (`custom-tit
 the instruction waits for it like any dispatch; a session that still runs gets it directly.
 Unknown or unsafe ids → 404.
 
+### Closing a running session (Zentrale)
+
+`POST /close {"id":"<id>"}` (or `{"ids":[…]}`, or `{"project":"<label or folder name>"}` = every
+running session of it) → `{"ok","closed":[{"id","label"}],"failed":[{"id","error"}]}`; 200 when
+any closed, else the first failure's code: 404 unknown, 403 the Zentrale (by label or folder — it
+never closes itself), 409 already stopped / no closable process. The host finds the session's
+`claude` process (`~/.claude/sessions/<pid>.json`, else `--resume <id>` in its command line;
+macOS also: the only unclaimed terminal one in its folder), ends it (macOS: SIGTERM to its
+process group, then closes its Terminal window if it was the only tab; Windows: kills the
+`cmd /k` console tree) and marks it `stopped` at once — a dying mod's last presence within 20 s
+is ignored. The transcript stays, so `/past` + `/dispatch` resume continue it. Desktop-app
+sessions (no terminal) are refused: the Claude app closes those.
+

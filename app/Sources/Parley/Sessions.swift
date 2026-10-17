@@ -23,6 +23,7 @@ final class SessionRegistry {
         var queued = false             // a /turn (or resume dialog) waits in the queue
         var waitUntil: Date?           // "Warte X Minuten": the hook sleeps until then
         var callbackAt: Date?          // its call was put off: rings again then (distantFuture = Sir calls back)
+        var closedAt: Date?            // POST /close ended it: a dying mod's last presence is ignored
         var parked = false             // answered with park; its hook polls /wake
         var wakeAt: Date?              // last /wake poll
         var injectedAt: Date?          // a reply was fed back → the agent is working on it
@@ -71,6 +72,7 @@ final class SessionRegistry {
     func presence(id: String, label: String, project: String, state: String,
                   usage: PresenceUsage? = nil, tasks: [BackgroundTask]? = nil, host: String? = nil,
                   cwd: String = "") -> String? {
+        if let c = entries[id]?.closedAt, now().timeIntervalSince(c) < Self.presenceTTL { return nil }
         var delivered: String?
         update(id, label: label, project: project, cwd: cwd) { e, t in
             e.presenceAt = t
@@ -224,6 +226,31 @@ final class SessionRegistry {
     }
 
     func label(of id: String) -> String? { entries[id]?.label }
+    func info(_ id: String) -> (label: String, cwd: String, state: String)? {
+        refresh()
+        return entries[id].map { ($0.label, $0.cwd, $0.state) }
+    }
+
+    // Running sessions whose label or folder name is `name` (any case) — POST /close by project.
+    func running(named name: String) -> [String] {
+        refresh()
+        func same(_ a: String) -> Bool { a.caseInsensitiveCompare(name) == .orderedSame }
+        return entries.values.filter { $0.state != "stopped" && (same($0.label) || same($0.project)) }.map(\.id).sorted()
+    }
+
+    // POST /close ended its process: stopped now (no waiting for the presence to go stale),
+    // kept in the list like any stopped session. A presence after presenceTTL revives it
+    // (the kill did not take); earlier ones are the dying mod's last heartbeat.
+    func closed(id: String) {
+        guard entries[id] != nil else { return }
+        update(id) { e, t in
+            e.closedAt = t
+            e.presenceAt = t.addingTimeInterval(-Self.presenceTTL)
+            e.hookAt = t.addingTimeInterval(-Self.hookTTL)
+            e.queued = false; e.parked = false; e.waitUntil = nil; e.callbackAt = nil
+            e.pending = nil; e.expectWorkUntil = nil; e.injectedAt = nil
+        }
+    }
     func cwd(of id: String) -> String? { entries[id]?.cwd }
 
     // An instruction can be handed to the session now: its parked hook polls /wake, or the mod

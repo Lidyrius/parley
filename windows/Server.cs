@@ -264,6 +264,14 @@ public sealed class Server
                 return;
             }
 
+            // /close — the Zentrale ends running sessions: {"id"} | {"ids":[…]} | {"project":"…"}.
+            if (req.HttpMethod == "POST" && path == "/close")
+            {
+                var (code, json) = Close(body);
+                await Respond(ctx, code, json);
+                return;
+            }
+
             // /permission — the PermissionRequest hook long-polls; answered allow / deny / ask.
             if (req.HttpMethod == "POST" && path == "/permission")
             {
@@ -280,6 +288,56 @@ public sealed class Server
             Log.Write($"server error: {e.Message}");
             try { ctx.Response.Abort(); } catch { }
         }
+    }
+
+    // ---- closing sessions (POST /close) ------------------------------------------------
+
+    // Ends a session's process: null = closing, else why not. The Zentrale's folder.
+    public Func<string, string?> Closer = SessionCloser.Close;
+    public Func<string> ZentraleDir = () => Zentrale.Dir(Config.Load());
+
+    // Same answers as macOS: {"ok","closed":[{id,label}],"failed":[{id,error}]}. Each closed one
+    // shows stopped and stays resumable (/past + /dispatch resume); the Zentrale never closes
+    // itself. 200 when any closed, else the first failure's code: 404 unknown, 403 the Zentrale,
+    // 409 not running / not closable here.
+    public (int, string) Close(string body)
+    {
+        var ids = new List<string>();
+        var project = "";
+        try
+        {
+            using var doc = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
+            var r = doc.RootElement;
+            if (r.TryGetProperty("ids", out var a) && a.ValueKind == JsonValueKind.Array)
+                ids.AddRange(a.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!));
+            if (r.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.String) ids.Add(i.GetString()!);
+            if (r.TryGetProperty("project", out var p) && p.ValueKind == JsonValueKind.String) project = p.GetString()!.Trim();
+        }
+        catch (Exception) { return (400, "{\"ok\":false,\"error\":\"bad close payload\"}"); }
+        if (project.Length > 0) ids.AddRange(Sessions.RunningNamed(project));
+        if (ids.Count == 0)
+            return project.Length == 0
+                ? (400, "{\"ok\":false,\"error\":\"give id, ids or project\"}")
+                : (404, "{\"ok\":false,\"error\":\"no running session of that project\"}");
+
+        var closed = new List<object>();
+        var failed = new List<object>();
+        var codes = new List<int>();
+        void Fail(string id, int code, string why) { failed.Add(new { id, error = why }); codes.Add(code); }
+        var zentrale = ZentraleDir();
+        foreach (var id in ids.Distinct())
+        {
+            if (Sessions.Info(id) is not { } s) { Fail(id, 404, "unknown session"); continue; }
+            if (Zentrale.Is(s.Label, s.Cwd, zentrale)) { Fail(id, 403, "the Zentrale does not close itself"); continue; }
+            if (s.State == "stopped") { Fail(id, 409, "already stopped"); continue; }
+            if (Closer(id) is { } why) { Fail(id, 409, why); continue; }
+            Sessions.Closed(id);
+            _parked.TryRemove(id, out _);
+            Log.Write($"close: {s.Label} ({id})");
+            closed.Add(new { id, label = s.Label });
+        }
+        if (closed.Count > 0) NotifyParked();
+        return (closed.Count > 0 ? 200 : codes[0], JsonSerializer.Serialize(new { ok = failed.Count == 0, closed, failed }));
     }
 
     // ---- resuming sessions (tray, voice command, POST /resume) ------------------------

@@ -24,6 +24,7 @@ public sealed class SessionRegistry
         public bool Queued;               // a /turn (or resume dialog) waits at the gate
         public DateTime? WaitUntil;       // "Warte X Minuten": the hook sleeps until then
         public DateTime? CallbackAt;      // its call was put off: rings again then (MaxValue = Sir calls back)
+        public DateTime? ClosedAt;        // POST /close ended it: a dying mod's last presence is ignored
         public bool Parked;               // answered with park; its hook polls /wake
         public DateTime? WakeAt;          // last /wake poll
         public DateTime? InjectedAt;      // a reply was fed back → the agent is working on it
@@ -72,6 +73,8 @@ public sealed class SessionRegistry
     public string? Presence(string id, string label, string project, string state,
         PresenceUsage? usage = null, List<BackgroundTask>? tasks = null, string? host = null, string? cwd = null)
     {
+        lock (_gate)
+            if (_entries.TryGetValue(id, out var c) && c.ClosedAt is { } at && _now() - at < PresenceTtl) return null;
         string? delivered = null;
         DateTime? startedAt = null;
         Update(id, label, project, (e, t) =>
@@ -316,6 +319,44 @@ public sealed class SessionRegistry
             Refresh();
             return _entries.Values.Any(e => e.Id != id && e.State != "stopped");
         }
+    }
+
+    // POST /close: label, folder and state of a known session, or null.
+    public (string Label, string Cwd, string State)? Info(string id)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.TryGetValue(id, out var e) ? (e.Label, e.Cwd, e.State) : null;
+        }
+    }
+
+    // Running sessions whose label or folder name is `name` (any case) — POST /close by project.
+    public List<string> RunningNamed(string name)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            bool Same(string a) => string.Equals(a, name, StringComparison.OrdinalIgnoreCase);
+            return _entries.Values.Where(e => e.State != "stopped" && (Same(e.Label) || Same(e.Project)))
+                .Select(e => e.Id).OrderBy(i => i, StringComparer.Ordinal).ToList();
+        }
+    }
+
+    // POST /close ended its process: stopped now (no waiting for the presence to go stale),
+    // kept in the list like any stopped session. A presence after PresenceTtl revives it
+    // (the kill did not take); earlier ones are the dying mod's last heartbeat.
+    public void Closed(string id)
+    {
+        lock (_gate) if (!_entries.ContainsKey(id)) return;
+        Update(id, "", "", (e, t) =>
+        {
+            e.ClosedAt = t;
+            e.PresenceAt = t - PresenceTtl;
+            e.HookAt = t - HookTtl;
+            e.Queued = false; e.Parked = false; e.WaitUntil = null; e.CallbackAt = null;
+            e.Pending = null; e.ExpectWorkUntil = null; e.InjectedAt = null;
+        });
     }
 
     // Label + project of a known session (for the resume dialog), or null.

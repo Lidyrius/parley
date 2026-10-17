@@ -257,6 +257,93 @@ public static class SessionStarter
     }
 }
 
+// POST /close: ends a terminal Claude Code session — its claude process tree and, when it ran
+// under the `cmd /k` SessionStarter opens, that console too (the transcript is on disk, so /past
+// + /dispatch resume continue it). Desktop sessions (stream-json under the Claude app) are the
+// app's to close. ponytail: no folder fallback like macOS (Windows has no cheap cwd of another
+// process) — a fresh `claude /parley:voice` is found through ~/.claude/sessions/<pid>.json.
+public static class SessionCloser
+{
+    public sealed record Proc(int Pid, int Parent, string Args);
+
+    // The one ~/.claude/sessions/<pid>.json names, else one with the id in its arguments.
+    public static Proc? Pick(string id, IReadOnlyList<Proc> procs, IReadOnlyDictionary<int, string> claimed) =>
+        procs.FirstOrDefault(p => claimed.TryGetValue(p.Pid, out var s) && s == id) ?? procs.FirstOrDefault(p => p.Args.Contains(id));
+
+    // null = closing; else why not.
+    public static string? Close(string id)
+    {
+        var p = Pick(id, Running(), Claimed());
+        if (p is null) return "no running claude process found for that session";
+        if (p.Args.Contains("stream-json")) return "not a terminal session (desktop app?) — close it there";
+        try
+        {
+            using var claude = Process.GetProcessById(p.Pid);
+            using var parent = Shell(p.Parent);
+            (parent ?? claude).Kill(entireProcessTree: true);
+            Log.Write($"close: ended claude {p.Pid}{(parent is null ? "" : " and its console")}");
+            return null;
+        }
+        catch (Exception e) { return "could not end it: " + e.Message; }
+    }
+
+    private static Process? Shell(int pid)
+    {
+        try
+        {
+            var p = Process.GetProcessById(pid);
+            if (string.Equals(p.ProcessName, "cmd", StringComparison.OrdinalIgnoreCase)) return p;
+            p.Dispose();
+        }
+        catch (Exception) { }
+        return null;
+    }
+
+    // claude itself by argv[0] — not Claude Code's own grep (ugrep), which runs as claude.exe
+    // with any pattern in its command line.
+    private static readonly Regex Argv0 = new(@"^""?([^""]*[\\/])?claude(\.exe)?""?( |$)|^""?([^""]*[\\/])?node(\.exe)?""? .*claude-code[\\/]cli\.js",
+        RegexOptions.IgnoreCase);
+
+    // claude.exe (native) and node.exe running claude-code, with their command lines (CIM).
+    private static List<Proc> Running()
+    {
+        var psi = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true };
+        foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name='claude.exe' or Name='node.exe'\" | " +
+            "ForEach-Object { \"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.CommandLine)\" }" }) psi.ArgumentList.Add(a);
+        try
+        {
+            using var ps = Process.Start(psi)!;
+            var lines = ps.StandardOutput.ReadToEnd().Split('\n');
+            ps.WaitForExit(10_000);
+            return lines.Select(l => l.TrimEnd('\r').Split('\t', 3))
+                .Where(f => f.Length == 3 && int.TryParse(f[0], out _) && int.TryParse(f[1], out _) && Argv0.IsMatch(f[2].TrimStart()))
+                .Select(f => new Proc(int.Parse(f[0]), int.Parse(f[1]), f[2])).ToList();
+        }
+        catch (Exception e) { Log.Write($"close: could not list processes ({e.Message})"); return new(); }
+    }
+
+    // ~/.claude/sessions/<pid>.json: Claude Code's own pid → session id.
+    private static Dictionary<int, string> Claimed()
+    {
+        var map = new Dictionary<int, string>();
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "sessions");
+        if (!Directory.Exists(dir)) return map;
+        foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(f));
+                if (doc.RootElement.TryGetProperty("pid", out var pid) && pid.TryGetInt32(out var n)
+                    && doc.RootElement.TryGetProperty("sessionId", out var s) && s.GetString() is { } sid)
+                    map.TryAdd(n, sid);
+            }
+            catch (Exception) { }
+        }
+        return map;
+    }
+}
+
 public enum DispatchResult { Delivered, Started, Pending, Failed }
 
 // Hands instructions to sessions: wake routing, POST /dispatch, and the pending-by-cwd queue
