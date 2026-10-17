@@ -46,6 +46,7 @@ struct SettingsView: View {
                         ForEach(SchemeChoice.allCases) { Text($0.name).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                    .disabled(Theme.palette.alwaysDark)   // the night light stays dark
                     NavigationLink {
                         PalettePicker()
                     } label: {
@@ -121,35 +122,44 @@ struct PalettePicker: View {
     var body: some View {
         List {
             Section {
-                ForEach(Palette.all) { p in
-                    let picked = p.id == appearance.paletteID
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.35)) { appearance.paletteID = p.id }
-                    } label: {
-                        HStack(spacing: 14) {
-                            PalettePreview(palette: p)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(p.name).font(.headline).foregroundStyle(.primary)
-                                Text(p.note).font(.subheadline).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: picked ? "checkmark.circle.fill" : "circle")
-                                .font(.title3)
-                                .foregroundStyle(picked ? Theme.claude : Color.secondary.opacity(0.4))
-                        }
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)   // the row's text stays black/white, not the accent
-                    .accessibilityAddTraits(picked ? .isSelected : [])
-                }
+                ForEach(Palette.all) { row($0) }
             } footer: {
-                Text("Gilt für die ganze App, hell und dunkel. In jeder Palette bleiben die Zustände klar unterscheidbar: spricht, wartet, arbeitet, bereit.")
+                Text("Gilt für die ganze App, hell und dunkel; Nachtlicht bleibt immer dunkel. In jeder Palette bleiben die Zustände klar unterscheidbar: spricht, wartet, arbeitet, bereit.")
+            }
+            Section {
+                ForEach(Palette.classics) { row($0) }
+            } header: {
+                Text("Klassiker")
+            } footer: {
+                Text("Die bekannten Editor-Paletten von vorher.")
             }
         }
         .navigationTitle("Farbpalette")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func row(_ p: Palette) -> some View {
+        let picked = p.id == appearance.paletteID
+        return Button {
+            withAnimation(.easeInOut(duration: 0.35)) { appearance.paletteID = p.id }
+        } label: {
+            HStack(spacing: 14) {
+                PalettePreview(palette: p)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(p.name).font(.headline).foregroundStyle(.primary)
+                    Text(p.note).font(.subheadline).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(picked ? Theme.claude : Color.secondary.opacity(0.4))
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)   // the row's text stays black/white, not the accent
+        .accessibilityAddTraits(picked ? .isSelected : [])
     }
 }
 
@@ -169,7 +179,7 @@ private struct PalettePreview: View {
     }
 
     private func half(dark: Bool) -> some View {
-        let pick = { (s: Shade) in Color(hex: dark ? s.dark : s.light) }
+        let pick = { (s: Shade) in Color(hex: dark || palette.alwaysDark ? s.dark : s.light) }
         return ZStack {
             pick(palette.background)
             VStack(spacing: 5) {

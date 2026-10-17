@@ -34,10 +34,13 @@ final class Appearance {
     static let key = "palette"
 
     var paletteID = UserDefaults.standard.string(forKey: key) ?? Palette.claude.id {
-        didSet { UserDefaults.standard.set(paletteID, forKey: Self.key) }
+        didSet {
+            UserDefaults.standard.set(paletteID, forKey: Self.key)
+            applyScheme()
+        }
     }
 
-    var palette: Palette { Palette.all.first { $0.id == paletteID } ?? .claude }
+    var palette: Palette { (Palette.all + Palette.classics).first { $0.id == paletteID } ?? .claude }
 
     /// Light, dark, or as the iPhone is set — the app's own choice.
     var scheme = SchemeChoice(rawValue: UserDefaults.standard.string(forKey: "scheme") ?? "") ?? .system {
@@ -51,7 +54,9 @@ final class Appearance {
     /// `preferredColorScheme(nil)` doesn't reliably hand back to the system.
     func applyScheme() {
         for scene in UIApplication.shared.connectedScenes {
-            for window in (scene as? UIWindowScene)?.windows ?? [] { window.overrideUserInterfaceStyle = scheme.style }
+            for window in (scene as? UIWindowScene)?.windows ?? [] {
+                window.overrideUserInterfaceStyle = palette.alwaysDark ? .dark : scheme.style
+            }
         }
     }
 
@@ -133,6 +138,7 @@ struct Palette: Identifiable, Equatable, Sendable {
     let idle: Shade        // green
     let stopped: Shade     // grey
     let red: Shade
+    var alwaysDark = false   // the night light: dark whatever the setting
 
     static let claude = Palette(
         id: "claude", name: "Claude", note: "Warmes Papier und Terrakotta, wie die Claude-App",
@@ -140,11 +146,73 @@ struct Palette: Identifiable, Equatable, Sendable {
         accent: Shade(0xD97757), waiting: Shade(0xD9A43B), working: Shade(0x5B8DEF), purple: Shade(0x9B87F5),
         idle: Shade(0x4EBA65), stopped: Shade(0x8B8A85), red: Shade(0xE5484D))
 
-    // The others: well-known editor palettes in their official light and dark flavours (hex values
-    // from each palette's own repo). The accent and the state colours stay apart in both modes —
-    // where a palette's own hues sit too close, a neighbouring hue of the same palette steps in.
+    /// The picker's palettes: Claude, then looks after apps everyone knows (their brand and UI
+    /// colours, researched 2026-10-17 — Discord's and WhatsApp's from their brand pages and UI)
+    /// and two Apple Design Award 2026 winners, plus black-and-white and a night light.
+    /// The accent and the state colours stay apart in both modes (FrameTests checks).
     static let all: [Palette] = [
         claude,
+        Palette(id: "mono", name: "Schwarzweiß", note: "Nur Schwarz, Weiß und Grautöne – dunkel mit echtem Schwarz",
+                background: Shade(0xF5F5F5, 0x000000), card: Shade(0xFFFFFF, 0x111111), raised: Shade(0xEAEAEA, 0x1E1E1E),
+                accent: Shade(0x000000, 0xFFFFFF), waiting: Shade(0x7C7C80, 0x98989D), working: Shade(0x48484A, 0xC7C7CC),
+                purple: Shade(0x636366, 0xAEAEB2), idle: Shade(0xA8A8AD, 0x6C6C70), stopped: Shade(0xD1D1D6, 0x3A3A3C),
+                red: Shade(0x1C1C1E, 0xF2F2F7)),
+        Palette(id: "nightlight", name: "Nachtlicht", note: "Gedämpftes Rot auf Schwarz für nachts im Auto – immer dunkel",
+                background: Shade(0x080605), card: Shade(0x15100D), raised: Shade(0x1F1814),
+                accent: Shade(0xC2401C), waiting: Shade(0x9E6C1C), working: Shade(0x6E5A9A),
+                purple: Shade(0x8F4A6B), idle: Shade(0x5D7E37), stopped: Shade(0x4F4640),
+                red: Shade(0xB3261E), alwaysDark: true),
+        Palette(id: "chat", name: "Chat", note: "Teal, frisches Grün und grüne Blasen, nach WhatsApp",
+                background: Shade(0xEFEAE2, 0x0B141A), card: Shade(0xFFFFFF, 0x202C33), raised: Shade(0xD9FDD3, 0x005C4B),
+                accent: Shade(0x008069, 0x00A884), waiting: Shade(0xD08C00, 0xFFD279), working: Shade(0x027EB5, 0x53BDEB),
+                purple: Shade(0x7F66FF, 0xA891FF), idle: Shade(0x25D366), stopped: Shade(0x8696A0, 0x667781),
+                red: Shade(0xEA0038, 0xF15C6D)),
+        Palette(id: "messages", name: "Nachrichten", note: "Blaue und grüne Blasen auf Weiß oder Schwarz, nach Apples Nachrichten",
+                background: Shade(0xF2F2F7, 0x000000), card: Shade(0xFFFFFF, 0x1C1C1E), raised: Shade(0xE9E9EB, 0x262628),
+                accent: Shade(0x007AFF, 0x0A84FF), waiting: Shade(0xFF9500, 0xFF9F0A), working: Shade(0x5856D6, 0x5E5CE6),
+                purple: Shade(0xAF52DE, 0xBF5AF2), idle: Shade(0x34C759, 0x30D158), stopped: Shade(0x8E8E93, 0x98989D),
+                red: Shade(0xFF3B30, 0xFF453A)),
+        Palette(id: "silver", name: "Silber", note: "Kühles Silbergrau und Apple-Blau, nach Safari und apple.com",
+                background: Shade(0xF5F5F7, 0x161617), card: Shade(0xFFFFFF, 0x1D1D1F), raised: Shade(0xE8E8ED, 0x2C2C2E),
+                accent: Shade(0x0071E3, 0x2997FF), waiting: Shade(0xB64400, 0xF5A623), working: Shade(0x0A8A8A, 0x40C8C8),
+                purple: Shade(0x8944AB, 0xBF5AF2), idle: Shade(0x248A3D, 0x30D158), stopped: Shade(0x86868B, 0x6E6E73),
+                red: Shade(0xE30000, 0xFF453A)),
+        Palette(id: "blurple", name: "Blurple", note: "Das Lila-Blau von Discord auf Schiefergrau",
+                background: Shade(0xF2F3F5, 0x313338), card: Shade(0xFFFFFF, 0x2B2D31), raised: Shade(0xE3E5E8, 0x383A40),
+                accent: Shade(0x5865F2), waiting: Shade(0xF0B232), working: Shade(0x00A8FC),
+                purple: Shade(0xEB459E), idle: Shade(0x23A55A), stopped: Shade(0x80848E),
+                red: Shade(0xDA373C, 0xF23F43)),
+        Palette(id: "google", name: "Google", note: "Googles vier Farben auf Chromes Grau",
+                background: Shade(0xF1F3F4, 0x202124), card: Shade(0xFFFFFF, 0x292A2D), raised: Shade(0xE8EAED, 0x35363A),
+                accent: Shade(0x1A73E8, 0x8AB4F8), waiting: Shade(0xF9AB00, 0xFDD663), working: Shade(0xA142F4, 0xC58AF9),
+                purple: Shade(0x12B5CB, 0x78D9EC), idle: Shade(0x1E8E3E, 0x81C995), stopped: Shade(0x5F6368, 0x9AA0A6),
+                red: Shade(0xD93025, 0xF28B82)),
+        Palette(id: "green-on-black", name: "Grün auf Schwarz", note: "Kräftiges Grün auf tiefem Schwarz, nach Spotify",
+                background: Shade(0xF6F6F6, 0x121212), card: Shade(0xFFFFFF, 0x181818), raised: Shade(0xEBEBEB, 0x282828),
+                accent: Shade(0x1DB954), waiting: Shade(0xFFA42B), working: Shade(0x509BF5),
+                purple: Shade(0xAF2896, 0xD84DBA), idle: Shade(0x191414, 0xFFFFFF), stopped: Shade(0xA7A7A7, 0x727272),
+                red: Shade(0xE22134, 0xF15E6C)),
+        Palette(id: "sunset", name: "Sonnenuntergang", note: "Pink, Lila und Orange aus Instagrams Verlauf",
+                background: Shade(0xFAFAFA, 0x000000), card: Shade(0xFFFFFF, 0x121212), raised: Shade(0xEFEFEF, 0x262626),
+                accent: Shade(0xD62976, 0xE1306C), waiting: Shade(0xFA7E1E, 0xFEA54B), working: Shade(0x4F5BD5, 0x7B86F0),
+                purple: Shade(0x962FBF, 0xB65CDB), idle: Shade(0x58C322), stopped: Shade(0x8E8E8E, 0x737373),
+                red: Shade(0xED4956)),
+        Palette(id: "tides", name: "Gezeiten", note: "Sand, Nachtblau und eine Korallen-Sonne, nach Tide Guide (Apple Design Award 2026)",
+                background: Shade(0xF3EEE6, 0x0B1626), card: Shade(0xFFFCF7, 0x13233A), raised: Shade(0xE8DFD2, 0x1C3150),
+                accent: Shade(0xE0613F, 0xF5916F), waiting: Shade(0xC98A1B, 0xEAC25A), working: Shade(0x2F7FD8, 0x5FA8F5),
+                purple: Shade(0x6E5FD0, 0x9C8FF0), idle: Shade(0x2E9E86, 0x49C2A6), stopped: Shade(0x8A8F99, 0x6B7A90),
+                red: Shade(0xC93636, 0xF06464)),
+        Palette(id: "moonlight", name: "Mondlicht", note: "Indigo-Nacht und Mondgold, nach Moonlitt (Apple Design Award 2026)",
+                background: Shade(0xF1F0FA, 0x12142E), card: Shade(0xFFFFFF, 0x1B1E40), raised: Shade(0xE4E2F5, 0x262A55),
+                accent: Shade(0x5B5BD6, 0xA5A8FF), waiting: Shade(0xB07A12, 0xF2C46D), working: Shade(0x2F80C9, 0x6CB4F5),
+                purple: Shade(0xB04FC8, 0xD18BEA), idle: Shade(0x2E9E6B, 0x6BD3A0), stopped: Shade(0x8A89A6, 0x6F7096),
+                red: Shade(0xD64563, 0xF07A93)),
+    ]
+
+    /// The earlier editor palettes, still selectable under "Klassiker": official light and dark
+    /// flavours (hex values from each palette's own repo); where a palette's own hues sit too
+    /// close, a neighbouring hue of the same palette steps in.
+    static let classics: [Palette] = [
         Palette(id: "catppuccin", name: "Catppuccin", note: "Pastell auf weichem Grau (Latte / Mocha)",
                 background: Shade(0xEFF1F5, 0x1E1E2E), card: Shade(0xFFFFFF, 0x313244), raised: Shade(0xE6E9EF, 0x45475A),
                 accent: Shade(0x8839EF, 0xCBA6F7), waiting: Shade(0xDF8E1D, 0xF9E2AF), working: Shade(0x1E66F5, 0x89B4FA),

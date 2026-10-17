@@ -243,13 +243,14 @@ struct FrameTests {
     }
 
     @Test func palettesKeepTheirStatesApart() {
-        #expect(Palette.all.count == 10)
-        #expect(Set(Palette.all.map(\.id)).count == Palette.all.count)
+        let every = Palette.all + Palette.classics
+        #expect(Palette.all.count == 12 && Palette.classics.count == 9)
+        #expect(Set(every.map(\.id)).count == every.count)
         func far(_ a: UInt32, _ b: UInt32) -> Bool {
             let d = [16, 8, 0].map { Double(Int((a >> $0) & 0xFF) - Int((b >> $0) & 0xFF)) }
             return (d.map { $0 * $0 }.reduce(0, +)).squareRoot() > 50   // Claude: terracotta vs ochre = 53
         }
-        for p in Palette.all {
+        for p in every {
             let rings = [p.accent, p.waiting, p.working, p.idle, p.stopped]   // the call screen and the tiles
             for (i, a) in rings.enumerated() {
                 for b in rings[(i + 1)...] {
