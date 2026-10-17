@@ -19,7 +19,9 @@ public static class Transcript
         [property: JsonPropertyName("k")] string K,
         [property: JsonPropertyName("text")] string? Text = null,
         [property: JsonPropertyName("who")] string? Who = null,
-        [property: JsonPropertyName("at")] double? At = null);
+        [property: JsonPropertyName("at")] double? At = null,
+        [property: JsonPropertyName("add")] int? Add = null,     // tool: lines a Write / Edit added
+        [property: JsonPropertyName("del")] int? Del = null);    //       and removed
 
     public const int MaxItems = 60;
     public const int MaxText = 2500;
@@ -100,8 +102,8 @@ public static class Transcript
                 if (Str(e, "uuid") is not { } uuid || !e.TryGetProperty("message", out var msg) || msg.ValueKind != JsonValueKind.Object) continue;
                 double? at = Str(e, "timestamp") is { } ts && DateTimeOffset.TryParse(ts, out var d) ? d.ToUnixTimeMilliseconds() : null;
                 var n = 0;
-                void Add(string k, string? text = null, string? who = null) =>
-                    output.Add(new Item($"{uuid}#{n++}", k, text is null ? null : Clip(text), who, at));
+                void Add(string k, string? text = null, string? who = null, (int, int)? diff = null) =>
+                    output.Add(new Item($"{uuid}#{n++}", k, text is null ? null : Clip(text), who, at, diff?.Item1, diff?.Item2));
                 msg.TryGetProperty("content", out var content);
 
                 if (type == "assistant")
@@ -116,7 +118,8 @@ public static class Transcript
                                 if (spoken is not null) Add("speak", spoken);
                                 break;
                             case "tool_use":
-                                Add("tool", Tool(Str(b, "name") ?? "", b.TryGetProperty("input", out var input) ? input : default));
+                                var input = b.TryGetProperty("input", out var inp) ? inp : default;
+                                Add("tool", Tool(Str(b, "name") ?? "", input), diff: Diff(Str(b, "name") ?? "", input));
                                 break;
                         }
                     }
@@ -380,6 +383,22 @@ public static class Transcript
         if (detail.StartsWith('/') || detail.Contains(":\\")) detail = Path.GetFileName(detail.Replace('\\', '/').TrimEnd('/')) is { Length: > 0 } f ? f : detail;
         var line = detail.Split('\n')[0];
         return $"{shortName} · {(line.Length > 90 ? line[..90] + "…" : line)}";
+    }
+
+    // Lines a file tool added / removed (the phone's "+62 −0"), null for other tools.
+    public static (int Add, int Del)? Diff(string name, JsonElement input)
+    {
+        if (input.ValueKind != JsonValueKind.Object) return null;
+        static int Lines(string? s) => string.IsNullOrEmpty(s) ? 0 : s.Split('\n').Length - (s.EndsWith('\n') ? 1 : 0);
+        switch (name)
+        {
+            case "Write": return (Lines(Str(input, "content")), 0);
+            case "Edit": return (Lines(Str(input, "new_string")), Lines(Str(input, "old_string")));
+            case "MultiEdit":
+                var edits = input.TryGetProperty("edits", out var e) ? Blocks(e).ToList() : new List<JsonElement>();
+                return (edits.Sum(x => Lines(Str(x, "new_string"))), edits.Sum(x => Lines(Str(x, "old_string"))));
+            default: return null;
+        }
     }
 
     private static string Clip(string s) => s.Length > MaxText ? s[..MaxText] + "…" : s;

@@ -167,14 +167,27 @@ struct FrameTests {
     }
 
     @Test func toolStepsFoldIntoGroups() {
-        func i(_ id: String, _ k: ChatItem.Kind, _ t: String? = nil) -> ChatItem { ChatItem(id: id, kind: k, text: t) }
-        let rows = SessionView.rows([i("u", .user, "Los"), i("t1", .tool, "Bash · a"), i("t2", .tool, "Edit · b"),
-                                     i("t3", .tool, "Bash · c"), i("a", .assistant, "Fertig"), i("t4", .tool, "Read · d")])
+        func i(_ id: String, _ k: ChatItem.Kind, _ t: String? = nil, _ add: Int? = nil, _ del: Int? = nil) -> ChatItem {
+            ChatItem(id: id, kind: k, text: t, add: add, del: del)
+        }
+        let rows = SessionView.rows([i("u", .user, "Los"), i("t1", .tool, "Bash · a"), i("t2", .tool, "Write · b", 62, 0),
+                                     i("t3", .tool, "Bash · c"), i("a", .assistant, "Fertig"), i("t4", .tool, "Bash · Delete probe")])
         #expect(rows.map(\.id) == ["u", "tools-t1", "a", "tools-t4"])
-        if case .tools(let run) = rows[1] {
-            #expect(run.count == 3)
-            #expect(SessionView.toolNames(run) == "Bash, Edit")
-        } else { Issue.record("no tool group") }
+        guard case .tools(let run) = rows[1], case .tools(let one) = rows[3] else { Issue.record("no tool group"); return }
+        #expect(SessionView.summary(run) == "2 Befehle ausgeführt, eine Datei erstellt")
+        #expect(SessionView.diff(run)?.add == 62 && SessionView.diff(run)?.del == 0)
+        #expect(SessionView.summary(one) == "Ausgeführt Delete probe")
+        #expect(SessionView.diff(one) == nil)
+        #expect(SessionView.endsTurn(rows, at: 2))
+        #expect(!SessionView.endsTurn(rows, at: 0))
+    }
+
+    @Test func markdownBlocks() {
+        let b = Markdown.blocks("Hallo **Sir**\nweiter.\n\n## Titel\n- eins\n  - zwei\n1. erstens\n> Zitat\n\n```bash\nls -la\n```\n| a | b |\n|---|---|\n---")
+        #expect(b == [.paragraph("Hallo **Sir** weiter."), .heading(2, "Titel"), .bullet("eins", level: 0), .bullet("zwei", level: 1),
+                      .numbered("1.", "erstens"), .quote("Zitat"), .code(lang: "bash", code: "ls -la"), .table("| a | b |\n|---|---|"), .rule])
+        #expect(Markdown.blocks("```\nunclosed") == [.code(lang: "", code: "unclosed")])
+        #expect(Markdown.plain("**Fett** und `code`") == "Fett und code")
     }
 
     @Test func historyPagesMerge() {

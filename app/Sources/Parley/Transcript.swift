@@ -12,6 +12,8 @@ enum Transcript {
         var text: String?
         var who: String?     // image: "user" | "assistant"
         var at: Double?      // epoch ms
+        var add: Int?        // tool: lines a Write / Edit added
+        var del: Int?        //       and removed
     }
 
     static let maxItems = 60
@@ -72,8 +74,8 @@ enum Transcript {
                   let msg = e["message"] as? [String: Any] else { continue }
             let at = (e["timestamp"] as? String).flatMap(parseDate).map { $0.timeIntervalSince1970 * 1000 }
             var n = 0
-            func add(_ k: String, _ text: String? = nil, who: String? = nil) {
-                out.append(Item(id: "\(uuid)#\(n)", k: k, text: text.map(clip), who: who, at: at))
+            func add(_ k: String, _ text: String? = nil, who: String? = nil, diff: (Int, Int)? = nil) {
+                out.append(Item(id: "\(uuid)#\(n)", k: k, text: text.map(clip), who: who, at: at, add: diff?.0, del: diff?.1))
                 n += 1
             }
             if type == "assistant" {
@@ -84,7 +86,8 @@ enum Transcript {
                         if !body.isEmpty { add("assistant", body) }
                         if let spoken { add("speak", spoken) }
                     case "tool_use":
-                        add("tool", tool(b["name"] as? String ?? "", b["input"] as? [String: Any] ?? [:]))
+                        let name = b["name"] as? String ?? "", input = b["input"] as? [String: Any] ?? [:]
+                        add("tool", tool(name, input), diff: diff(name, input))
                     default: break
                     }
                 }
@@ -308,6 +311,22 @@ enum Transcript {
         guard let detail else { return short }
         let line = detail.split(separator: "\n").first.map(String.init) ?? detail
         return "\(short) · \(line.count > 90 ? line.prefix(90) + "…" : line)"
+    }
+
+    /// Lines a file tool added / removed (the phone's "+62 −0"), nil for other tools.
+    static func diff(_ name: String, _ input: [String: Any]) -> (Int, Int)? {
+        func lines(_ v: Any?) -> Int {
+            guard let s = v as? String, !s.isEmpty else { return 0 }
+            return s.split(separator: "\n", omittingEmptySubsequences: false).count - (s.hasSuffix("\n") ? 1 : 0)
+        }
+        switch name {
+        case "Write": return (lines(input["content"]), 0)
+        case "Edit": return (lines(input["new_string"]), lines(input["old_string"]))
+        case "MultiEdit":
+            let edits = input["edits"] as? [[String: Any]] ?? []
+            return (edits.map { lines($0["new_string"]) }.reduce(0, +), edits.map { lines($0["old_string"]) }.reduce(0, +))
+        default: return nil
+        }
     }
 
     private static func clip(_ s: String) -> String { s.count > maxText ? s.prefix(maxText) + "…" : s }

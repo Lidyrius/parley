@@ -51,12 +51,16 @@ extension Demo {
     /// The session view's sample history (every kind of entry).
     static let history: [ChatItem] = [
         ChatItem(id: "d1", kind: .user, text: "Bau bitte den Export-Button in die Rechnungsliste ein."),
-        ChatItem(id: "d2", kind: .tool, text: "Read · InvoiceList.swift"),
-        ChatItem(id: "d3", kind: .tool, text: "Edit · InvoiceList.swift"),
-        ChatItem(id: "d4", kind: .tool, text: "Bash · Run the invoice tests"),
-        ChatItem(id: "d5", kind: .assistant, text: "Der Button ist drin und exportiert als **CSV**. Alle 24 Tests sind grün."),
-        ChatItem(id: "d6", kind: .image, fromUser: false),
-        ChatItem(id: "d7", kind: .speak, text: "Der Export ist eingebaut, Sir. Soll ich auch PDF anbieten?"),
-        ChatItem(id: "d8", kind: .voice, text: "Ja, mach PDF auch noch."),
+        ChatItem(id: "d2", kind: .tool, text: "Bash · Find the invoice list"),
+        ChatItem(id: "d3", kind: .tool, text: "Bash · Read the export helpers"),
+        ChatItem(id: "d4", kind: .assistant, text: "Die Liste rendert `InvoiceList`, der Export fehlt noch. Ich baue ihn als eigene Datei, damit die Liste schlank bleibt."),
+        ChatItem(id: "d5", kind: .tool, text: "Write · CSVExport.swift", add: 62, del: 0),
+        ChatItem(id: "d6", kind: .tool, text: "Bash · Run the invoice tests"),
+        ChatItem(id: "d7", kind: .assistant, text: "Der Button ist drin und exportiert als **CSV**.\n\n**Gebaut:**\n\n- Export-Knopf oben rechts, Branch `feature/export`\n- Spalten wie in der Ansicht, Beträge mit Komma\n\nAusprobieren:\n\n```bash\nswift test --filter CSVExportTests\n```"),
+        ChatItem(id: "d8", kind: .image, fromUser: false),
+        ChatItem(id: "d9", kind: .speak, text: "Der Export ist eingebaut, Sir. Soll ich auch PDF anbieten?"),
+        ChatItem(id: "d10", kind: .voice, text: "Ja, mach PDF auch noch."),
+        ChatItem(id: "d11", kind: .tool, text: "Edit · CSVExport.swift", add: 14, del: 2),
+        ChatItem(id: "d12", kind: .assistant, text: "PDF kommt dazu, über `PDFKit`, ohne neue Abhängigkeit."),
     ]
 }

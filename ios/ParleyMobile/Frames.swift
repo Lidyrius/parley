@@ -67,6 +67,8 @@ struct ChatItem: Identifiable, Equatable, Sendable {
     var text: String?
     var fromUser = false            // which side an image sits on
     var at: Double?
+    var add: Int?                   // tool: lines a Write / Edit added
+    var del: Int?                   //       and removed
 }
 
 /// What the host is doing with the call audio (`audio` frame, v2).
@@ -247,7 +249,7 @@ extension Session: Decodable {
 }
 
 extension ChatItem: Decodable {
-    private enum K: String, CodingKey { case id, k, text, who, at }
+    private enum K: String, CodingKey { case id, k, text, who, at, add, del }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)
@@ -255,6 +257,8 @@ extension ChatItem: Decodable {
         text = c.lenient(.text)
         fromUser = (c.lenient(.who) as String?) == "user"
         at = c.lenient(.at)
+        add = c.lenient(.add)
+        del = c.lenient(.del)
     }
 }
 

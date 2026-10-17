@@ -8,6 +8,16 @@ enum Theme {
     static let card = Color(light: 0xFFFFFF, dark: 0x262624)
     static let stroke = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(white: 1, alpha: 0.08) : UIColor(white: 0, alpha: 0.07) })
+
+    // The session view, after the Claude app's chat.
+    static let userBubble = Color(light: 0xF0EEE6, dark: 0x30302E)
+    static let codeText = Color(light: 0x2F6BD8, dark: 0x6EA6F8)
+    static let codeBackground = Color(light: 0xEFEDE6, dark: 0x262624)
+    static let codeBlock = Color(light: 0xF5F4EE, dark: 0x1F1F1E)
+    static let diffAdd = Color(light: 0x1A7F37, dark: 0x4CC764)
+    static let diffAddBackground = Color(light: 0xDDF4E3, dark: 0x183A22)
+    static let diffDel = Color(light: 0xCF222E, dark: 0xF06A6A)
+    static let diffDelBackground = Color(light: 0xFFE3E3, dark: 0x3F1C1E)
 }
 
 extension SessionState {

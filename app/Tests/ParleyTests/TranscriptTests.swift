@@ -40,6 +40,13 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(items[0].at, 1_792_231_200_000)
     }
 
+    func testDiffCounts() {
+        XCTAssertEqual(Transcript.diff("Write", ["content": "a\nb\nc\n"]).map { [$0.0, $0.1] }, [3, 0])
+        XCTAssertEqual(Transcript.diff("Edit", ["old_string": "x", "new_string": "y\nz"]).map { [$0.0, $0.1] }, [2, 1])
+        XCTAssertEqual(Transcript.diff("MultiEdit", ["edits": [["old_string": "a", "new_string": "b\nc"], ["old_string": "d\ne", "new_string": ""]]]).map { [$0.0, $0.1] }, [2, 3])
+        XCTAssertNil(Transcript.diff("Bash", ["command": "ls"]))
+    }
+
     func testSpeakOnlyTheLastTag() {
         let (body, spoken) = Transcript.split("Format: `<speak>…</speak>` am Ende.\n\n<speak-end>Fertig, Sir.</speak-end>")
         XCTAssertEqual(body, "Format: `<speak>…</speak>` am Ende.")
