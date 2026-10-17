@@ -268,6 +268,22 @@ final class CallController {
     }
 
     /// Settings → "Lautsprecher beim Anrufstart" (on unless turned off).
+    /// The "call ended" tone: three short, soft, falling notes (24 kHz), like a FaceTime hang-up.
+    nonisolated static let hangUpTone: [Float] = {
+        let rate = 24_000.0, note = 0.11, gap = 0.035
+        var out: [Float] = []
+        for f in [784.0, 622.25, 523.25] {   // G5 → D♯5 → C5
+            let n = Int(note * rate)
+            for i in 0..<n {
+                let t = Double(i) / rate
+                let env = min(1, t / 0.008) * exp(-t * 14)   // quick attack, soft decay
+                out.append(Float(0.35 * env * sin(2 * .pi * f * t)))
+            }
+            out += [Float](repeating: 0, count: Int(gap * rate))
+        }
+        return out
+    }()
+
     /// Hang up once Parley is done (Einstellungen → "Nach dem Gespräch auflegen"); off = stay on.
     static let autoHangUpKey = "autoHangUp"
     static var autoHangUp: Bool { UserDefaults.standard.bool(forKey: autoHangUpKey) }
@@ -322,23 +338,29 @@ final class CallController {
             self.label = label
             if let uuid { provider?.reportCall(with: uuid, updated: Self.update(label: label)) }
         }
+        if state != .idle { autoHangUpTask?.cancel() }   // something goes on: stay on
         guard state != hostAudio else { return }
-        let finished = state == .idle && hostAudio != .idle   // a turn just ended (its last line is out)
-        hostAudio = state
-        autoHangUpTask?.cancel()
-        if finished, Self.autoHangUp, phase.isActive, !isTest {
-            // Once the phone has played the last line out, half a second, then hang up — unless
-            // another turn starts meanwhile.
+        if state == .idle, hostAudio != .idle, Self.autoHangUp, phase.isActive, !isTest {
+            // A turn just ended and we hang up: the screen keeps its look (no "bereit", no wake
+            // word). Once the phone has played the last line out, half a second, the hang-up
+            // tone, then the call ends — unless another turn starts meanwhile.
+            autoHangUpTask?.cancel()
             autoHangUpTask = Task { [weak self] in
                 for _ in 0..<40 {
                     guard let self, audio.played < audio.received else { break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
                 try? await Task.sleep(for: .milliseconds(500))
-                guard !Task.isCancelled, let self, hostAudio == .idle, phase.isActive else { return }
+                guard !Task.isCancelled, let self, phase.isActive else { return }
+                audio.playLocal(Self.hangUpTone)
+                try? await Task.sleep(for: .milliseconds(Int(Double(Self.hangUpTone.count) / 24))) // 24 kHz → ms
+                guard !Task.isCancelled, phase.isActive else { return }
                 hangUp()
             }
+            return
         }
+        hostAudio = state
+        autoHangUpTask?.cancel()
         if state != .idle {
             wakeArmed = true
             wakeSent = false

@@ -22,10 +22,9 @@ struct CallLook: Equatable {
     /// The tile state whose ring and colours this mood borrows.
     var state: SessionState {
         switch mood {
-        case .ringing, .speaking: .speaking
+        case .ringing, .speaking, .connecting: .speaking   // answering keeps the ring's colour (no yellow flash)
         case .listening: .listening
         case .idle: .idle
-        case .connecting: .queued
         }
     }
 
