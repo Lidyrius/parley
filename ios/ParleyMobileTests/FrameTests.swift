@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UserNotifications
 @testable import ParleyMobile
 
 struct FrameTests {
@@ -227,6 +228,11 @@ struct FrameTests {
         #expect(s.callback == 0)
         let none = try JSONDecoder().decode(Session.self, from: Data(#"{"id":"b"}"#.utf8))
         #expect(none.callback == nil)
+        // The lock screen's notification actions mean the same as the ringing screen's buttons.
+        #expect(CallController.laterAfter(action: "later.60") == .some(60))
+        #expect(CallController.laterAfter(action: "later.300") == .some(300))
+        #expect(CallController.laterAfter(action: "later.back") == .some(nil))
+        #expect(CallController.laterAfter(action: UNNotificationDefaultActionIdentifier) == nil)
     }
 
     @Test func customPalettesKeepAndWarn() throws {

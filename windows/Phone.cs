@@ -185,6 +185,7 @@ public static class PhoneCall
         lock (Gate)
         {
             changed = _call != started;
+            if (!started && !_call) _declined = true;
             _call = started;
             if (started) _downRate = down;
             _audioAt = DateTime.UtcNow;   // grace until its first frame arrives
@@ -360,6 +361,18 @@ public static class PhoneCall
 
     // The ringing phone's "not now": ring again in n s, or (null) Sir calls back himself.
     private static (bool Set, double? After) _later;
+    private static bool _declined;   // `call end` with no call: the ring was declined
+
+    /// A declined ring, once (the phone may still send a "not now" from its notification).
+    public static bool TakeDeclined()
+    {
+        lock (Gate)
+        {
+            var d = _declined;
+            _declined = false;
+            return d;
+        }
+    }
 
     public static void SetLater(double? after)
     {
@@ -483,7 +496,8 @@ public static class Ringer
     {
         if (PhoneCall.Active) return new RingOutcome(RingKind.Answered);
         if (!PhoneCall.Away || PhoneCall.Silent) return new RingOutcome(RingKind.Missed);   // Stumm: the turn sends a notification instead
-        PhoneCall.TakeLater(out _);   // an old "not now" is not this ring's
+        PhoneCall.TakeLater(out _);   // an old "not now" or decline is not this ring's
+        PhoneCall.TakeDeclined();
         var pushed = await Apns.SendVoip(label);
         var rang = await PhoneCall.SendRing(label);
         if (!pushed && !rang)
@@ -496,6 +510,13 @@ public static class Ringer
         while (!PhoneCall.Active)
         {
             if (PhoneCall.TakeLater(out var after)) return new RingOutcome(RingKind.Later, after);
+            // Declined on the lock screen: its notification offers "later" — give it a minute.
+            if (PhoneCall.TakeDeclined())
+            {
+                var minute = DateTime.UtcNow.AddSeconds(60);
+                if (minute > until) until = minute;
+                Log.Write("ring: declined — a minute for a \"later\" from the notification");
+            }
             if (DateTime.UtcNow >= until)
             {
                 Log.Write("ring: no answer → speaker");

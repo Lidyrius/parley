@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         _ = AppModel.shared
         UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().setNotificationCategories([AppModel.laterCategory])
         application.registerForRemoteNotifications()   // the token needs no permission; showing does
         return true
     }
@@ -38,6 +39,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        if let after = CallController.laterAfter(action: response.actionIdentifier) {
+            await AppModel.shared.deliverLater(after)
+            return
+        }
         guard let id = response.notification.request.content.userInfo["session"] as? String else { return }
         await MainActor.run { AppModel.shared.open(session: id) }
     }
@@ -59,8 +64,14 @@ final class AppModel {
             guard away != oldValue else { return }
             UserDefaults.standard.set(away, forKey: Self.awayKey)
             relay.send(Outgoing.away(away))
-            // Calls will come in: ask for the mic (and speech) now, not on the lock screen.
-            if away, !demo { Task { await CallController.requestPermissions() } }
+            // Calls will come in: ask for the mic (and speech) now, not on the lock screen — and
+            // for notifications, which a declined call leaves to put it off.
+            if away, !demo {
+                Task {
+                    await CallController.requestPermissions()
+                    _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+                }
+            }
         }
     }
 
@@ -103,6 +114,7 @@ final class AppModel {
         silent = !demo && UserDefaults.standard.bool(forKey: Self.silentKey)
         call.ensureRelay = { [weak self] in self?.dialIfIdle() }
         call.onEnded = { [weak self] in self?.callEnded() }
+        call.onDeclined = { [weak self] label in self?.offerLater(label) }
         relay.onEvent = { [weak self] in self?.handle($0) }
         if demo {
             relay.startDemo()
@@ -140,6 +152,37 @@ final class AppModel {
                 call.failure = "Der Anruf ließ sich nicht starten."
             }
         }
+    }
+
+    // MARK: - Put off from the lock screen
+
+    /// The lock screen's call UI can't carry the ringing screen's "In 1 Min." … buttons; a
+    /// decline there leaves this notification with the same choices instead.
+    nonisolated static var laterCategory: UNNotificationCategory {
+        UNNotificationCategory(identifier: "parley.later",
+                               actions: [UNNotificationAction(identifier: "later.60", title: "In 1 Min. anrufen"),
+                                         UNNotificationAction(identifier: "later.300", title: "In 5 Min. anrufen"),
+                                         UNNotificationAction(identifier: "later.back", title: "Ich rufe zurück")],
+                               intentIdentifiers: [])
+    }
+
+    private func offerLater(_ label: String?) {
+        let content = UNMutableNotificationContent()
+        content.title = "Parley" + (label.map { " · \($0)" } ?? "")
+        content.body = "Gerade nicht? Ich rufe in einer oder fünf Minuten wieder an – oder du rufst zurück."
+        content.categoryIdentifier = "parley.later"
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "parley.later", content: content, trigger: nil))
+    }
+
+    /// A choice from that notification, maybe with the app in the background: dial the relay if
+    /// needed and send it once connected (up to 20 s).
+    func deliverLater(_ after: Int?) async {
+        let task = UIApplication.shared.beginBackgroundTask(withName: "parley.later")
+        defer { UIApplication.shared.endBackgroundTask(task) }
+        dialIfIdle()
+        for _ in 0..<200 where !relay.canSend { try? await Task.sleep(for: .milliseconds(100)) }
+        relay.send(Outgoing.later(after: after))
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["parley.later"])
     }
 
     func pair(_ link: String) throws(PairingError) {

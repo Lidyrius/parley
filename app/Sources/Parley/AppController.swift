@@ -483,15 +483,21 @@ final class AppController: ObservableObject {
     // VoIP push + `ring`, then wait ≤ 45 s for `call start` — or the phone's "not now".
     private func ringPhone(label: String) async -> RingOutcome {
         Log.write("phone: ringing for \(label) (Unterwegs-Modus)")
-        _ = phone.takeLater()   // an old "not now" is not this ring's
+        _ = phone.takeLater()   // an old "not now" or decline is not this ring's
+        _ = phone.takeDeclined()
         phone.ring(label: label)
         if let target = phone.pushTarget, apns.configured {
             let apns = self.apns
             Task.detached { await apns.push(token: target.token, env: target.env, label: label) }
         }
-        let deadline = Date().addingTimeInterval(Self.ringTimeout)
+        var deadline = Date().addingTimeInterval(Self.ringTimeout)
         while !phone.callActive {
             if let later = phone.takeLater() { return .later(later) }
+            // Declined on the lock screen: its notification offers "later" — give it a minute.
+            if phone.takeDeclined() {
+                deadline = max(deadline, Date().addingTimeInterval(60))
+                Log.write("phone: declined — a minute for a \"later\" from the notification")
+            }
             guard Date() < deadline, !Task.isCancelled else {
                 Log.write("phone: no answer in 45 s → the Mac's speaker")
                 return .missed

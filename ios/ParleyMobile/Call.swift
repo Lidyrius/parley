@@ -48,6 +48,10 @@ final class CallController {
     /// Dial the relay if it is idle (the app may have been woken in the background).
     @ObservationIgnored var ensureRelay: () -> Void = {}
     @ObservationIgnored var onEnded: () -> Void = {}
+    /// A ringing call declined on the lock screen (no "later" buttons there): the label it was for.
+    @ObservationIgnored var onDeclined: (String?) -> Void = { _ in }
+    /// Ended from the app's own ringing screen (Ablehnen, In 1 Min. …): no notification after.
+    @ObservationIgnored private var endedInApp = false
 
     @ObservationIgnored private let relay: Relay
     @ObservationIgnored private let wake = WakeListener()
@@ -174,6 +178,16 @@ final class CallController {
         hangUp()
     }
 
+    /// The same "not now", from the notification a lock-screen decline leaves (see onDeclined).
+    nonisolated static func laterAfter(action: String) -> Int?? {
+        switch action {
+        case "later.60": .some(60)
+        case "later.300": .some(300)
+        case "later.back": .some(nil)
+        default: nil
+        }
+    }
+
     func startTest() {
         guard phase == .none else { return }
         isTest = true
@@ -223,6 +237,7 @@ final class CallController {
     func hangUp() {
         guard phase != .none else { return }
         if isTest { reset(); return }
+        if phase == .ringing { endedInApp = true }
         guard let uuid, provider != nil, !isDemo else {
             finish()
             if !isDemo { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
@@ -425,10 +440,14 @@ final class CallController {
     /// Hung up, declined, failed or ended by the system.
     fileprivate func finish() {
         guard phase != .none else { return }
-        // Also for a declined call: the host stops waiting and voices on the Mac again.
+        // Also for a declined call: the host waits a minute for a "later" from the notification,
+        // then voices on the Mac again.
+        let declinedOnLockScreen = phase == .ringing && !endedInApp && !isTest && !isDemo
+        let declinedLabel = label
         relay.send(Outgoing.call(started: false))
         reset()
         onEnded()
+        if declinedOnLockScreen { onDeclined(declinedLabel) }
     }
 
     private func reset() {
@@ -443,6 +462,7 @@ final class CallController {
         label = nil
         hostAudio = .idle
         isTest = false
+        endedInApp = false
         testEnd?.cancel()
         caption = nil   // the next call starts clean: no old subtitles or slides
         slides = []

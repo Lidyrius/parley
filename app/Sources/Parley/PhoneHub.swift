@@ -34,6 +34,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     private var generation = 0
     private var desired: PhoneAudioState = .idle
     private var later: TimeInterval?? = nil       // the ringing phone's "not now" (see takeLater)
+    private var declined = false                  // `call end` with no call: the ring was declined
     private var sentState: PhoneAudioState?
     private var rate = PhoneAudioFormat.sampleRate   // the call's down rate
     private var speaker: String?   // the session Parley voices now — sent with every `audio` frame
@@ -95,7 +96,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             onChange?()
         case .call(false, _):
             let changed = lock.withLock { () -> Bool in
-                guard active else { return false }
+                guard active else { declined = true; return false }
                 active = false
                 generation += 1
                 sentState = nil
@@ -153,6 +154,11 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     /// calls back himself, nil = nothing said.
     func takeLater() -> TimeInterval?? {
         lock.withLock { defer { later = nil }; return later }
+    }
+
+    /// A declined ring, once (the phone may still send a "not now" from its notification).
+    func takeDeclined() -> Bool {
+        lock.withLock { defer { declined = false }; return declined }
     }
 
     // Waits up to `timeout` for a call to connect; true as soon as one is.

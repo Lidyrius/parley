@@ -97,6 +97,18 @@ final class PhoneHubTests: XCTestCase {
         XCTAssertEqual(wire.changes, 2)
     }
 
+    func testADeclinedRingAndItsLaterAreTakenOnce() {
+        hub.handle(.call(false))                       // `call end` with no call: declined
+        XCTAssertTrue(hub.takeDeclined())
+        XCTAssertFalse(hub.takeDeclined())
+        hub.handle(.later(300))
+        XCTAssertEqual(hub.takeLater(), .some(300))
+        XCTAssertNil(hub.takeLater())
+        hub.handle(.call(true))
+        hub.handle(.call(false))                       // a real call's end is no decline
+        XCTAssertFalse(hub.takeDeclined())
+    }
+
     func testWakeOnlyDuringACallAndMicFramesOnlyToTheSink() {
         hub.handle(.wake)
         XCTAssertEqual(wire.wakes, 0)
