@@ -163,4 +163,15 @@ struct FrameTests {
         #expect(Frame.decode(#"{"t":"image","key":"r#0","mime":"image/jpeg","data":"/9j/"}"#) == .image(key: "r#0", data: Data([0xFF, 0xD8, 0xFF])))
         #expect(Frame.decode(#"{"t":"image","key":"r#0"}"#) == .image(key: "r#0", data: nil))
     }
+
+    @Test func toolStepsFoldIntoGroups() {
+        func i(_ id: String, _ k: ChatItem.Kind, _ t: String? = nil) -> ChatItem { ChatItem(id: id, kind: k, text: t) }
+        let rows = SessionView.rows([i("u", .user, "Los"), i("t1", .tool, "Bash · a"), i("t2", .tool, "Edit · b"),
+                                     i("t3", .tool, "Bash · c"), i("a", .assistant, "Fertig"), i("t4", .tool, "Read · d")])
+        #expect(rows.map(\.id) == ["u", "tools-t1", "a", "tools-t4"])
+        if case .tools(let run) = rows[1] {
+            #expect(run.count == 3)
+            #expect(SessionView.toolNames(run) == "Bash, Edit")
+        } else { Issue.record("no tool group") }
+    }
 }

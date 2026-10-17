@@ -8,6 +8,7 @@ struct SessionView: View {
     @State private var draft = ""
     @State private var zoomed: ZoomedImage?
     @State private var sent = 0
+    @State private var openGroups: Set<String> = []
 
     var body: some View {
         let session = model.relay.snapshot?.sessions.first { $0.id == id }
@@ -24,7 +25,12 @@ struct SessionView: View {
                     } else if items == nil {
                         ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                     }
-                    ForEach(items ?? []) { row($0).id($0.id) }
+                    ForEach(Self.rows(items ?? [])) { r in
+                        switch r {
+                        case .item(let item): row(item).id(item.id)
+                        case .tools(let tools): toolGroup(tools).id(r.id)
+                        }
+                    }
                     ForEach(Array(pending.enumerated()), id: \.offset) { _, text in
                         bubble(text, mine: true, caption: "wird zugestellt…").opacity(0.55).id("pending-\(text)")
                     }
@@ -78,16 +84,85 @@ struct SessionView: View {
             .font(.callout)
             .padding(.horizontal, 4)
         case .tool:
-            Label(item.text ?? "", systemImage: "hammer")
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .padding(.horizontal, 4)
+            EmptyView()   // folded into tool groups (rows)
         case .image:
             image(item)
         case .other:
             EmptyView()
         }
+    }
+
+    /// Consecutive tool steps fold into one row ("3 Schritte · Bash, Edit"), like Claude Code.
+    enum Row: Identifiable, Equatable {
+        case item(ChatItem)
+        case tools([ChatItem])
+        var id: String {
+            switch self {
+            case .item(let i): i.id
+            case .tools(let t): "tools-" + (t.first?.id ?? "")
+            }
+        }
+    }
+
+    static func rows(_ items: [ChatItem]) -> [Row] {
+        var out: [Row] = []
+        for item in items {
+            if item.kind == .tool, case .tools(let run)? = out.last {
+                out[out.count - 1] = .tools(run + [item])
+            } else {
+                out.append(item.kind == .tool ? .tools([item]) : .item(item))
+            }
+        }
+        return out
+    }
+
+    /// "Bash, Edit" — the distinct tools of a run, in order.
+    static func toolNames(_ tools: [ChatItem]) -> String {
+        var seen: [String] = []
+        for t in tools {
+            let name = t.text?.components(separatedBy: " · ").first ?? ""
+            if !name.isEmpty, !seen.contains(name) { seen.append(name) }
+        }
+        return seen.joined(separator: ", ")
+    }
+
+    private func toolGroup(_ tools: [ChatItem]) -> some View {
+        let key = tools.first?.id ?? ""
+        let open = openGroups.contains(key)
+        return VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.snappy) {
+                    if open { openGroups.remove(key) } else { openGroups.insert(key) }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "hammer")
+                    Text(tools.count == 1 ? "1 Schritt" : "\(tools.count) Schritte").fontWeight(.semibold)
+                        + Text(" · " + Self.toolNames(tools))
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.down")
+                        .rotationEffect(.degrees(open ? 180 : 0))
+                }
+                .lineLimit(1)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(open ? "Schritte ausblenden" : "Schritte anzeigen")
+            if open {
+                ForEach(tools) { t in
+                    Text(t.text ?? "")
+                        .font(.caption.monospaced())
+                        .padding(.leading, 22)
+                        .textSelection(.enabled)
+                }
+                .transition(.opacity)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.6)))
     }
 
     private func bubble(_ text: String, mine: Bool, caption: String? = nil) -> some View {
