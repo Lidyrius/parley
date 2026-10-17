@@ -47,6 +47,15 @@ struct SettingsView: View {
                         }
                     }
                     NavigationLink {
+                        RingPicker()
+                    } label: {
+                        LabeledContent {
+                            Text(Appearance.shared.ringStyle.name)
+                        } label: {
+                            Label("Anruf-Animation", systemImage: "phone.arrow.down.left.fill")
+                        }
+                    }
+                    NavigationLink {
                         RevealPicker()
                     } label: {
                         LabeledContent {
@@ -219,5 +228,54 @@ private struct RevealPreview: View {
                     try? await Task.sleep(for: .seconds(3.6))
                 }
             }
+    }
+}
+
+/// Einstellungen → Anruf-Animation: the five ways an incoming call moves, each playing live.
+struct RingPicker: View {
+    private let appearance = Appearance.shared
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(RingStyle.allCases) { r in
+                    let picked = r == appearance.ringStyle
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) { appearance.ringStyle = r }
+                    } label: {
+                        HStack(spacing: 14) {
+                            RingingStage(style: r, color: Theme.claude, ring: 30) {
+                                ZStack {
+                                    Circle().fill(Theme.claude.opacity(0.12)).frame(width: 38, height: 38)
+                                    Image(systemName: "phone.fill").font(.footnote).foregroundStyle(Theme.claude)
+                                }
+                            }
+                            .frame(width: 96, height: 72)
+                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.background))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.stroke))
+                            .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(r.name).font(.headline).foregroundStyle(.primary)
+                                Text(r.note).font(.subheadline).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(picked ? Theme.claude : Color.secondary.opacity(0.4))
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(picked ? .isSelected : [])
+                }
+            } footer: {
+                Text("So klingelt Parley im Anruf-Bildschirm. Beim Annehmen zieht sich die Animation in den Ring zurück und geht in den Anruf über.")
+            }
+        }
+        .navigationTitle("Anruf-Animation")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

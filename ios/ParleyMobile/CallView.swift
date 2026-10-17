@@ -52,6 +52,7 @@ struct CallView: View {
     @State private var picked: String?
     @State private var pickedAt = Date.distantPast
     @State private var drag: CGFloat = 0
+    @Namespace private var controlSpace
 
     var body: some View {
         let call = model.call
@@ -86,9 +87,13 @@ struct CallView: View {
                     .animation(.easeInOut(duration: 0.4), value: due == nil)
                 }
                 Spacer(minLength: 20)
+                // While it rings the motion is around the ring; answered, the bars grow out of the line.
                 Waveform(mood: look.mood, color: look.color, paused: reduceMotion) { call.level(at: $0) }
                     .frame(height: 96)
                     .padding(.horizontal, 8)
+                    .scaleEffect(x: 1, y: call.phase == .ringing ? 0.05 : 1)
+                    .opacity(call.phase == .ringing ? 0 : 1)
+                    .animation(.spring(response: 0.7, dampingFraction: 0.85).delay(0.15), value: call.phase == .ringing)
                     .accessibilityHidden(true)
                 Group {
                     // The line stays readable while Parley listens (an app opened late still shows it).
@@ -135,9 +140,13 @@ struct CallView: View {
 
     private func identity(_ call: CallController, look: CallLook, name: String) -> some View {
         VStack(spacing: 18) {
-            ZStack {
-                Circle().fill(look.color.opacity(0.10)).frame(width: 168, height: 168)
-                RingView(session: Session(id: "call", state: look.state), skew: 0, size: 128)
+            // Ringing: the picked motion around the ring; answered, it draws back in (the morph).
+            RingingStage(style: Appearance.shared.ringStyle, color: look.color, active: call.phase == .ringing,
+                         paused: reduceMotion) {
+                ZStack {
+                    Circle().fill(look.color.opacity(0.10)).frame(width: 168, height: 168)
+                    RingView(session: Session(id: "call", state: look.state), skew: 0, size: 128)
+                }
             }
             .animation(.easeInOut(duration: 0.4), value: look)
             .accessibilityHidden(true)
@@ -269,22 +278,32 @@ struct CallView: View {
     }
 
     @ViewBuilder
+    /// Answering morphs the buttons, as on the system call screen: "Annehmen" becomes "Auflegen",
+    /// "Ablehnen" becomes "Stumm", and "Lautsprecher" grows in between.
     private func controls(_ call: CallController) -> some View {
-        if call.phase == .ringing {
-            HStack(spacing: 72) {
-                CallControl(title: "Ablehnen", symbol: "phone.down.fill", style: .end) { call.hangUp() }
-                CallControl(title: "Annehmen", symbol: "phone.fill", style: .accept) { call.answer() }
-            }
-        } else {
-            HStack(spacing: 36) {
-                CallControl(title: "Stumm", symbol: call.muted ? "mic.slash.fill" : "mic.fill",
-                            style: .toggle(call.muted)) { call.setMuted(!call.muted) }
-                    .disabled(!call.phase.isActive)
-                CallControl(title: "Lautsprecher", symbol: "speaker.wave.2.fill",
-                            style: .toggle(call.speaker)) { call.setSpeaker(!call.speaker) }
-                CallControl(title: "Auflegen", symbol: "phone.down.fill", style: .end) { call.hangUp() }
+        Group {
+            if call.phase == .ringing {
+                HStack(spacing: 72) {
+                    CallControl(title: "Ablehnen", symbol: "phone.down.fill", style: .end) { call.hangUp() }
+                        .matchedGeometryEffect(id: "left", in: controlSpace)
+                    CallControl(title: "Annehmen", symbol: "phone.fill", style: .accept) { call.answer() }
+                        .matchedGeometryEffect(id: "right", in: controlSpace)
+                }
+            } else {
+                HStack(spacing: 36) {
+                    CallControl(title: "Stumm", symbol: call.muted ? "mic.slash.fill" : "mic.fill",
+                                style: .toggle(call.muted)) { call.setMuted(!call.muted) }
+                        .disabled(!call.phase.isActive)
+                        .matchedGeometryEffect(id: "left", in: controlSpace)
+                    CallControl(title: "Lautsprecher", symbol: "speaker.wave.2.fill",
+                                style: .toggle(call.speaker)) { call.setSpeaker(!call.speaker) }
+                        .transition(.scale(scale: 0.3).combined(with: .opacity))
+                    CallControl(title: "Auflegen", symbol: "phone.down.fill", style: .end) { call.hangUp() }
+                        .matchedGeometryEffect(id: "right", in: controlSpace)
+                }
             }
         }
+        .animation(.spring(response: 0.6, dampingFraction: 0.82), value: call.phase == .ringing)
     }
 }
 

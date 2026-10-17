@@ -39,6 +39,11 @@ final class Appearance {
 
     var palette: Palette { Palette.all.first { $0.id == paletteID } ?? .claude }
 
+    /// How an incoming call moves around the caller's ring.
+    var ringStyle = RingStyle(rawValue: UserDefaults.standard.string(forKey: "ringStyle") ?? "") ?? .ripples {
+        didSet { UserDefaults.standard.set(ringStyle.rawValue, forKey: "ringStyle") }
+    }
+
     /// How line charts build up on a slide.
     var lineReveal = LineReveal(rawValue: UserDefaults.standard.string(forKey: "lineReveal") ?? "") ?? .draw {
         didSet { UserDefaults.standard.set(lineReveal.rawValue, forKey: "lineReveal") }
