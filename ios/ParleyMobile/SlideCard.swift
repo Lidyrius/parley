@@ -2,24 +2,76 @@ import Charts
 import SwiftUI
 
 /// One slide in the call screen (docs/CALL-SLIDES.md): a screenshot, a chart, a big number or a
-/// short card — shown while Parley talks about it.
+/// short card — shown while Parley talks about it. Each kind animates in: bars grow, the pie
+/// turns open, numbers count up, an image sharpens, text rises.
 struct SlideCard: View {
     let slide: Slide
     let image: UIImage?
+    var index = 0
+    var count = 1
     var onZoom: (UIImage) -> Void = { _ in }
+    @State private var shown = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let title = slide.title {
-                Text(title).font(.headline).lineLimit(2)
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            header
             content
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Theme.stroke))
+        .background {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Theme.card)
+                .overlay(alignment: .topLeading) {
+                    // A warm glow from the corner, like the call screen's backdrop.
+                    RadialGradient(colors: [Theme.claude.opacity(0.16), .clear], center: .topLeading, startRadius: 0, endRadius: 260)
+                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                }
+                .shadow(color: .black.opacity(0.22), radius: 24, y: 10)
+        }
+        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Theme.stroke))
+        .onAppear {
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.82).delay(0.12)) { shown = true }
+        }
         .accessibilityElement(children: .combine)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Theme.claude.gradient))
+            Text(slide.title ?? kindName).font(.headline).lineLimit(2)
+            Spacer(minLength: 8)
+            if count > 1 {
+                Text("\(index + 1) / \(count)")
+                    .font(.caption.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.userBubble))
+            }
+        }
+    }
+
+    private var icon: String {
+        switch slide.kind {
+        case "image": "photo"
+        case "chart": slide.chart == "pie" ? "chart.pie.fill" : slide.chart == "line" ? "chart.xyaxis.line" : "chart.bar.fill"
+        case "metric": "number"
+        default: "text.alignleft"
+        }
+    }
+
+    private var kindName: String {
+        switch slide.kind {
+        case "image": "Bild"
+        case "chart": "Diagramm"
+        case "metric": "Kennzahl"
+        default: "Notiz"
+        }
     }
 
     @ViewBuilder
@@ -30,27 +82,37 @@ struct SlideCard: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .frame(maxHeight: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.stroke))
+                    .frame(maxHeight: 320)
                     .frame(maxWidth: .infinity)
+                    .scaleEffect(shown ? 1 : 1.06)
+                    .blur(radius: shown ? 0 : 14)
+                    .opacity(shown ? 1 : 0)
                     .onTapGesture { onZoom(image) }
                     .accessibilityAddTraits(.isButton)
             } else {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 160)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Theme.userBubble)
+                    .frame(height: 180)
+                    .overlay { ProgressView() }
             }
         case "chart":
-            chart.frame(height: 200)
+            chart.frame(height: 210)
         case "metric":
-            VStack(alignment: .leading, spacing: 4) {
-                Text(slide.metric ?? "")
-                    .font(.system(size: 56, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.claude)
-                    .minimumScaleFactor(0.5)
-                    .lineLimit(1)
-                if let note = slide.note { Text(note).font(.title3).foregroundStyle(.secondary) }
+            MetricText(metric: slide.metric ?? "", shown: shown)
+            if let note = slide.note {
+                Text(note).font(.title3).foregroundStyle(.secondary)
+                    .opacity(shown ? 1 : 0)
+                    .offset(y: shown ? 0 : 8)
             }
         default:
-            Text(Markdown.inline(slide.text ?? "")).font(.title3).fixedSize(horizontal: false, vertical: true)
+            Text(Markdown.inline(slide.text ?? ""))
+                .font(.title3)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .opacity(shown ? 1 : 0)
+                .offset(y: shown ? 0 : 14)
         }
     }
 
@@ -65,34 +127,84 @@ struct SlideCard: View {
     @ViewBuilder
     private var chart: some View {
         let unit = slide.unit.map { " " + $0 } ?? ""
+        let top = max(1, (points.map(\.value).max() ?? 1) * 1.18)   // fixed scale: the marks grow, not the axis
+        let grow = shown ? 1.0 : 0.0
         switch slide.chart {
         case "pie":
             Chart(points) { p in
-                SectorMark(angle: .value("Wert", p.value), innerRadius: .ratio(0.55), angularInset: 1.5)
+                SectorMark(angle: .value("Wert", p.value), innerRadius: .ratio(0.58), angularInset: 2)
                     .foregroundStyle(by: .value("Name", p.label))
-                    .cornerRadius(4)
+                    .cornerRadius(5)
+                    .annotation(position: .overlay) {
+                        Text(Self.format(p.value)).font(.caption.bold()).foregroundStyle(.white).opacity(grow)
+                    }
             }
+            .chartForegroundStyleScale(range: Self.palette)
             .chartLegend(position: .trailing, alignment: .center)
+            .scaleEffect(0.55 + 0.45 * grow)
+            .rotationEffect(.degrees(-120 * (1 - grow)))
+            .opacity(grow)
         case "line":
             Chart(points) { p in
-                LineMark(x: .value("Name", p.label), y: .value("Wert", p.value))
-                    .foregroundStyle(Theme.claude)
+                AreaMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))
+                    .foregroundStyle(LinearGradient(colors: [Theme.claude.opacity(0.35), Theme.claude.opacity(0.02)], startPoint: .top, endPoint: .bottom))
                     .interpolationMethod(.catmullRom)
-                PointMark(x: .value("Name", p.label), y: .value("Wert", p.value))
+                LineMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))
                     .foregroundStyle(Theme.claude)
-                    .annotation(position: .top) { Text(Self.format(p.value) + unit).font(.caption2).foregroundStyle(.secondary) }
+                    .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .interpolationMethod(.catmullRom)
+                PointMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))
+                    .foregroundStyle(Theme.claude)
+                    .annotation(position: .top) {
+                        Text(Self.format(p.value) + unit).font(.caption2).foregroundStyle(.secondary).opacity(grow)
+                    }
             }
+            .chartYScale(domain: 0...top)
         default:
             Chart(points) { p in
-                BarMark(x: .value("Name", p.label), y: .value("Wert", p.value))
-                    .foregroundStyle(Theme.claude.gradient)
-                    .cornerRadius(6)
-                    .annotation(position: .top) { Text(Self.format(p.value) + unit).font(.caption2).foregroundStyle(.secondary) }
+                BarMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))
+                    .foregroundStyle(LinearGradient(colors: [Theme.claude.opacity(0.75), Theme.claude], startPoint: .bottom, endPoint: .top))
+                    .cornerRadius(7)
+                    .annotation(position: .top) {
+                        Text(Self.format(p.value) + unit).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).opacity(grow)
+                    }
             }
+            .chartYScale(domain: 0...top)
         }
     }
 
+    private static let palette: [Color] = [Color(hex: 0xD97757), Color(hex: 0x5B8DEF), Color(hex: 0x4EBA65),
+                                           Color(hex: 0xD9A43B), Color(hex: 0x9B87F5), Color(hex: 0x8B8A85)]
+
     static func format(_ v: Double) -> String {
         v.rounded() == v ? String(Int(v)) : v.formatted(.number.precision(.fractionLength(0...2)))
+    }
+}
+
+/// "244" / "24 / 24" / "98 %": the leading number counts up from 0, the rest stays.
+private struct MetricText: View {
+    let metric: String
+    let shown: Bool
+
+    var body: some View {
+        let (number, rest) = Self.split(metric)
+        Group {
+            if let number {
+                let value = shown ? number : 0
+                Text(SlideCard.format(number.rounded() == number ? value.rounded() : value) + rest)
+                    .contentTransition(.numericText(value: value))
+            } else {
+                Text(metric).opacity(shown ? 1 : 0).scaleEffect(shown ? 1 : 0.9, anchor: .leading)
+            }
+        }
+        .font(.system(size: 60, weight: .bold, design: .rounded))
+        .foregroundStyle(Theme.claude.gradient)
+        .minimumScaleFactor(0.5)
+        .lineLimit(1)
+    }
+
+    static func split(_ s: String) -> (Double?, String) {
+        guard let m = s.firstMatch(of: /^\s*(\d+(?:[.,]\d+)?)(.*)$/) else { return (nil, s) }
+        return (Double(m.1.replacingOccurrences(of: ",", with: ".")), String(m.2))
     }
 }

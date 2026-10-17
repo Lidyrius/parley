@@ -73,7 +73,7 @@ struct ChatItem: Identifiable, Equatable, Sendable {
 
 /// Live captions for one spoken line (`caption` frame, v3): its words and when each starts,
 /// in seconds from the line's first audio frame.
-struct Caption: Equatable, Sendable {
+struct Caption: Hashable, Sendable {
     var words: [String]
     var starts: [Double]
     var end: Double

@@ -63,18 +63,31 @@ struct CallView: View {
             VStack(spacing: 0) {
                 topBar(call)
                 Spacer(minLength: 12)
-                // A slide (docs/CALL-SLIDES.md) takes the ring's place while Parley talks about it.
+                // A slide (docs/CALL-SLIDES.md) takes the ring's place while Parley talks about it;
+                // the session's name stays on top, small. Slides swipe in from the right.
                 TimelineView(.periodic(from: .now, by: 0.1)) { context in
-                    if let slide = call.slide(at: context.date) {
-                        SlideCard(slide: slide, image: model.images[slide.id]) { zoomed = ZoomedImage(id: slide.id, image: $0) }
-                            .padding(.horizontal, 4)
-                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    let slide = call.slide(at: context.date)
+                    let name = call.label ?? voiced?.name ?? "Parley"
+                    VStack(spacing: 16) {
+                        if let slide {
+                            compactIdentity(call, look: look, name: name)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            let order = call.slides.sorted { $0.at < $1.at }
+                            SlideCard(slide: slide, image: model.images[slide.id],
+                                      index: order.firstIndex(of: slide) ?? 0, count: order.count) {
+                                zoomed = ZoomedImage(id: slide.id, image: $0)
+                            }
                             .id(slide.id)
-                    } else {
-                        identity(call, look: look, name: call.label ?? voiced?.name ?? "Parley")
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.94)),
+                                removal: .move(edge: .leading).combined(with: .opacity).combined(with: .scale(scale: 0.94))))
+                        } else {
+                            identity(call, look: look, name: name)
+                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                        }
                     }
+                    .animation(.spring(response: 0.55, dampingFraction: 0.86), value: slide?.id)
                 }
-                .animation(.snappy, value: call.slides)
                 Spacer(minLength: 20)
                 Waveform(mood: look.mood, color: look.color, paused: reduceMotion) { call.level(at: $0) }
                     .frame(height: 96)
@@ -143,6 +156,21 @@ struct CallView: View {
             .multilineTextAlignment(.center)
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// The session's name and state, small — above a slide.
+    private func compactIdentity(_ call: CallController, look: CallLook, name: String) -> some View {
+        HStack(spacing: 12) {
+            RingView(session: Session(id: "call", state: look.state), skew: 0, size: 34)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).font(.title3.bold()).lineLimit(1)
+                statusLine(call, look: look).font(.subheadline).monospacedDigit()
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .combine)
     }
 
     /// "spricht · 2:47" while connected; the timer counts from the moment the call connected.
@@ -328,37 +356,98 @@ struct Waveform: View {
     return CallView().environment(model)
 }
 
-/// Live captions: the sentence being spoken, its words lighting up as they are said — timed
-/// against the frames the phone actually played (CallController.captionTime).
+/// Live captions: the whole line in a two-line window that scrolls up smoothly as the voice
+/// moves on — the current line on top, what comes next always visible below. Words light up as
+/// they are spoken, timed against the frames the phone actually played (CallController.captionTime).
 private struct LiveCaption: View {
     let call: CallController
     let caption: Caption
+    @State private var frames: [Int: CGRect] = [:]
+    @ScaledMetric(relativeTo: .title3) private var lineSpacing: CGFloat = 6
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
             let spoken = caption.index(at: call.captionTime(at: context.date))
-            let chunk = caption.chunks.first { $0.contains(max(spoken, 0)) } ?? 0..<0
-            Text(Self.line(caption, chunk: chunk, spoken: spoken))
-                .font(.title3.weight(.medium))
-                .multilineTextAlignment(.center)
-                .lineLimit(4)
-                .frame(maxWidth: 360)
-                .id(chunk.lowerBound)
-                .transition(.opacity)
-                .animation(.easeOut(duration: 0.25), value: chunk.lowerBound)
+            let lineHeight = frames[0]?.height ?? 26
+            // The current line on top — but never past the point where the last line is the second.
+            let lastTop = frames.values.map(\.minY).max() ?? 0
+            let top = min(frames[max(spoken, 0)]?.minY ?? 0, max(0, lastTop - lineHeight - lineSpacing))
+            FlowLayout(spacing: 5.5, lineSpacing: lineSpacing) {
+                ForEach(caption.words.indices, id: \.self) { i in
+                    Text(caption.words[i])
+                        .foregroundStyle(i <= spoken ? Color.primary : Color.secondary.opacity(0.55))
+                        .background(GeometryReader { g in
+                            Color.clear.preference(key: WordFrames.self, value: [i: g.frame(in: .named("caption"))])
+                        })
+                }
+            }
+            .font(.title3.weight(.medium))
+            .coordinateSpace(.named("caption"))
+            .offset(y: -top)
+            .animation(.smooth(duration: 0.5), value: top)
+            .animation(.easeOut(duration: 0.18), value: spoken)
+            .frame(maxWidth: 360)
+            .frame(height: lineHeight * 2 + lineSpacing, alignment: .top)
+            .clipped()
+            .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.8),
+                                         .init(color: .black.opacity(0.35), location: 1)], startPoint: .top, endPoint: .bottom))
         }
+        .onPreferenceChange(WordFrames.self) { frames = $0 }
+        .id(caption)
+        .transition(.opacity)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(caption.words.joined(separator: " "))
     }
+}
 
-    static func line(_ c: Caption, chunk: Range<Int>, spoken: Int) -> AttributedString {
-        var out = AttributedString()
-        for k in chunk {
-            var w = AttributedString((k == chunk.lowerBound ? "" : " ") + c.words[k])
-            w.foregroundColor = k <= spoken ? Color.primary : Color.secondary.opacity(0.45)
-            out += w
+private struct WordFrames: PreferenceKey {
+    static let defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+/// Words in centred lines, wrapping at the proposed width (subtitle layout).
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 7
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(subviews, width: proposal.width ?? .infinity)
+        let height = rows.map(\.height).reduce(0, +) + lineSpacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(subviews, width: bounds.width) {
+            var x = bounds.minX + (bounds.width - row.width) / 2
+            for i in row.items {
+                let size = subviews[i].sizeThatFits(.unspecified)
+                subviews[i].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + lineSpacing
         }
-        return out
+    }
+
+    private struct Row { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func rows(_ subviews: Subviews, width: CGFloat) -> [Row] {
+        var rows: [Row] = [Row()]
+        for i in subviews.indices {
+            let size = subviews[i].sizeThatFits(.unspecified)
+            let extra = rows[rows.count - 1].items.isEmpty ? size.width : rows[rows.count - 1].width + spacing + size.width
+            if extra > width, !rows[rows.count - 1].items.isEmpty {
+                rows.append(Row())
+            }
+            var row = rows[rows.count - 1]
+            row.width = row.items.isEmpty ? size.width : row.width + spacing + size.width
+            row.height = max(row.height, size.height)
+            row.items.append(i)
+            rows[rows.count - 1] = row
+        }
+        return rows.filter { !$0.items.isEmpty }
     }
 }
 

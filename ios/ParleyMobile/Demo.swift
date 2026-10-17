@@ -80,6 +80,8 @@ extension Demo {
         Slide(id: "demo-chart", at: 0.4, kind: "chart", title: "Exporte pro Tag", chart: "bar",
               labels: ["Mo", "Di", "Mi", "Do", "Fr"], values: [12, 18, 9, 24, 31]),
         Slide(id: "demo-metric", at: 2.6, kind: "metric", title: "Tests", metric: "24 / 24", note: "alle grün, 3,1 s"),
+        Slide(id: "demo-text", at: 4.25, kind: "text", title: "Gebaut",
+              text: "**CSV-Export** in der Rechnungsliste, Beträge mit Komma, Spalten wie in der Ansicht."),
     ]
 }
 
