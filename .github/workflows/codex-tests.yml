@@ -27,8 +27,9 @@ jobs:
       - name: Run shared and Codex suites
         shell: bash
         run: |
-          bash -n plugin/scripts/stop-hook.sh scripts/detect-integrations.sh scripts/sync-integrations.sh
+          bash -n plugin/scripts/stop-hook.sh plugin/scripts/permission-hook.sh scripts/detect-integrations.sh scripts/sync-integrations.sh
           bash tests/hook_test.sh
           bash tests/codex_hook_test.sh
+          bash tests/permission_hook_test.sh
           bash tests/codex_plugin_test.sh
           bash tests/greet_test.sh

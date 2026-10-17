@@ -1,6 +1,6 @@
 {
   "name": "parley",
-  "version": "0.1.0+codex.20260802124732",
+  "version": "0.1.0+codex.20261017093542",
   "description": "Voice conversation for Claude Code and Codex: speak turn summaries and inject spoken replies.",
   "author": {
     "name": "sydney",

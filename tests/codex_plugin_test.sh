@@ -105,6 +105,25 @@ if [ -n "$real_codex" ]; then
     jq -e '.installed[]? | select(.pluginId == "parley@parley-local")' >/dev/null \
     || fail "real Codex did not install the local plugin"
   echo "PASS: real Codex CLI installs the local plugin"
+
+  # Ask the installed Codex which plugin hooks it parsed (app-server `hooks/list`): the
+  # shared hooks.json must load cleanly with BOTH the Stop and PermissionRequest hooks.
+  hooks_list="$(jq -cn --arg cwd "$real_home" '{jsonrpc:"2.0",id:2,method:"hooks/list",params:{cwds:[$cwd]}}')"
+  hooks_out="$( ( printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"parley-test","title":"parley-test","version":"0.0.0"}}}'
+      sleep 1
+      printf '%s\n' '{"jsonrpc":"2.0","method":"initialized"}' "$hooks_list"
+      sleep 3 ) | HOME="$real_home" CODEX_HOME="$real_codex_home" "$real_codex" app-server 2>/dev/null \
+      | jq -c 'select(.id == 2)' 2>/dev/null || true)"
+  if printf '%s' "$hooks_out" | jq -e '.result.data' >/dev/null 2>&1; then
+    printf '%s' "$hooks_out" | jq -e '[.result.data[].errors[]] | length == 0' >/dev/null \
+      || fail "Codex reported hook errors: $hooks_out"
+    printf '%s' "$hooks_out" | jq -e '[.result.data[].hooks[] | select(.pluginId == "parley@parley-local") | .eventName]
+        | contains(["stop", "permissionRequest"])' >/dev/null \
+      || fail "Codex did not load the Stop + PermissionRequest hooks: $hooks_out"
+    echo "PASS: real Codex loads the Stop + PermissionRequest hooks"
+  else
+    echo "SKIP: this Codex has no app-server hooks/list"
+  fi
 fi
 
 echo "ALL CODEX PLUGIN TESTS PASSED"

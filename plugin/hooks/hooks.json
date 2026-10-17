@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/scripts/permission-hook.sh\"",
+            "commandWindows": "bash \"${PLUGIN_ROOT}/scripts/permission-hook.sh\"",
+            "timeout": 130
+          }
+        ]
+      }
     ]
   }
 }

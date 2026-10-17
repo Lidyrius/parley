@@ -21,7 +21,7 @@ iPhone app ──wss──▶ Cloudflare relay (Worker + Durable Object per room
 3. **Zentrale** — a permanent Claude Code session (own folder, Parley voice on) that takes
    general requests: find projects, create projects (folder, `git init`, `.parley.json`),
    start new Claude Code sessions with Parley already active and a first task
-   (`claude://code/new?folder=…&q=…`, to be verified; CLI fallback).
+   (as a terminal Claude Code CLI session; the desktop deep link only pre-fills the prompt).
 4. **Incoming calls** — an update rings the phone: VoIP push (PushKit) → CallKit.
 5. **Permission prompts aloud** — a session waiting for an approval is announced; "ja" answers it.
 
@@ -105,11 +105,14 @@ Everything in v1 stays. Additions (unknown types are still ignored everywhere):
   confirms briefly ("Verstanden, ich gebe das an Tippfrei weiter.").
 - **Zentrale.** A Claude Code session in `zentraleDir` (default `~/workspace/privat/parley-zentrale`,
   created from `zentrale/` in this repo: `CLAUDE.md` + `.parley.json` `{"name":"Zentrale"}`). If it
-  is not alive, the host starts it with the desktop deep link
-  `claude://code/new?folder=<abs path>&q=<url-encoded first prompt>` (first prompt `/parley:voice`),
-  and keeps the routed instruction **pending by cwd** until a presence from that folder arrives.
+  is not alive, the host starts it as a visible interactive Claude Code CLI session in a terminal
+  (macOS: Terminal.app via `osascript`, `cd <dir> && claude '/parley:voice'`; Windows: Windows
+  Terminal `wt -d <dir> claude /parley:voice`, `cmd` fallback) and keeps the routed instruction
+  **pending by cwd** until a presence from that folder arrives. (The desktop deep link
+  `claude://code/new?folder=…&q=…` was tested: it only pre-fills the prompt, so it can't start a
+  session unattended.) The instruction text never goes on a command line.
   The Zentrale finds projects, creates projects under `projectsDir` (default `~/workspace/privat`:
-  folder, `git init`, `.parley.json`), and starts new sessions the same way (folder + first prompt
+  folder, `git init`, `.parley.json`), and starts new sessions the same way (terminal + first prompt
   `/parley:voice` + the task delivered as pending-by-cwd via `POST /dispatch`).
 - **`POST /dispatch`** (local, for the Zentrale): `{"cwd":"<abs path>","instruction":"<task>","start":true}`
   → starts a session there if none is alive (deep link) and delivers the instruction to it.
