@@ -198,6 +198,10 @@ final class CallController {
         }
     }
 
+    /// Settings → "Lautsprecher beim Anrufstart" (on unless turned off).
+    static let speakerKey = "speakerByDefault"
+    static var speakerByDefault: Bool { UserDefaults.standard.object(forKey: speakerKey) as? Bool ?? true }
+
     func setSpeaker(_ on: Bool) {
         speaker = on
         guard !isDemo else { return }
@@ -269,6 +273,11 @@ final class CallController {
             return
         }
         audio.muted = muted
+        // Loudspeaker by default — only instead of the earpiece: AirPods, the car and headsets keep their route.
+        if Self.speakerByDefault, !isDemo,
+           AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) {
+            setSpeaker(true)
+        }
         relay.send(Outgoing.call(started: true))
         phase = .active(since: .now)
         if outgoing, let uuid { provider?.reportOutgoingCall(with: uuid, connectedAt: .now) }
