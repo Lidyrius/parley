@@ -381,15 +381,15 @@ private struct LiveCaption: View {
     let call: CallController
     let caption: Caption
     @State private var frames: [Int: CGRect] = [:]
+    @State private var spoken = -1
+    @State private var scroll: CGFloat = 0
     @ScaledMetric(relativeTo: .title3) private var lineSpacing: CGFloat = 6
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-            let spoken = caption.index(at: call.captionTime(at: context.date))
-            let lineHeight = frames[0]?.height ?? 26
-            // The current line on top — but never past the point where the last line is the second.
-            let lastTop = frames.values.map(\.minY).max() ?? 0
-            let top = min(frames[max(spoken, 0)]?.minY ?? 0, max(0, lastTop - lineHeight - lineSpacing))
+        let lineHeight = frames[0]?.height ?? 26
+        // The wrapper: a fixed two-line window. Inside it the whole text block moves as one,
+        // only when the voice reaches a new line — one smooth animation, no per-frame layout.
+        ZStack(alignment: .top) {
             FlowLayout(spacing: 5.5, lineSpacing: lineSpacing) {
                 ForEach(caption.words.indices, id: \.self) { i in
                     Text(caption.words[i])
@@ -401,20 +401,39 @@ private struct LiveCaption: View {
             }
             .font(.title3.weight(.medium))
             .coordinateSpace(.named("caption"))
-            .offset(y: -top)
-            .animation(.smooth(duration: 0.5), value: top)
-            .animation(.easeOut(duration: 0.18), value: spoken)
-            .frame(maxWidth: 360)
-            .frame(height: lineHeight * 2 + lineSpacing, alignment: .top)
-            .clipped()
-            .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.8),
-                                         .init(color: .black.opacity(0.35), location: 1)], startPoint: .top, endPoint: .bottom))
+            .geometryGroup()   // the block moves as one; words never animate their own positions
+            .offset(y: -scroll)
         }
+        .frame(maxWidth: 360)
+        .frame(height: lineHeight * 2 + lineSpacing, alignment: .top)
+        .clipped()
+        .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.8),
+                                     .init(color: .black.opacity(0.35), location: 1)], startPoint: .top, endPoint: .bottom))
         .onPreferenceChange(WordFrames.self) { frames = $0 }
+        .task(id: caption) {
+            // The voice's clock at ~30 Hz drives which word is spoken; the scroll follows lines.
+            while !Task.isCancelled {
+                let now = caption.index(at: call.captionTime(at: .now))
+                if now != spoken {
+                    // Only the words' colours fade; layout stays out of this animation.
+                    withAnimation(.easeOut(duration: 0.2)) { spoken = now }
+                    follow(lineHeight: lineHeight)
+                }
+                try? await Task.sleep(for: .milliseconds(33))
+            }
+        }
         .id(caption)
         .transition(.opacity)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(caption.words.joined(separator: " "))
+    }
+
+    /// The current line on top — but never past the point where the last line is the second.
+    private func follow(lineHeight: CGFloat) {
+        let lastTop = frames.values.map(\.minY).max() ?? 0
+        let target = min(frames[max(spoken, 0)]?.minY ?? 0, max(0, lastTop - lineHeight - lineSpacing))
+        guard abs(target - scroll) > 0.5 else { return }
+        withAnimation(.smooth(duration: 0.55)) { scroll = target }
     }
 }
 
