@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using Windows.Media.SpeechRecognition;
 

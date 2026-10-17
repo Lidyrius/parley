@@ -50,6 +50,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <string>Parley records your spoken reply after Claude Code finishes a turn.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Parley pauses your music while it speaks and resumes it afterwards.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Parley listens while it speaks, so you can interrupt it — say "Stopp" or anything. Recognition runs on this Mac.</string>
 </dict>
 </plist>
 PLIST
