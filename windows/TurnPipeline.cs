@@ -267,7 +267,9 @@ public sealed class TurnPipeline
         // A predicted answer matched → its own line instead of the generic ack (pre-rendered,
         // plays at once). One that asks back opens the mic again; both answers go on.
         (string say, byte[]? clip)? line = null;
-        if (await pick is int i)
+        var picked = await pick;
+        if (picked is null && replies.Count > 0) Log.Write($"reply: none of {replies.Count} fits");
+        if (picked is int i)
         {
             var r = replies[i];
             var clip = (await replyClips)[i];

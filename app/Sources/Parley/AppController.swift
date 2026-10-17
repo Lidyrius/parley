@@ -306,7 +306,9 @@ final class AppController: ObservableObject {
         // A predicted answer matched → its own line instead of the generic ack (pre-rendered,
         // plays at once). One that asks back opens the mic again; both answers go on.
         var line: AckLine?
-        if let i = await picked {
+        let pick = await picked
+        if pick == nil, !replies.isEmpty { Log.write("reply: none of \(replies.count) fits") }
+        if let i = pick {
             let r = replies[i], clip = (await replyClips?.value)?[i] ?? nil
             Log.write("reply: \(r.on) → \"\(r.say)\" (rendered=\(clip != nil))")
             if r.listen == true {

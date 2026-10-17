@@ -60,8 +60,9 @@ enum Classifier {
     // Which predicted answer the transcript is: the 1-based option number, 0 = none fits.
     private static let replySystem = """
     A developer answered a coding assistant by voice. The assistant predicted these kinds of \
-    answer, numbered. Output ONLY the number of the one the answer clearly is, or 0 if none \
-    fits well (e.g. it adds a new request or says something else). Output only the integer.
+    answer, numbered. Output the number of the one closest in meaning — loose wording is fine. \
+    Output 0 only if the answer means something none of them covers (e.g. a new request or \
+    instruction). Output only the integer.
     """
 
     static func replyRequest(text: String, options: [String], apiKey: String) -> URLRequest {
