@@ -119,7 +119,12 @@ Everything in v1 stays. Additions (unknown types are still ignored everywhere):
 - **Ringing (Unterwegs-Modus).** While `away` is on and no call is connected, a turn that is about to
   be voiced instead sends a **VoIP push** (APNs, topic `de.developaway.parley.mobile.voip`, push type
   `voip`, payload `{"label":…}`) plus a `ring` frame, and waits up to 45 s for `call start`; then it
-  is voiced over the phone. No answer → it falls back to the Mac's speaker.
+  is voiced over the phone. Not reached (no answer, put off and missed, phone unreachable) →
+  the line waits as a notification and the session parks: **in Unterwegs-Modus the Mac (PC)
+  never speaks or listens itself** — not after a missed ring, nor when a call drops midway, and
+  the resume dialog and permission questions ring the phone too (else: resume without dialog /
+  the on-screen prompt). The phone stops an unanswered ring after 40 s (`call end`) and leaves
+  the "later" notification; the host then keeps the ring open a minute for that choice.
   APNs credentials in credentials.json: `apnsKeyId`, `apnsTeamId` (`384887N3UL`), `apnsKeyP8`
   (the .p8 PEM text) — chosen once via the menu ("Push-Schlüssel wählen…", Key ID from the
   `AuthKey_<KEYID>.p8` file name). ES256 JWT, HTTP/2 to `api.push.apple.com`

@@ -62,12 +62,19 @@ public sealed class TurnPipeline
         var config = Config.Load();
         _resumeGen++;
         Log.Write($"resume dialog start project={turn.Project}");
-        if (Muted)
+        var (_, calledBack) = await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
+        if (PhoneCall.Away && !PhoneCall.Active)
+        {
+            Log.Write("Unterwegs, phone not reached → resuming without dialog (the PC stays silent)");
+            return ("", false, 0, "");
+        }
+        if (Muted && !PhoneCall.Active)
         {
             Log.Write("muted → resuming without dialog");
             return ("", false, 0, "");
         }
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
+        if (calledBack) await ThankForCallingBack(config);
 
         // Cached line, or synthesized live + cached; null → no TTS, just the beep.
         var line = await Clips.ResumeClip(turn.SpokenLabel, config);
@@ -128,7 +135,12 @@ public sealed class TurnPipeline
             return ("", false, 0, "");
         }
         var synth = GoogleTts.Synthesize(turn.Speak, config);
-        if (Ring is not null) await Ring(turn.SpokenLabel);
+        await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
+        if (PhoneCall.Away && !PhoneCall.Active)
+        {
+            Log.Write("Unterwegs, phone not reached → permission left to the screen");
+            return ("", false, 0, "");
+        }
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
         var pcm = await synth;
         if (pcm is null || DateTime.UtcNow >= (turn.Deadline ?? DateTime.MaxValue))
@@ -186,43 +198,15 @@ public sealed class TurnPipeline
         // (≤ 45 s) while the synthesis runs; unanswered, the turn plays on the speaker.
         // "Not now" on the phone puts the line off: ring again in a minute or five, or wait for
         // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
-        var calledBack = false;
-        if (Ring is not null)
+        var (_, calledBack) = await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
+        // Unterwegs and not on the phone: the PC stays silent — the line waits as a notification.
+        if (PhoneCall.Away && !PhoneCall.Active)
         {
-            var outcome = await Ring(turn.SpokenLabel);
-            var session = Server.SessionKey(turn);
-            while (outcome.Kind == RingKind.Later)
-            {
-                if (outcome.After is double after)
-                {
-                    var at = DateTime.UtcNow.AddSeconds(after);
-                    SetCallback?.Invoke(session, at);
-                    while (DateTime.UtcNow < at && !PhoneCall.Active) await Task.Delay(250);
-                    SetCallback?.Invoke(session, null);
-                    outcome = PhoneCall.Active ? new RingOutcome(RingKind.Answered) : await Ring(turn.SpokenLabel);
-                }
-                else
-                {
-                    SetCallback?.Invoke(session, DateTime.MaxValue);
-                    calledBack = await PhoneCall.WaitForCall(CallBackWait);
-                    SetCallback?.Invoke(session, null);
-                    Log.Write(calledBack ? "phone: Sir called back" : "phone: no call back in 30 min");
-                    outcome = new RingOutcome(calledBack ? RingKind.Answered : RingKind.Missed);
-                }
-                // Put off and still not reached: the line waits as a notification, not on the speaker.
-                if (outcome.Kind == RingKind.Missed)
-                {
-                    Log.Write($"put off, not reached → notification for {turn.SpokenLabel}");
-                    _ = Apns.SendAlert($"Parley · {turn.SpokenLabel}", turn.Speak, session);
-                    return ("", turn.WantsListen, 0, "");
-                }
-            }
+            Log.Write($"Unterwegs, phone not reached → notification for {turn.SpokenLabel}");
+            _ = Apns.SendAlert($"Parley · {turn.SpokenLabel}", turn.Speak, Server.SessionKey(turn));
+            return ("", turn.WantsListen, 0, "");
         }
-        if (calledBack)
-        {
-            var de = config.Language.StartsWith("de", StringComparison.OrdinalIgnoreCase);
-            await SpeakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config);
-        }
+        if (calledBack) await ThankForCallingBack(config);
 
         // Wait out the previous turn's background ack so audio never overlaps.
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
@@ -365,6 +349,41 @@ public sealed class TurnPipeline
     }
 
     // Beep → record (pill + VAD) → transcribe (min-audio guard): one listening pass.
+    /// Rings (Unterwegs), and follows the phone's "not now": rings again after the delay, or
+    /// waits up to 30 min for Sir's own call (the tile offers "Rückrufen").
+    private async Task<(bool reached, bool calledBack)> ReachPhone(string label, string session)
+    {
+        if (Ring is null) return (PhoneCall.Active, false);
+        var outcome = await Ring(label);
+        var calledBack = false;
+        while (outcome.Kind == RingKind.Later)
+        {
+            if (outcome.After is double after)
+            {
+                var at = DateTime.UtcNow.AddSeconds(after);
+                SetCallback?.Invoke(session, at);
+                while (DateTime.UtcNow < at && !PhoneCall.Active) await Task.Delay(250);
+                SetCallback?.Invoke(session, null);
+                outcome = PhoneCall.Active ? new RingOutcome(RingKind.Answered) : await Ring(label);
+            }
+            else
+            {
+                SetCallback?.Invoke(session, DateTime.MaxValue);
+                calledBack = await PhoneCall.WaitForCall(CallBackWait);
+                SetCallback?.Invoke(session, null);
+                Log.Write(calledBack ? "phone: Sir called back" : "phone: no call back in 30 min");
+                outcome = new RingOutcome(calledBack ? RingKind.Answered : RingKind.Missed);
+            }
+        }
+        return (outcome.Kind == RingKind.Answered, calledBack);
+    }
+
+    private async Task ThankForCallingBack(Config config)
+    {
+        var de = config.Language.StartsWith("de", StringComparison.OrdinalIgnoreCase);
+        await SpeakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config);
+    }
+
     private async Task<(byte[] wav, string text)> ListenOnce(Config config)
     {
         await AudioOut.PlayBeep();

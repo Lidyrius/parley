@@ -52,6 +52,9 @@ final class CallController {
     @ObservationIgnored var onDeclined: (String?) -> Void = { _ in }
     /// Ended from the app's own ringing screen (Ablehnen, In 1 Min. …): no notification after.
     @ObservationIgnored private var endedInApp = false
+    /// An unanswered ring ends itself (the host gives up at 45 s) and leaves the "later" notification.
+    @ObservationIgnored private var ringExpiry: Task<Void, Never>?
+    static let ringSeconds = 40.0
 
     @ObservationIgnored private let relay: Relay
     @ObservationIgnored private let wake = WakeListener()
@@ -148,6 +151,15 @@ final class CallController {
         uuid = id
         self.label = label
         phase = .ringing
+        // Not answered in 40 s (on the lock screen there is only "answer"): stop ringing, tell the
+        // host, and offer "later" as a notification.
+        ringExpiry?.cancel()
+        ringExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.ringSeconds))
+            guard !Task.isCancelled, let self, phase == .ringing, uuid == id else { return }
+            provider?.reportCall(with: id, endedAt: .now, reason: .unanswered)
+            finish()
+        }
         // In the app already (or no CallKit, the simulator): the call screen slides up at once.
         if provider == nil || UIApplication.shared.applicationState == .active { showsScreen = true }
         ensureRelay()  // be ready by the time it is answered
@@ -463,6 +475,7 @@ final class CallController {
         hostAudio = .idle
         isTest = false
         endedInApp = false
+        ringExpiry?.cancel()
         testEnd?.cancel()
         caption = nil   // the next call starts clean: no old subtitles or slides
         slides = []

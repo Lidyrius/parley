@@ -217,33 +217,13 @@ final class AppController: ObservableObject {
         // "Not now" on the phone puts the line off: ring again in a minute or five, or wait for
         // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
         var calledBack = false
-        if ringing {
-            var outcome = await ringPhone(label: turn.spokenLabel)
-            let session = ControlServer.sessionKey(turn)
-            while case .later(let after) = outcome {
-                setStatus(key, "waiting")
-                if let after {
-                    let at = Date().addingTimeInterval(after)
-                    server.setCallback(session, at: at)
-                    while Date() < at, !phone.callActive, !Task.isCancelled { try? await Task.sleep(nanoseconds: 250_000_000) }
-                    server.setCallback(session, at: nil)
-                    outcome = phone.callActive ? .answered : await ringPhone(label: turn.spokenLabel)
-                } else {
-                    server.setCallback(session, at: .distantFuture)
-                    calledBack = await phone.waitForCall(timeout: Self.callBackWait)
-                    server.setCallback(session, at: nil)
-                    Log.write(calledBack ? "phone: Sir called back" : "phone: no call back in 30 min")
-                    outcome = calledBack ? .answered : .missed
-                }
-                // Put off and still not reached: the line waits as a notification, not on the Mac's speaker.
-                if outcome == .missed { prefetch?.cancel(); return silentTurn(turn, key: key) }
-            }
+        if ringing, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: key) {
+            calledBack = back
         }
+        // Unterwegs and not on the phone: the Mac stays silent — the line waits as a notification.
+        if phone.away && !phone.callActive { prefetch?.cancel(); return silentTurn(turn, key: key) }
         if effectivelyMuted && !phone.callActive { prefetch?.cancel(); return mutedTurn() }
-        if calledBack {
-            let de = config.language.lowercased().hasPrefix("de")
-            await speakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config: config)
-        }
+        if calledBack { await thankForCallingBack(config) }
 
         // Wait out the previous turn's background ack clip so this turn's audio never
         // overlaps it (only ever blocks if Claude replied faster than the ack played).
@@ -420,13 +400,21 @@ final class AppController: ObservableObject {
         resumeGen += 1
         Log.write("resume dialog start project=\(turn.project)")
         let ringing = shouldRing
-        if ringing { _ = await ringPhone(label: turn.spokenLabel) }
+        var calledBack = false
+        if ringing, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: nil) {
+            calledBack = back
+        }
+        if phone.away && !phone.callActive {
+            Log.write("Unterwegs, phone not reached → resuming without dialog (the Mac stays silent)")
+            return TurnReply(transcript: "", park: false)
+        }
         if effectivelyMuted && !phone.callActive {
             Log.write("muted → resuming without dialog")
             return TurnReply(transcript: "", park: false)
         }
         await ackTask?.value
         ackTask = nil
+        if calledBack { await thankForCallingBack(config) }
 
         // Cached line (or synthesized live + cached); nil → speakAndBeep synthesizes the text.
         let clip = await ProjectClips.shared.resumeClip(label: turn.spokenLabel, config: config)
@@ -479,6 +467,36 @@ final class AppController: ObservableObject {
     }
 
     enum RingOutcome: Equatable { case answered, missed, later(TimeInterval?) }
+    enum Reach { case reached(calledBack: Bool), notReached }
+
+    /// Rings, and follows the phone's "not now": rings again after the delay, or waits up to
+    /// 30 min for Sir's own call (the tile offers "Rückrufen"). `key`: the menu row to mark waiting.
+    private func reachPhone(label: String, session: String, key: String?) async -> Reach {
+        var outcome = await ringPhone(label: label)
+        var calledBack = false
+        while case .later(let after) = outcome {
+            if let key { setStatus(key, "waiting") }
+            if let after {
+                let at = Date().addingTimeInterval(after)
+                server.setCallback(session, at: at)
+                while Date() < at, !phone.callActive, !Task.isCancelled { try? await Task.sleep(nanoseconds: 250_000_000) }
+                server.setCallback(session, at: nil)
+                outcome = phone.callActive ? .answered : await ringPhone(label: label)
+            } else {
+                server.setCallback(session, at: .distantFuture)
+                calledBack = await phone.waitForCall(timeout: Self.callBackWait)
+                server.setCallback(session, at: nil)
+                Log.write(calledBack ? "phone: Sir called back" : "phone: no call back in 30 min")
+                outcome = calledBack ? .answered : .missed
+            }
+        }
+        return outcome == .answered ? .reached(calledBack: calledBack) : .notReached
+    }
+
+    private func thankForCallingBack(_ config: AppConfig) async {
+        let de = config.language.lowercased().hasPrefix("de")
+        await speakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config: config)
+    }
 
     // VoIP push + `ring`, then wait ≤ 45 s for `call start` — or the phone's "not now".
     private func ringPhone(label: String) async -> RingOutcome {
@@ -565,8 +583,9 @@ final class AppController: ObservableObject {
         resumeGen += 1
         let ringing = shouldRing
         if effectivelyMuted && !phone.callActive && !ringing { Log.write("muted → permission left to the screen"); return none }
-        if ringing { _ = await ringPhone(label: turn.spokenLabel) }
+        if ringing { _ = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: nil) }
         if effectivelyMuted && !phone.callActive { return none }
+        if phone.away && !phone.callActive { Log.write("Unterwegs, phone not reached → permission left to the screen"); return none }
         await ackTask?.value
         ackTask = nil
         await pauseMediaIfPlaying()
@@ -723,6 +742,7 @@ final class AppController: ObservableObject {
                 voice.enqueue(pcm)
             }
             guard let rest = await voice.finish(beep: beep) else { return }
+            if phone.away { Log.write("phone: call ended while speaking (Unterwegs → not on the Mac)"); return }
             Log.write("phone: call ended while speaking → the rest on the Mac's speaker")
             await speakLocal(text, config: config, prefetched: rest, beep: beep)
             return
@@ -746,6 +766,8 @@ final class AppController: ObservableObject {
     }
 
     private func speakLocal(_ text: String, config: AppConfig, prefetched: Data?, beep: Bool) async {
+        // Unterwegs: the Mac stays silent; only a call voices anything.
+        if phone.away { Log.write("Unterwegs → not on the Mac's speaker"); return }
         let player = TTSPlayer(rate: config.speakingRate)
         do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
         await synthesize(text, config: config, prefetched: prefetched) { player.enqueue(pcmChunk: $0) }
@@ -917,6 +939,7 @@ final class AppController: ObservableObject {
             data = rest
             guard !data.isEmpty else { return }
         }
+        if phone.away { return }   // Unterwegs: never on the Mac's speaker
         let player = TTSPlayer(rate: rate)
         do { try player.start() } catch { return }
         player.enqueue(pcmChunk: data)
@@ -931,6 +954,7 @@ final class AppController: ObservableObject {
             voice.enqueue(PCMFrames.bytes(PCMFrames.int16(Tones.turnChime(sampleRate: Double(PhoneAudioFormat.ttsRate)))))
             if await voice.finish(beep: false) == nil { return }   // call ended → chime on the Mac
         }
+        if phone.away { return }   // Unterwegs: never on the Mac's speaker
         let player = TTSPlayer()
         do { try player.start() } catch { Log.write("chime start failed: \(error)"); return }
         player.scheduleChime(frequency: 523.25, seconds: 0.32, amplitude: 0.4, decay: 8)
@@ -953,10 +977,13 @@ final class AppController: ObservableObject {
                 return wav
             case .callEnded(let wav, let spoke):
                 if spoke { return wav }
+                if phone.away { Log.write("phone: call ended before a reply (Unterwegs → not on the Mac)"); return Data() }
                 Log.write("phone: call ended before a reply → listening on the Mac")
                 await speakLocal("", config: AppConfig.load(), prefetched: Data(), beep: true)
             }
         }
+        // Unterwegs: the Mac never listens (only a call does).
+        if phone.away { Log.write("Unterwegs → no listening on the Mac"); return Data() }
         hud.show()
         mic.onLevel = { [weak self] level in
             LiveStatus.push(level)

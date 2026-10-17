@@ -75,6 +75,8 @@ public static class AudioOut
             Log.Write("phone: call gone mid-playback → the rest on the speaker");
             pcm = rest;   // still at sampleRate
         }
+        // Unterwegs: the PC stays silent; only a call voices anything.
+        if (PhoneCall.Away) return;
         var format = new WaveFormat(sampleRate, 16, 1);
         var provider = new BufferedWaveProvider(format)
         {

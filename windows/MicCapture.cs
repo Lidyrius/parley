@@ -26,6 +26,12 @@ public sealed class MicCapture
             if (phone is not null) return phone;
             Log.Write("mic: call ended before any speech → local mic");
         }
+        // Unterwegs: the PC never listens (only a call does).
+        if (PhoneCall.Away)
+        {
+            Log.Write("Unterwegs → no listening on the PC");
+            return Array.Empty<byte>();
+        }
         var vad = new Vad();
         var samples = new List<short>(16000 * 30);
         var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
