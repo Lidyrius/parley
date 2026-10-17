@@ -46,6 +46,15 @@ struct SettingsView: View {
                             Label("Farbpalette", systemImage: "paintpalette.fill")
                         }
                     }
+                    NavigationLink {
+                        RevealPicker()
+                    } label: {
+                        LabeledContent {
+                            Text(Appearance.shared.lineReveal.name)
+                        } label: {
+                            Label("Diagramm-Aufbau", systemImage: "chart.xyaxis.line")
+                        }
+                    }
                 }
                 if model.pairing != nil {
                     Section {
@@ -148,5 +157,67 @@ private struct PalettePreview: View {
             .padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(pick(palette.card)))
         }
+    }
+}
+
+/// Einstellungen → Diagramm-Aufbau: the five ways a line chart builds up, each playing in a loop.
+struct RevealPicker: View {
+    private let appearance = Appearance.shared
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(LineReveal.allCases) { r in
+                    let picked = r == appearance.lineReveal
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) { appearance.lineReveal = r }
+                    } label: {
+                        HStack(spacing: 14) {
+                            RevealPreview(reveal: r)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(r.name).font(.headline).foregroundStyle(.primary)
+                                Text(r.note).font(.subheadline).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(picked ? Theme.claude : Color.secondary.opacity(0.4))
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(picked ? .isSelected : [])
+                }
+            } footer: {
+                Text("So bauen sich Liniendiagramme auf, wenn Parley im Anruf eine Folie zeigt.")
+            }
+        }
+        .navigationTitle("Diagramm-Aufbau")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// A small line chart replaying its build-up every few seconds.
+private struct RevealPreview: View {
+    let reveal: LineReveal
+    @State private var progress = 0.0
+
+    var body: some View {
+        LineChart(labels: [], values: [5, 11, 9, 20, 25, 35, 41], reveal: reveal, progress: progress, compact: true)
+            .frame(width: 96, height: 58)
+            .padding(4)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.stroke))
+            .accessibilityHidden(true)
+            .task {
+                while !Task.isCancelled {
+                    progress = 0
+                    try? await Task.sleep(for: .milliseconds(400))
+                    withAnimation(.easeInOut(duration: 1.8)) { progress = 1 }
+                    try? await Task.sleep(for: .seconds(3.6))
+                }
+            }
     }
 }

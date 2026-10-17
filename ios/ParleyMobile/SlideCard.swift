@@ -164,21 +164,8 @@ struct SlideCard: View {
                 }
             }
         case "line":
-            Chart(points) { p in
-                AreaMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))
-                    .foregroundStyle(LinearGradient(colors: [Theme.claude.opacity(0.35), Theme.claude.opacity(0.02)], startPoint: .top, endPoint: .bottom))
-                    .interpolationMethod(.catmullRom)
-                LineMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))
-                    .foregroundStyle(Theme.claude)
-                    .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .interpolationMethod(.catmullRom)
-                PointMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))
-                    .foregroundStyle(Theme.claude)
-                    .annotation(position: .top) {
-                        Text(Self.format(p.value) + unit).font(.caption2).foregroundStyle(.secondary).opacity(grow)
-                    }
-            }
-            .chartYScale(domain: 0...top)
+            LineChart(labels: points.map(\.label), values: points.map(\.value), unit: unit,
+                      reveal: Appearance.shared.lineReveal, progress: grow)
         default:
             Chart(points) { p in
                 BarMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))

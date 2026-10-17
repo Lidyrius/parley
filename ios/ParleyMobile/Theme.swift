@@ -38,6 +38,11 @@ final class Appearance {
     }
 
     var palette: Palette { Palette.all.first { $0.id == paletteID } ?? .claude }
+
+    /// How line charts build up on a slide.
+    var lineReveal = LineReveal(rawValue: UserDefaults.standard.string(forKey: "lineReveal") ?? "") ?? .draw {
+        didSet { UserDefaults.standard.set(lineReveal.rawValue, forKey: "lineReveal") }
+    }
 }
 
 /// A colour for light and for dark mode.

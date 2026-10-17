@@ -220,6 +220,18 @@ struct FrameTests {
         #expect(SlideCard.format(24) == "24")
     }
 
+    @Test func lineRevealsEndOnTheData() {
+        let v = [5.0, 11, 20, 41]
+        for r in LineReveal.allCases {
+            let end = LineChart.shown(v, reveal: r, progress: 1)
+            #expect(zip(end, v).allSatisfy { abs($0 - $1) < 0.001 }, "\(r) ends on the data")
+        }
+        #expect(LineChart.shown(v, reveal: .wave, progress: 0) == [0, 0, 0, 0])          // all on the baseline
+        #expect(Set(LineChart.shown(v, reveal: .unfold, progress: 0)).count == 1)       // flat at the mean
+        let mid = LineChart.shown(v, reveal: .wave, progress: 0.4)
+        #expect(mid[0] > mid[3])                                                         // the first rises first
+    }
+
     @Test func palettesKeepTheirStatesApart() {
         #expect(Palette.all.count == 10)
         #expect(Set(Palette.all.map(\.id)).count == Palette.all.count)
