@@ -14,5 +14,7 @@
 	<string>14.0</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Parley records your spoken reply after Claude Code finishes a turn.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Parley pauses your music while it speaks and opens new Claude Code sessions in Terminal.</string>
 </dict>
 </plist>

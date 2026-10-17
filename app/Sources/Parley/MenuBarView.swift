@@ -63,6 +63,18 @@ struct MenuBarView: View {
                     Text(up ? "iPhone: verbunden mit Relay" : "iPhone: Relay nicht erreichbar")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
+                if controller.phoneCall {
+                    Label("iPhone: Anruf aktiv", systemImage: "phone.fill")
+                        .font(.caption).foregroundStyle(.green)
+                }
+                if controller.phoneAway {
+                    Label("Unterwegs-Modus an", systemImage: "car.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Button("Push-Schlüssel wählen…") { controller.choosePushKey() }
+                if let key = controller.pushKeyId {
+                    Text("Push-Schlüssel: \(key)").font(.caption2).foregroundStyle(.secondary)
+                }
 
                 Divider()
                 Menu("Entwickler") {

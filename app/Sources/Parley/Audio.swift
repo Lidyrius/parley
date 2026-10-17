@@ -22,6 +22,39 @@ enum PCM {
     }
 }
 
+// The beep and the chime as samples — the Mac's TTSPlayer schedules them, the phone path sends
+// them down the call (PhoneVoice).
+enum Tones {
+    /// The "you can talk now" beep: a plain sine.
+    static func beep(sampleRate: Double, frequency: Double = 880, seconds: Double = 0.18,
+                     amplitude: Double = 0.3) -> [Float] {
+        let n = Int(sampleRate * seconds)
+        let twoPiF = 2.0 * Double.pi * frequency / sampleRate
+        return (0..<n).map { Float(amplitude * sin(Double($0) * twoPiF)) }
+    }
+
+    /// A "glass" chime: fundamental + a hint of octave under a bell envelope (soft attack,
+    /// exponential ring-out). The bright 3rd harmonic was dropped — it made it shrill.
+    static func chime(sampleRate sr: Double, frequency: Double, seconds: Double = 0.5,
+                      amplitude: Double = 0.5, decay: Double = 7.0) -> [Float] {
+        let n = Int(sr * seconds)
+        let w1 = 2.0 * Double.pi * frequency / sr
+        let w2 = 2.0 * Double.pi * frequency * 2.0 / sr
+        let norm = 1.0 / 1.15
+        return (0..<n).map { i in
+            let t = Double(i) / sr
+            let env = min(1.0, t / 0.014) * exp(-t * decay)
+            return Float(amplitude * env * (sin(Double(i) * w1) + 0.15 * sin(Double(i) * w2)) * norm)
+        }
+    }
+
+    /// The two-note chime that ends a turn without words (Mac: two scheduled chimes).
+    static func turnChime(sampleRate: Double) -> [Float] {
+        chime(sampleRate: sampleRate, frequency: 523.25, seconds: 0.32, amplitude: 0.4, decay: 8)
+            + chime(sampleRate: sampleRate, frequency: 783.99, seconds: 0.6, amplitude: 0.4, decay: 5.5)
+    }
+}
+
 final class TTSPlayer {
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
@@ -77,10 +110,7 @@ final class TTSPlayer {
     /// short buffers; .dataPlayedBack accounts for that.
     func scheduleBeep(frequency: Double = 880, seconds: Double = 0.18,
                       amplitude: Double = 0.3, completion: (() -> Void)? = nil) {
-        let n = Int(format.sampleRate * seconds)
-        var samples = [Float](repeating: 0, count: n)
-        let twoPiF = 2.0 * Double.pi * frequency / format.sampleRate
-        for i in 0..<n { samples[i] = Float(amplitude * sin(Double(i) * twoPiF)) }
+        let samples = Tones.beep(sampleRate: format.sampleRate, frequency: frequency, seconds: seconds, amplitude: amplitude)
         guard let buf = makeBuffer(samples) else { completion?(); return }
         node.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { _ in completion?() }
     }
@@ -90,21 +120,8 @@ final class TTSPlayer {
     func scheduleChime(frequency: Double, seconds: Double = 0.5,
                        amplitude: Double = 0.5, decay: Double = 7.0,
                        completion: (() -> Void)? = nil) {
-        let sr = format.sampleRate
-        let n = Int(sr * seconds)
-        var samples = [Float](repeating: 0, count: n)
-        let w1 = 2.0 * Double.pi * frequency / sr
-        let w2 = 2.0 * Double.pi * frequency * 2.0 / sr
-        // Gentle: mostly the fundamental with just a hint of octave; drop the bright 3rd
-        // harmonic that made it shrill. Slow, soft attack.
-        let norm = 1.0 / 1.15
-        for i in 0..<n {
-            let t = Double(i) / sr
-            let attack = min(1.0, t / 0.014)
-            let env = attack * exp(-t * decay)
-            let s = sin(Double(i) * w1) + 0.15 * sin(Double(i) * w2)
-            samples[i] = Float(amplitude * env * s * norm)
-        }
+        let samples = Tones.chime(sampleRate: format.sampleRate, frequency: frequency, seconds: seconds,
+                                  amplitude: amplitude, decay: decay)
         guard let buf = makeBuffer(samples) else { completion?(); return }
         node.scheduleBuffer(buf, completionHandler: { completion?() })
     }

@@ -7,6 +7,8 @@ import Foundation
 //                           different path, so never reused)
 //   resume/<slug>-<n>.pcm   3 variants of "Ich habe die Arbeit an X wieder aufgenommen…" —
 //                           opens the POST /resume voice dialog
+//   greet/greet-<n>.pcm     3 variants of "Ja, Sir, wie kann ich helfen?" — the answer to the
+//                           phone's wake word (not per project; rendered at launch)
 // Everything for a project is rendered in the background as soon as its label first shows
 // up (prerender). A missing announcement is simply skipped (never blocks a turn); a missing
 // resume line is synthesized live and cached.
@@ -21,6 +23,8 @@ actor ProjectClips {
     }
     private static func announceFile(_ slug: String) -> URL { root.appendingPathComponent("announce/\(slug).pcm") }
     private static func resumeFile(_ slug: String, _ n: Int) -> URL { root.appendingPathComponent("resume/\(slug)-\(n).pcm") }
+    private static func greetFile(_ n: Int) -> URL { root.appendingPathComponent("greet/greet-\(n).pcm") }
+    private var greeting = false
 
     private static func slug(_ s: String) -> String {
         let ok = s.lowercased().unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" }
@@ -53,6 +57,31 @@ actor ProjectClips {
         Self.write(pcm, to: Self.resumeFile(s, n))
         Task { [weak self] in await self?.prerender(label: label, config: config) }
         return pcm
+    }
+
+    /// A random cached wake greeting; if none is rendered yet, one is synthesized live (and
+    /// cached) and the rest render in the background. nil = no Google TTS.
+    func greetClip(config: AppConfig) async -> Data? {
+        let cached = (0..<3).compactMap { try? Data(contentsOf: Self.greetFile($0)) }
+        if let data = cached.randomElement() { return data }
+        guard config.useGoogle else { return nil }
+        let n = Int.random(in: 0..<3)
+        guard let pcm = await Self.synth(Self.greetPhrases(language: config.language)[n], config: config) else { return nil }
+        Self.write(pcm, to: Self.greetFile(n))
+        Task { [weak self] in await self?.prerenderGreetings(config: config) }
+        return pcm
+    }
+
+    /// Render the missing wake greetings.
+    func prerenderGreetings(config: AppConfig) async {
+        guard config.useGoogle, !greeting else { return }
+        greeting = true
+        defer { greeting = false }
+        let lines = Self.greetPhrases(language: config.language)
+        for (n, text) in lines.enumerated() where !FileManager.default.fileExists(atPath: Self.greetFile(n).path) {
+            guard let pcm = await Self.synth(text, config: config) else { continue }
+            Self.write(pcm, to: Self.greetFile(n))
+        }
     }
 
     /// Render whatever is missing for `label`: the announcement and the 3 resume lines.
@@ -90,6 +119,43 @@ actor ProjectClips {
     static func resumePhrases(name: String, language: String) -> [String] {
         (resumeTemplates[language] ?? resumeTemplates["Deutsch"]!).map { $0.replacingOccurrences(of: "{name}", with: name) }
     }
+
+    static func greetPhrases(language: String) -> [String] {
+        greetTemplates[language] ?? greetTemplates["Deutsch"]!
+    }
+
+    private static let greetTemplates: [String: [String]] = [
+        "Deutsch": [
+            "Ja, Sir, wie kann ich helfen?",
+            "Zu Diensten, Sir. Was darf ich für Sie tun?",
+            "Ich höre, Sir. Was steht an?",
+        ],
+        "English": [
+            "Yes, Sir, how can I help?",
+            "At your service, Sir. What can I do for you?",
+            "I'm listening, Sir. What's next?",
+        ],
+        "Français": [
+            "Oui, Monsieur, que puis-je faire pour vous ?",
+            "À votre service, Monsieur. Que dois-je faire ?",
+            "Je vous écoute, Monsieur. Quelle est la suite ?",
+        ],
+        "Español": [
+            "Sí, señor, ¿en qué puedo ayudarle?",
+            "A su servicio, señor. ¿Qué puedo hacer por usted?",
+            "Le escucho, señor. ¿Qué sigue?",
+        ],
+        "Italiano": [
+            "Sì, signore, come posso aiutarla?",
+            "Ai suoi ordini, signore. Cosa posso fare per lei?",
+            "La ascolto, signore. Qual è il prossimo passo?",
+        ],
+        "Nederlands": [
+            "Ja, meneer, waarmee kan ik helpen?",
+            "Tot uw dienst, meneer. Wat kan ik voor u doen?",
+            "Ik luister, meneer. Wat staat er op het programma?",
+        ],
+    ]
 
     private static let templates: [String: String] = [
         "Deutsch": "Update zu {name}",

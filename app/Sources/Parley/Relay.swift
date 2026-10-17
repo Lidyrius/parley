@@ -1,9 +1,10 @@
 import Foundation
 import Security
 
-// The iPhone connection (docs/IPHONE.md, relay protocol v1). Parley dials OUT to a small relay
-// on Cloudflare as the host of one room — no port opens on the Mac. It mirrors GET /sessions to
-// the phones in the room and takes a phone's `resume` down the POST /resume path.
+// The iPhone connection (docs/IPHONE.md, relay protocol v1 + v2). Parley dials OUT to a small
+// relay on Cloudflare as the host of one room — no port opens on the Mac. It mirrors GET /sessions
+// to the phones in the room, takes a phone's `resume` down the POST /resume path, and carries the
+// call: `call`/`wake`/`push`/`away` text frames in, `audio`/`ring` out, PCM audio as binary frames.
 
 // The relay settings in credentials.json. relayUrl empty = the feature is off.
 struct RelayConfig: Equatable {
@@ -108,14 +109,60 @@ enum RelayFrame {
         return head + (rest == "}" ? "" : ",") + rest
     }
 
-    // A phone's frame: `resume` takes the POST /resume path; `hello`, the relay's `pong` and
-    // unknown types are ignored (forward compatible).
-    static func dispatch(_ text: String, resume: (String) -> Void) {
-        struct Frame: Decodable { let t: String?; let id: String? }
-        guard let f = try? JSONDecoder().decode(Frame.self, from: Data(text.utf8)),
-              f.t == "resume", let id = f.id, !id.isEmpty else { return }
-        resume(id)
+    // A phone's frame as an event; `hello`, the relay's `pong`, malformed and unknown frames are
+    // nil (ignored — forward compatible).
+    static func parse(_ text: String) -> PhoneEvent? {
+        guard let f = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
+              let t = f["t"] as? String else { return nil }
+        switch t {
+        case "resume":
+            guard let id = f["id"] as? String, !id.isEmpty else { return nil }
+            return .resume(id)
+        case "call":
+            switch f["state"] as? String {
+            case "start": return .call(true)
+            case "end": return .call(false)
+            default: return nil
+            }
+        case "wake":
+            return .wake
+        case "push":
+            guard let token = f["token"] as? String,
+                  !token.isEmpty, token.count <= 200, token.allSatisfy(\.isHexDigit) else { return nil }
+            return .push(token: token.lowercased(), env: f["env"] as? String == "development" ? "development" : "production")
+        case "away":
+            guard let on = f["on"] as? Bool else { return nil }
+            return .away(on)
+        default:
+            return nil
+        }
     }
+
+    // Only `resume` (the stage-1 path; the rest goes through parse()).
+    static func dispatch(_ text: String, resume: (String) -> Void) {
+        if case .resume(let id)? = parse(text) { resume(id) }
+    }
+
+    // host → phone: what the host does with the call audio.
+    static func audio(_ state: PhoneAudioState) -> String { #"{"t":"audio","state":"\#(state.rawValue)"}"# }
+
+    // host → phone: an update wants the phone (sent alongside the VoIP push).
+    static func ring(label: String) -> String {
+        struct Wire: Encodable { let t = "ring"; let label: String }
+        return (try? JSONEncoder().encode(Wire(label: label))).flatMap { String(data: $0, encoding: .utf8) } ?? #"{"t":"ring"}"#
+    }
+
+    // Binary frames above this are dropped (the relay's own limit).
+    static let maxBinary = 64 * 1024
+}
+
+// A phone's text frame (protocol v2 adds everything but `resume`).
+enum PhoneEvent: Equatable, Sendable {
+    case resume(String)
+    case call(Bool)                           // true = the phone's call is connected, false = ended
+    case wake                                 // "Hey Parley" while the host was idle
+    case push(token: String, env: String)     // VoIP push token (hex), "production" | "development"
+    case away(Bool)                           // Unterwegs-Modus
 }
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never
@@ -136,17 +183,25 @@ struct RelaySync {
     mutating func reset() { last = nil }
 }
 
+// One message from the relay.
+enum RelayInbound: Sendable, Equatable {
+    case text(String)
+    case binary(Data)   // call audio
+}
+
 // The relay WebSocket, behind a seam so tests need no network.
 protocol RelaySocket: AnyObject, Sendable {
     func send(_ text: String, completion: @escaping @Sendable ((any Error)?) -> Void)
-    func receive(_ handler: @escaping @Sendable (Result<String?, any Error>) -> Void)   // nil = binary frame
+    func send(data: Data, completion: @escaping @Sendable ((any Error)?) -> Void)
+    func receive(_ handler: @escaping @Sendable (Result<RelayInbound, any Error>) -> Void)
     func close()
 }
 
 // The host's one connection to its room: reconnects with capped exponential backoff (1 s →
 // 30 s), pings every 25 s (the relay answers `pong` itself), checks the overview every 2 s and
-// sends it on change / every 10 s, and hands a phone's `resume` on. `onState` reports reachability.
-// ponytail: @unchecked Sendable — all state lives on `queue`; onState is set once before start().
+// sends it on change / every 10 s, and hands a phone's `resume` on — the other phone frames go to
+// `onEvent`, call audio to `onAudio`. `onState` reports reachability.
+// ponytail: @unchecked Sendable — all state lives on `queue`; the callbacks are set once before start().
 final class RelayClient: @unchecked Sendable {
     static let tickEvery: TimeInterval = 2
     static let pingEvery: TimeInterval = 25
@@ -157,6 +212,8 @@ final class RelayClient: @unchecked Sendable {
 
     let config: RelayConfig
     var onState: (@Sendable (Bool) -> Void)?   // true = connected; fired on the relay queue, on change
+    var onEvent: (@Sendable (PhoneEvent) -> Void)?   // call / wake / push / away, on the relay queue
+    var onAudio: (@Sendable (Data) -> Void)?         // a binary frame (the phone's mic), on the relay queue
 
     private let request: URLRequest
     private let sessions: @Sendable () -> String
@@ -207,6 +264,16 @@ final class RelayClient: @unchecked Sendable {
             self.timer = t
             self.open()
         }
+    }
+
+    // A text frame to the phones (dropped while the link is down).
+    func sendText(_ text: String) {
+        queue.async { self.send(text) }
+    }
+
+    // A binary frame (call audio) to the phones (dropped while the link is down).
+    func sendAudio(_ data: Data) {
+        queue.async { self.send(data: data) }
     }
 
     func stop() {
@@ -261,9 +328,18 @@ final class RelayClient: @unchecked Sendable {
             self.queue.async {
                 guard gen == self.generation else { return }
                 switch result {
-                case .success(let text):
+                case .success(let message):
                     self.lastInbound = self.now()
-                    if let text { RelayFrame.dispatch(text, resume: self.resume) }
+                    switch message {
+                    case .text(let text):
+                        switch RelayFrame.parse(text) {
+                        case .resume(let id)?: self.resume(id)
+                        case let event?: self.onEvent?(event)
+                        case nil: break
+                        }
+                    case .binary(let data):
+                        if !data.isEmpty, data.count <= RelayFrame.maxBinary { self.onAudio?(data) }
+                    }
                     self.receive(s, gen)
                 case .failure(let error):
                     self.fail(gen, error)
@@ -274,8 +350,16 @@ final class RelayClient: @unchecked Sendable {
 
     private func send(_ text: String) {
         guard let s = socket else { return }
-        let gen = generation
-        s.send(text) { [weak self] error in
+        s.send(text, completion: sent(generation))
+    }
+
+    private func send(data: Data) {
+        guard let s = socket else { return }
+        s.send(data: data, completion: sent(generation))
+    }
+
+    private func sent(_ gen: Int) -> @Sendable ((any Error)?) -> Void {
+        { [weak self] error in
             guard let self else { return }
             self.queue.async {
                 guard gen == self.generation else { return }
@@ -338,12 +422,17 @@ final class URLSessionRelaySocket: RelaySocket {
         task.send(.string(text), completionHandler: completion)
     }
 
-    func receive(_ handler: @escaping @Sendable (Result<String?, any Error>) -> Void) {
+    func send(data: Data, completion: @escaping @Sendable ((any Error)?) -> Void) {
+        task.send(.data(data), completionHandler: completion)
+    }
+
+    func receive(_ handler: @escaping @Sendable (Result<RelayInbound, any Error>) -> Void) {
         let task = self.task
         task.receive { result in
             switch result {
-            case .success(.string(let text)): handler(.success(text))
-            case .success: handler(.success(nil))   // binary: reserved for audio (stage 2)
+            case .success(.string(let text)): handler(.success(.text(text)))
+            case .success(.data(let data)): handler(.success(.binary(data)))
+            case .success: handler(.success(.binary(Data())))   // future message kinds: ignored
             case .failure(let error):
                 // A refused handshake (401 wrong secret, …) reads better as its status.
                 let status = (task.response as? HTTPURLResponse)?.statusCode ?? 101

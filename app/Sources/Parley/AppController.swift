@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct SessionInfo: Identifiable, Equatable {
     var id: String        // tmux_pane (or session_id fallback) — routing key
@@ -13,6 +14,9 @@ struct SessionInfo: Identifiable, Equatable {
 // to the menu-bar UI. The per-turn sequence is:
 //   pause media -> speak -> beep -> record (VAD) -> transcribe -> tmux inject ->
 //   resume media -> complete (drain next).
+// While the iPhone has a call connected (docs/IPHONE.md, protocol v2) every step runs through
+// the phone instead — voice out as paced PCM frames, the reply from the phone's mic — chosen
+// per step, so a call that ends mid-turn hands the rest back to the Mac's speaker and mic.
 @MainActor
 final class AppController: ObservableObject {
     @Published var sessions: [SessionInfo] = []
@@ -20,6 +24,9 @@ final class AppController: ObservableObject {
     @Published var lastError: String?
     @Published var muted = false   // manual mute toggle (menu)
     @Published var relayConnected: Bool?   // iPhone relay: nil = not configured, else reachable
+    @Published var phoneCall = false       // the iPhone's call is connected: all audio goes through it
+    @Published var phoneAway = false       // Unterwegs-Modus: updates ring the phone
+    @Published var pushKeyId: String?      // APNs key chosen ("Push-Schlüssel wählen…")
 
     // Muted when the user toggled it OR the Mac is in a Focus / Do-Not-Disturb mode.
     var effectivelyMuted: Bool { muted || FocusStatus.doNotDisturbActive() }
@@ -37,6 +44,10 @@ final class AppController: ObservableObject {
     private var onboardingPlayer: TTSPlayer?
     private var relay: RelayClient?
     private var relayGen = 0   // drops state reports of a replaced relay client
+    let phone = PhoneHub()
+    private let apns = APNsClient()
+    private var audioWork = 0  // queue items + ack clips in flight; 0 → the phone hears `audio idle`
+    static let ringTimeout: TimeInterval = 45
 
     func start() {
         guard !started else { return }   // idempotent: launch + menu .task may both call
@@ -72,11 +83,38 @@ final class AppController: ObservableObject {
         // which the hook feeds back into the Claude session (terminal-agnostic).
         server.replyProvider = { [weak self] turn, done in
             Task { @MainActor in
-                done(await self?.runTurn(turn) ?? TurnReply(transcript: "", park: false))
+                self?.beginAudioWork()
+                let reply = await self?.runTurn(turn) ?? TurnReply(transcript: "", park: false)
+                self?.endAudioWork()
+                done(reply)
             }
         }
+        let server = self.server
+        phone.onWake = { server.wakeFromPhone() }
+        phone.onChange = { [weak self] in Task { @MainActor in self?.syncPhone() } }
+        syncPhone()
+        let push = APNsCredentials.load()
+        pushKeyId = push.isComplete ? push.keyId : nil
+        Task { await ProjectClips.shared.prerenderGreetings(config: AppConfig.load()) }
         server.start()
         startRelay()
+    }
+
+    private func syncPhone() {
+        phoneCall = phone.callActive
+        phoneAway = phone.away
+    }
+
+    // `audio` state for the phone: speaking while any queue item or ack clip runs (the phone
+    // and listener refine it), idle once all are done — the phone listens for its wake word then.
+    private func beginAudioWork() {
+        audioWork += 1
+        phone.setAudioState(.speaking)
+    }
+
+    private func endAudioWork() {
+        audioWork = max(0, audioWork - 1)
+        if audioWork == 0 { phone.setAudioState(.idle) }
     }
 
     // MARK: - /ready greeting
@@ -100,7 +138,12 @@ final class AppController: ObservableObject {
         let key = routeKey(turn.tmux_pane, turn.session_id)
         LiveStatus.begin(session: turn.session_id)
         defer { LiveStatus.set(phase: "idle") }
-        if turn.event == ControlServer.resumeEvent { return await runResume(turn) }
+        switch turn.event {
+        case ControlServer.resumeEvent: return await runResume(turn)
+        case ControlServer.wakeEvent: return await runWake()
+        case ControlServer.permissionEvent: return await runPermission(turn)
+        default: break
+        }
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
         let config = AppConfig.load()
         resumeGen += 1   // a new turn began → cancel any pending debounced media resume
@@ -108,7 +151,8 @@ final class AppController: ObservableObject {
 
         // Muted (manual toggle or macOS Do-Not-Disturb) → stay silent: no TTS, no mic, no
         // pill. Return "" so the hook ends the turn cleanly; the loop resumes when unmuted.
-        if effectivelyMuted {
+        // Muting is about the Mac: a connected (or ringing) phone call still carries the turn.
+        func mutedTurn() -> TurnReply {
             Log.write("muted (manual=\(muted) dnd=\(FocusStatus.doNotDisturbActive())) → skipping turn")
             setStatus(key, "muted")
             // Stumm: nicht sprechen, aber die Zusammenfassung als Notification zeigen, damit
@@ -116,6 +160,8 @@ final class AppController: ObservableObject {
             Notifier.notify(title: "Parley · \(turn.spokenLabel)", body: turn.speak)
             return TurnReply(transcript: "", park: false)
         }
+        let ringing = shouldRing
+        if effectivelyMuted && !phone.callActive && !ringing { return mutedTurn() }
 
         // Kick off Google TTS synthesis IMMEDIATELY — it runs in parallel with everything
         // below. Its observed duration feeds the TTSTiming prediction model.
@@ -129,6 +175,11 @@ final class AppController: ObservableObject {
             TTSTiming.record(chars: turn.speak.count, seconds: Date().timeIntervalSince(synthStart))
             return GoogleTTS.pcm(from: data)
         } : nil
+
+        // Unterwegs-Modus: ring the phone (VoIP push + `ring`) and wait ≤ 45 s for the call; the
+        // synthesis above keeps running meanwhile. No answer → the Mac's speaker as always.
+        if ringing { _ = await ringPhone(label: turn.spokenLabel) }
+        if effectivelyMuted && !phone.callActive { prefetch?.cancel(); return mutedTurn() }
 
         // Wait out the previous turn's background ack clip so this turn's audio never
         // overlaps it (only ever blocks if Claude replied faster than the ack played).
@@ -237,10 +288,7 @@ final class AppController: ObservableObject {
         // next turn awaits this task before it speaks, so audio never overlaps.
         // ORDER inside the task: hi-fi restored → ack clip → THEN media resume, so the
         // video never plays over the acknowledgment.
-        ackTask = Task { [weak self] in
-            await self?.playAck(intent: intent, hasText: !text.isEmpty, config: config)
-            self?.scheduleResume()   // debounced; resumes only after the whole cue is idle
-        }
+        startAck(intent: intent, hasText: !text.isEmpty, config: config)
 
         // "Stop heißt Stop": a STOP reply is NOT fed back. The STOP ack clip still plays
         // (background) as the sign-off; returning "" makes the hook exit cleanly.
@@ -275,7 +323,9 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
         resumeGen += 1
         Log.write("resume dialog start project=\(turn.project)")
-        if effectivelyMuted {
+        let ringing = shouldRing
+        if ringing { _ = await ringPhone(label: turn.spokenLabel) }
+        if effectivelyMuted && !phone.callActive {
             Log.write("muted → resuming without dialog")
             return TurnReply(transcript: "", park: false)
         }
@@ -294,11 +344,148 @@ final class AppController: ObservableObject {
         let text = await transcribe(wav, config: config)
         Log.write("resume dialog done chars=\(text.count)")
 
-        ackTask = Task { [weak self] in
-            await self?.playAck(intent: .other, hasText: !text.isEmpty, config: config)
-            self?.scheduleResume()
-        }
+        startAck(intent: .other, hasText: !text.isEmpty, config: config)
         return TurnReply(transcript: text, park: false)
+    }
+
+    // The acknowledgment in the BACKGROUND, then the media resume (debounced; only once the
+    // whole cue is idle). The next queue item awaits it, so audio never overlaps.
+    private func startAck(intent: Intent, hasText: Bool, config: AppConfig) {
+        beginAudioWork()
+        ackTask = Task { [weak self] in
+            await self?.playAck(intent: intent, hasText: hasText, config: config)
+            self?.scheduleResume()
+            self?.endAudioWork()
+        }
+    }
+
+    // MARK: - iPhone: wake word, ringing, permission questions (docs/IPHONE.md, protocol v2)
+
+    // Ring only in Unterwegs-Modus with no call yet, and when the phone can be reached at all
+    // (a VoIP push, or the relay for a phone in the foreground).
+    private var shouldRing: Bool {
+        phone.away && !phone.callActive && ((apns.configured && phone.pushTarget != nil) || relayConnected == true)
+    }
+
+    // VoIP push + `ring`, then wait ≤ 45 s for `call start`. true = the call is connected.
+    private func ringPhone(label: String) async -> Bool {
+        Log.write("phone: ringing for \(label) (Unterwegs-Modus)")
+        phone.ring(label: label)
+        if let target = phone.pushTarget, apns.configured {
+            let apns = self.apns
+            Task.detached { await apns.push(token: target.token, env: target.env, label: label) }
+        }
+        let answered = await phone.waitForCall(timeout: Self.ringTimeout)
+        Log.write(answered ? "phone: call answered — voicing through the phone" : "phone: no answer in 45 s → the Mac's speaker")
+        return answered
+    }
+
+    // "Hey Parley" during a call: greeting → listen → route the utterance to a running session
+    // or the Zentrale → confirm. Nothing said → nothing happens.
+    private func runWake() async -> TurnReply {
+        let none = TurnReply(transcript: "", park: false)
+        guard phone.callActive else { Log.write("wake: call gone — skipped"); return none }
+        let config = AppConfig.load()
+        await ackTask?.value
+        ackTask = nil
+        Log.write("wake: greeting")
+        let clip = await ProjectClips.shared.greetClip(config: config)
+        let line = ProjectClips.greetPhrases(language: config.language)[0]
+        await speakAndBeep(line, config: config, prefetched: clip, beep: true)
+        LiveStatus.set(phase: "listening")
+        let wav = await record()
+        LiveStatus.set(phase: "transcribing")
+        let text = await transcribe(wav, config: config)
+        guard !text.isEmpty else { Log.write("wake: nothing said"); return none }
+
+        let target = await WakeRouter.route(text, sessions: server.routeTargets(), apiKey: config.groqKey) { req in
+            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+                  (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return data
+        }
+        let confirmation: String
+        if let id = target.id {
+            server.deliverRouted(id: id, instruction: text)
+            confirmation = "Verstanden, ich gebe das an \(target.label) weiter."
+        } else {
+            confirmation = deliverToZentrale(text)
+                ? "Verstanden. Ich starte die Zentrale und gebe es weiter."
+                : "Verstanden, ich gebe das an die Zentrale weiter."
+        }
+        Log.write("wake: \"\(text.prefix(80))\" → \(target.label)")
+        await speakLine(confirmation, config: config)
+        return none
+    }
+
+    // The Zentrale's folder (created from the template when missing), then POST /dispatch's
+    // path: delivered if it runs, else pending + a session started. true = started now.
+    private func deliverToZentrale(_ text: String) -> Bool {
+        let z = ZentraleSettings.load()
+        do {
+            if try Zentrale.ensure(z, template: Zentrale.templateDir()) { Log.write("zentrale: created \(z.zentraleDir)") }
+        } catch {
+            Log.write("zentrale: could not create \(z.zentraleDir): \(error.localizedDescription)")
+        }
+        return server.dispatch(cwd: z.zentraleDir, instruction: text, start: true).started
+    }
+
+    // POST /permission: "<Projekt> möchte … — erlauben?", listen; the server decides from the
+    // transcript ("" → ask: the normal on-screen prompt).
+    private func runPermission(_ turn: TurnPayload) async -> TurnReply {
+        let none = TurnReply(transcript: "", park: false)
+        let config = AppConfig.load()
+        resumeGen += 1
+        let ringing = shouldRing
+        if effectivelyMuted && !phone.callActive && !ringing { Log.write("muted → permission left to the screen"); return none }
+        if ringing { _ = await ringPhone(label: turn.spokenLabel) }
+        if effectivelyMuted && !phone.callActive { return none }
+        await ackTask?.value
+        ackTask = nil
+        await pauseMediaIfPlaying()
+        Log.write("permission: asking \"\(turn.speak)\"")
+        await speakAndBeep(turn.speak, config: config, beep: true)
+        LiveStatus.set(phase: "listening")
+        let wav = await record()
+        LiveStatus.set(phase: "transcribing")
+        let text = await transcribe(wav, config: config)
+        let decision = PermissionPrompt.decide(text)
+        startAck(intent: decision == .allow ? .cont : (decision == .deny ? .stop : .other),
+                 hasText: decision != .ask, config: config)
+        return TurnReply(transcript: text, park: false)
+    }
+
+    // "Push-Schlüssel wählen…": the APNs auth key (AuthKey_<KEYID>.p8) → credentials.json.
+    func choosePushKey() {
+        let panel = NSOpenPanel()
+        panel.title = "APNs-Schlüssel wählen (AuthKey_<KEYID>.p8)"
+        panel.allowedContentTypes = [UTType(filenameExtension: "p8") ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let keyId = APNs.keyId(fileName: url.lastPathComponent) else {
+            alert("Kein APNs-Schlüssel", "Der Dateiname muss AuthKey_<KEYID>.p8 sein — so lädt Apple den Schlüssel herunter.")
+            return
+        }
+        guard let pem = try? String(contentsOf: url, encoding: .utf8), (try? APNs.privateKey(pem: pem)) != nil else {
+            alert("Schlüssel nicht lesbar", "\(url.lastPathComponent) enthält keinen gültigen P-256-Schlüssel.")
+            return
+        }
+        let team = Keychain.get(.apnsTeamId) ?? ""
+        Keychain.set(keyId, for: .apnsKeyId)
+        Keychain.set(team.isEmpty ? APNsCredentials.defaultTeam : team, for: .apnsTeamId)
+        Keychain.set(pem, for: .apnsKeyP8)
+        pushKeyId = keyId
+        Log.write("apns: push key \(keyId) stored")
+    }
+
+    private func alert(_ title: String, _ text: String) {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        a.runModal()
     }
 
     // Fuzzy-match a spoken project name to a resumable session (either contains the other).
@@ -316,6 +503,7 @@ final class AppController: ObservableObject {
     // Pause anything playing and remember it for the deferred resume; 0.4s beat if we
     // actually paused something. osascript/perl are blocking → off the main actor.
     private func pauseMediaIfPlaying() async {
+        guard !phone.callActive else { return }   // the Mac's media doesn't compete with a phone call
         let newly = await Task.detached { MediaControl.shared.pausePlaying() }.value
         guard !newly.isEmpty else { return }
         for t in newly where !pendingMediaResume.contains(t) { pendingMediaResume.append(t) }
@@ -354,6 +542,7 @@ final class AppController: ObservableObject {
     // hi-fi A2DP — audio played/resumed during the switch is swallowed. Wait until the
     // output device is back at a hi-fi rate (instant on speakers; 3s cap).
     private func waitForHiFiOutput() async {
+        guard !phone.callActive else { return }   // the voice goes to the phone
         let start = Date()
         while let sr = AudioDevices.defaultOutputSampleRate(), sr < 40_000,
               Date().timeIntervalSince(start) < 3.0 {
@@ -380,19 +569,39 @@ final class AppController: ObservableObject {
     // mic engine starts. A still-running (or merely stopped-but-alive) output engine
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
     // turn + explicit release + a short settle avoids that device contention.
+    // During a call the line goes to the phone; if the call ends first, the part not yet heard
+    // (and the beep) plays on the Mac.
     private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil, beep: Bool = true) async {
-        let player = TTSPlayer(rate: config.speakingRate)
-        do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
+        if phone.callActive {
+            let voice = PhoneVoice(link: phone, rate: config.speakingRate)
+            await synthesize(text, config: config, prefetched: prefetched) { voice.enqueue($0) }
+            guard let rest = await voice.finish(beep: beep) else { return }
+            Log.write("phone: call ended while speaking → the rest on the Mac's speaker")
+            await speakLocal(text, config: config, prefetched: rest, beep: beep)
+            return
+        }
+        await speakLocal(text, config: config, prefetched: prefetched, beep: beep)
+    }
+
+    // The line's 24 kHz PCM into `sink`: the prefetched synthesis, else Google (inline retry),
+    // else ElevenLabs (streamed).
+    private func synthesize(_ text: String, config: AppConfig, prefetched: Data?, into sink: (Data) -> Void) async {
         if let pcm = prefetched {
-            player.enqueue(pcmChunk: pcm)
+            sink(pcm)
             Log.write("google tts prefetched (\(pcm.count) bytes)")
         } else if config.useGoogle {
-            await synthGoogle(text, config: config, into: player)   // prefetch failed → inline retry
+            await synthGoogle(text, config: config, into: sink)   // prefetch failed → inline retry
         } else if config.ttsReady {
-            await synthElevenLabs(text, config: config, into: player)
+            await synthElevenLabs(text, config: config, into: sink)
         } else {
             NSLog("Parley: TTS not configured")
         }
+    }
+
+    private func speakLocal(_ text: String, config: AppConfig, prefetched: Data?, beep: Bool) async {
+        let player = TTSPlayer(rate: config.speakingRate)
+        do { try player.start() } catch { Log.write("tts engine start failed: \(error)") }
+        await synthesize(text, config: config, prefetched: prefetched) { player.enqueue(pcmChunk: $0) }
         // Audible "you can talk now" beep after the speech — but ONLY on listen turns.
         // A speak-end turn plays a silent 0.02s finish marker instead (no cue: nobody is
         // being asked to talk). Beeping BEFORE the mic starts is fine because the prepared
@@ -409,7 +618,7 @@ final class AppController: ObservableObject {
     }
 
     // Google Cloud TTS (Chirp3 HD): one-shot synthesize → PCM → enqueue.
-    private func synthGoogle(_ text: String, config: AppConfig, into player: TTSPlayer) async {
+    private func synthGoogle(_ text: String, config: AppConfig, into sink: (Data) -> Void) async {
         let req = GoogleTTS.request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
@@ -421,7 +630,7 @@ final class AppController: ObservableObject {
                                 body: code == 429 ? "Google-Kontingent erschöpft." : "Sprachausgabe fehlgeschlagen (HTTP \(code)).")
                 return
             }
-            player.enqueue(pcmChunk: pcm)
+            sink(pcm)
             Log.write("google tts ok (\(pcm.count) bytes, \(config.googleVoice))")
         } catch {
             Log.write("google tts error: \(error.localizedDescription)")
@@ -429,7 +638,7 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func synthElevenLabs(_ text: String, config: AppConfig, into player: TTSPlayer) async {
+    private func synthElevenLabs(_ text: String, config: AppConfig, into sink: (Data) -> Void) async {
         let req = ElevenLabs.streamRequest(
             text: text, config: .init(apiKey: config.elevenLabsKey, voiceID: config.voiceID))
         do {
@@ -438,9 +647,9 @@ final class AppController: ObservableObject {
             var chunk = Data()
             for try await b in bytes {
                 chunk.append(b)
-                if chunk.count >= 4096 { player.enqueue(pcmChunk: chunk); chunk.removeAll(keepingCapacity: true) }
+                if chunk.count >= 4096 { sink(chunk); chunk.removeAll(keepingCapacity: true) }
             }
-            if !chunk.isEmpty { player.enqueue(pcmChunk: chunk) }
+            if !chunk.isEmpty { sink(chunk) }
             Log.write("elevenlabs stream complete")
         } catch {
             Log.write("tts error: \(error.localizedDescription)")
@@ -525,6 +734,15 @@ final class AppController: ObservableObject {
     }
 
     private func playClip(_ data: Data, rate: Double = 1.0) async {
+        var data = data
+        if phone.callActive {
+            let voice = PhoneVoice(link: phone, rate: rate)
+            voice.enqueue(data)
+            guard let rest = await voice.finish(beep: false) else { return }
+            Log.write("phone: call ended during a clip → the rest on the Mac's speaker")
+            data = rest
+            guard !data.isEmpty else { return }
+        }
         let player = TTSPlayer(rate: rate)
         do { try player.start() } catch { return }
         player.enqueue(pcmChunk: data)
@@ -534,6 +752,11 @@ final class AppController: ObservableObject {
     }
 
     private func playChime() async {
+        if phone.callActive {
+            let voice = PhoneVoice(link: phone, rate: 1)
+            voice.enqueue(PCMFrames.bytes(PCMFrames.int16(Tones.turnChime(sampleRate: Double(PhoneAudioFormat.ttsRate)))))
+            if await voice.finish(beep: false) == nil { return }   // call ended → chime on the Mac
+        }
         let player = TTSPlayer()
         do { try player.start() } catch { Log.write("chime start failed: \(error)"); return }
         player.scheduleChime(frequency: 523.25, seconds: 0.32, amplitude: 0.4, decay: 8)
@@ -543,7 +766,23 @@ final class AppController: ObservableObject {
         player.stop()
     }
 
+    // During a call the reply comes from the phone's mic. A call that ends before anything was
+    // said hands the listening to the Mac (beep first, so the user knows); a started reply is kept.
     private func record() async -> Data {
+        if phone.callActive {
+            hud.show()
+            let hud = self.hud
+            let outcome = await PhoneListener(link: phone).record { level in Task { @MainActor in hud.push(level) } }
+            hud.finish()
+            switch outcome {
+            case .finished(let wav):
+                return wav
+            case .callEnded(let wav, let spoke):
+                if spoke { return wav }
+                Log.write("phone: call ended before a reply → listening on the Mac")
+                await speakLocal("", config: AppConfig.load(), prefetched: Data(), beep: true)
+            }
+        }
         hud.show()
         mic.onLevel = { [weak self] level in
             LiveStatus.push(level)
@@ -616,7 +855,12 @@ final class AppController: ObservableObject {
                                        resume: { server.resumeFromRelay(id: $0) }) else { return }
         relayGen += 1
         let gen = relayGen
+        let phone = self.phone
+        client.onEvent = { phone.handle($0) }
+        client.onAudio = { phone.audioIn($0) }
+        phone.attach(text: { [weak client] in client?.sendText($0) }, audio: { [weak client] in client?.sendAudio($0) })
         client.onState = { [weak self] up in
+            if !up { phone.handle(.call(false)) }   // no relay, no call audio
             Task { @MainActor in
                 guard let self, self.relayGen == gen else { return }
                 self.relayConnected = up
@@ -631,6 +875,7 @@ final class AppController: ObservableObject {
         relay?.stop()
         relay = nil
         relayConnected = nil
+        phone.detach()
     }
 
     private func showRelayHint() {

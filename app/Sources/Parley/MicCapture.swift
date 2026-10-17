@@ -12,14 +12,12 @@ final class MicCapture: @unchecked Sendable {
     // Attempt 1 uses it; the AVAudioEngine path remains the fallback (attempts 2+).
     private let auhal = AUHALInput()
     private var usingAUHAL = false
-    private var vad = SilenceVAD(trailingSilence: 1.8)
-    private var samples: [Int16] = []
-    private let targetRate = 16000.0
+    private var recorder = UtteranceRecorder()   // samples + VAD (shared with the phone's call audio)
+    private let targetRate = UtteranceRecorder.sampleRate
     private var onFinished: ((Data) -> Void)?
     private var converter: AVAudioConverter?
     private var targetFormat: AVAudioFormat?
     private var finished = false
-    private var totalDuration = 0.0
     private var maxTimer: DispatchWorkItem?
     private var buffersSeen = 0
     private var maxDBSeen: Float = -120
@@ -32,11 +30,9 @@ final class MicCapture: @unchecked Sendable {
     // Fired once when the FIRST buffer arrives — the mic is provably hot. The caller plays
     // the "you can talk now" beep here, so nothing said after the beep is ever lost.
     var onStarted: (() -> Void)?
-    // Ignore the VAD for the first moments: the ready-beep (played while capturing) must
-    // not arm it. Samples are still recorded during the grace window.
-    private let vadGraceSeconds = 0.5
+    // The VAD grace window (the beep must not arm it) and the no-speech timeout live in
+    // UtteranceRecorder.
 
-    private let noSpeechTimeout = 8.0
     private let maxListenSeconds = 90.0
 
     /// Do the expensive AUHAL setup ahead of time (app launch / after each recording),
@@ -54,9 +50,7 @@ final class MicCapture: @unchecked Sendable {
             guard let self else { return }
             self.finished = false
             self.onFinished = onFinished
-            self.vad.reset()
-            self.samples.removeAll(keepingCapacity: true)
-            self.totalDuration = 0
+            self.recorder.reset()
             self.buffersSeen = 0
             self.maxDBSeen = -120
             self.endReason = "unknown"
@@ -180,15 +174,7 @@ final class MicCapture: @unchecked Sendable {
         guard err == nil, let ch = out.int16ChannelData else { return }
         let n = Int(out.frameLength)
         guard n > 0 else { return }
-        var floats = [Float](repeating: 0, count: n)
-        for i in 0..<n {
-            let s = ch[0][i]
-            samples.append(s)
-            floats[i] = Float(s) / 32768.0
-        }
-        let db = Level.dB(Level.rms(floats))
-        let duration = Double(n) / targetRate
-        totalDuration += duration
+        let (db, step) = recorder.feed(UnsafeBufferPointer(start: ch[0], count: n))
         buffersSeen += 1
         if buffersSeen == 1 { onStarted?() }
         if db > maxDBSeen { maxDBSeen = db }
@@ -196,18 +182,11 @@ final class MicCapture: @unchecked Sendable {
         onLevel?(max(0, min(1, (db + 55) / 45)))
         logCounter += 1
         if logCounter % 20 == 0 {
-            Log.write("mic: db=\(Int(db)) armed=\(vad.started) total=\(String(format: "%.1f", totalDuration))s buffers=\(buffersSeen)")
+            Log.write("mic: db=\(Int(db)) armed=\(recorder.heardSpeech) total=\(String(format: "%.1f", recorder.duration))s buffers=\(buffersSeen)")
         }
 
-        if totalDuration < vadGraceSeconds { return }   // grace: don't let the beep arm the VAD
-        let decision = vad.process(rmsDB: db, duration: duration)
-        if decision == .waiting && totalDuration >= noSpeechTimeout {
-            endReason = "no-speech"
-            q.async { [weak self] in self?.finish() }
-            return
-        }
-        if decision == .ended {
-            endReason = "vad-silence"
+        if case .ended(let reason) = step {
+            endReason = reason
             q.async { [weak self] in self?.finish() }
         }
     }
@@ -232,11 +211,10 @@ final class MicCapture: @unchecked Sendable {
             guard let self, !self.auhal.prepared else { return }
             _ = self.auhal.prepare()
         }
-        let count = samples.count
+        let count = recorder.samples.count
         writeDiagnostics(samples: count)
         Log.write("mic: finished reason=\(endReason) buffers=\(buffersSeen) samples=\(count) maxDB=\(Int(maxDBSeen))")
-        // VAD never heard speech → send nothing; Whisper turns pure silence into "Thank you.".
-        let wav = WAV.encode(int16: endReason == "no-speech" ? [] : samples)
+        let wav = recorder.wav(endReason: endReason)
         let cb = onFinished
         onFinished = nil
         cb?(wav)
@@ -280,7 +258,7 @@ final class MicCapture: @unchecked Sendable {
 
     private func writeDiagnostics(samples: Int) {
         let json = """
-        {"auth":"\(authString())","buffers":\(buffersSeen),"maxDB":\(Int(maxDBSeen)),"samples":\(samples),"seconds":\(String(format: "%.1f", totalDuration)),"endReason":"\(endReason)"}
+        {"auth":"\(authString())","buffers":\(buffersSeen),"maxDB":\(Int(maxDBSeen)),"samples":\(samples),"seconds":\(String(format: "%.1f", recorder.duration)),"endReason":"\(endReason)"}
         """
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Parley", isDirectory: true)

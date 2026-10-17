@@ -92,6 +92,14 @@ struct RateLimit: Codable, Equatable {
 // POST /resume — wake a parked session by its session_id (as listed by GET /sessions).
 struct ResumePayload: Codable, Equatable { var id: String }
 
+// POST /dispatch — hand a task to the session in a folder (the Zentrale starts projects this way).
+// start: launch a session there when none is alive (default true).
+struct DispatchPayload: Codable, Equatable {
+    var cwd: String
+    var instruction: String?
+    var start: Bool?
+}
+
 struct ReadyPayload: Codable, Equatable {
     var event: String
     var session_id: String?
@@ -115,5 +123,8 @@ enum Contract {
     }
     static func decodeResume(_ body: Data) -> ResumePayload? {
         try? JSONDecoder().decode(ResumePayload.self, from: body)
+    }
+    static func decodeDispatch(_ body: Data) -> DispatchPayload? {
+        try? JSONDecoder().decode(DispatchPayload.self, from: body)
     }
 }

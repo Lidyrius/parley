@@ -13,6 +13,7 @@ final class SessionRegistry {
         var id: String                 // the agent's session_id
         var label = ""                 // spoken label (.parley.json) or the project
         var project = ""               // cwd basename
+        var cwd = ""                   // its folder, normalized (Zentrale.normalize) — dispatch + routing
         var firstSeen: Date
         var presenceAt: Date?          // last /presence (nil = never sent, e.g. Codex)
         var presenceState = "idle"     // the mod's last state: working | background | idle
@@ -67,9 +68,10 @@ final class SessionRegistry {
     // to submit as a prompt in its session.
     @discardableResult
     func presence(id: String, label: String, project: String, state: String,
-                  usage: PresenceUsage? = nil, tasks: [BackgroundTask]? = nil, host: String? = nil) -> String? {
+                  usage: PresenceUsage? = nil, tasks: [BackgroundTask]? = nil, host: String? = nil,
+                  cwd: String = "") -> String? {
         var delivered: String?
-        update(id, label: label, project: project) { e, t in
+        update(id, label: label, project: project, cwd: cwd) { e, t in
             e.presenceAt = t
             e.presenceState = state
             e.tasks = tasks ?? []
@@ -90,8 +92,8 @@ final class SessionRegistry {
     }
 
     // A /turn arrived; it waits in the queue until it's this session's turn to speak.
-    func queued(id: String, label: String, project: String) {
-        update(id, label: label, project: project) { e, t in
+    func queued(id: String, label: String, project: String, cwd: String = "") {
+        update(id, label: label, project: project, cwd: cwd) { e, t in
             e.hookAt = t
             e.queued = true
             e.waitUntil = nil
@@ -143,6 +145,18 @@ final class SessionRegistry {
         }
     }
 
+    // Another voice dialog (permission question, wake) ended, or one was dropped unvoiced.
+    func dialogFinished(id: String) {
+        if activeId == id { activeId = nil }
+        update(id) { e, _ in e.queued = false }
+    }
+
+    // An instruction waiting for the session's folder was handed to it just now (as the
+    // reply to its /presence) → it is working on it.
+    func handedOver(id: String) {
+        update(id) { e, t in Self.inject(&e, t) }
+    }
+
     // A resume instruction was handed to the parked hook (its next /wake poll injects it).
     func wakeQueued(id: String) {
         update(id) { e, t in e.parked = false; Self.inject(&e, t) }
@@ -156,8 +170,8 @@ final class SessionRegistry {
     }
 
     // A parked hook polled /wake. `resumed` = it was handed an instruction and goes on working.
-    func wakePoll(id: String, label: String, project: String, resumed: Bool) {
-        update(id, label: label, project: project) { e, t in
+    func wakePoll(id: String, label: String, project: String, resumed: Bool, cwd: String = "") {
+        update(id, label: label, project: project, cwd: cwd) { e, t in
             e.hookAt = t
             e.wakeAt = t
             e.parked = !resumed
@@ -195,6 +209,41 @@ final class SessionRegistry {
     func parkedHookAlive(_ id: String) -> Bool {
         guard let e = entries[id], e.parked, let w = e.wakeAt else { return false }
         return now().timeIntervalSince(w) < Self.parkTTL
+    }
+
+    // Parley knows the session (voice mode on): seen and not stopped. /permission asks the
+    // others on screen.
+    func knows(_ id: String) -> Bool {
+        refresh()
+        return entries[id].map { $0.state != "stopped" } ?? false
+    }
+
+    func label(of id: String) -> String? { entries[id]?.label }
+    func cwd(of id: String) -> String? { entries[id]?.cwd }
+
+    // An instruction can be handed to the session now: its parked hook polls /wake, or the mod
+    // reports presence (and takes it with its next /presence).
+    func reachable(_ id: String) -> Bool {
+        refresh()
+        guard let e = entries[id], e.state != "stopped" else { return false }
+        return parkedHookAlive(id) || e.presenceAt != nil
+    }
+
+    // Running sessions a wake utterance can be routed to, by label.
+    func routeTargets() -> [RouteTarget] {
+        refresh()
+        return entries.values.filter { $0.state != "stopped" && !$0.label.isEmpty }
+            .sorted { $0.label.caseInsensitiveCompare($1.label) == .orderedAscending }
+            .map { RouteTarget(id: $0.id, label: $0.label) }
+    }
+
+    // A live session in folder `cwd` (normalized). `reachable` = an instruction can be handed to
+    // it now: its parked hook polls /wake, or the mod reports presence (pending → next /presence).
+    func session(inFolder cwd: String) -> (id: String, reachable: Bool)? {
+        refresh()
+        let here = entries.values.filter { !cwd.isEmpty && $0.cwd == cwd && $0.state != "stopped" }
+        if let e = here.first(where: { parkedHookAlive($0.id) || $0.presenceAt != nil }) { return (e.id, true) }
+        return here.first.map { ($0.id, false) }
     }
 
     // Any session besides `id` that isn't stopped → the turn gets announced.
@@ -312,13 +361,14 @@ final class SessionRegistry {
         }
     }
 
-    private func update(_ id: String, label: String = "", project: String = "",
+    private func update(_ id: String, label: String = "", project: String = "", cwd: String = "",
                         _ change: (inout Entry, Date) -> Void) {
         guard !id.isEmpty else { return }
         let t = now()
         var e = entries[id] ?? Entry(id: id, firstSeen: t, hookAt: t, since: t)
         let before = e.label
         if !project.isEmpty { e.project = project }
+        if !cwd.isEmpty { e.cwd = Zentrale.normalize(cwd) }
         if !label.isEmpty { e.label = label } else if e.label.isEmpty { e.label = e.project }
         change(&e, t)
         entries[id] = e

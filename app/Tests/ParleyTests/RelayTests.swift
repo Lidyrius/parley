@@ -132,11 +132,13 @@ final class RelayClientTests: XCTestCase {
     private final class Fake: RelaySocket, @unchecked Sendable {
         let request: URLRequest
         var sent: [String] = []
+        var sentData: [Data] = []
         var closed = false
-        var onReceive: (@Sendable (Result<String?, any Error>) -> Void)?
+        var onReceive: (@Sendable (Result<RelayInbound, any Error>) -> Void)?
         init(_ r: URLRequest) { request = r }
         func send(_ text: String, completion: @escaping @Sendable ((any Error)?) -> Void) { sent.append(text); completion(nil) }
-        func receive(_ handler: @escaping @Sendable (Result<String?, any Error>) -> Void) { onReceive = handler }
+        func send(data: Data, completion: @escaping @Sendable ((any Error)?) -> Void) { sentData.append(data); completion(nil) }
+        func receive(_ handler: @escaping @Sendable (Result<RelayInbound, any Error>) -> Void) { onReceive = handler }
         func close() { closed = true }
     }
 
@@ -146,6 +148,8 @@ final class RelayClientTests: XCTestCase {
         var sockets: [Fake] = []
         var resumed: [String] = []
         var states: [Bool] = []
+        var events: [PhoneEvent] = []
+        var audio: [Data] = []
     }
 
     private let queue = DispatchQueue(label: "test.relay")
@@ -160,6 +164,8 @@ final class RelayClientTests: XCTestCase {
                              now: { w.t }, connect: { let s = Fake($0); w.sockets.append(s); return s },
                              log: { _ in }, queue: queue)
         client.onState = { w.states.append($0) }
+        client.onEvent = { w.events.append($0) }
+        client.onAudio = { w.audio.append($0) }
         client.start()
         drain()
     }
@@ -195,13 +201,34 @@ final class RelayClientTests: XCTestCase {
 
     func testIncomingResumeIsHandedOnOthersIgnored() {
         for text in [#"{"t":"hello","device":"iPhone"}"#, "pong", #"{"t":"resume","id":"s1"}"#, #"{"t":"x"}"#] {
-            socket.onReceive?(.success(text))
+            socket.onReceive?(.success(.text(text)))
             drain()
         }
-        socket.onReceive?(.success(nil))                                 // binary: ignored
-        drain()
         XCTAssertEqual(world.resumed, ["s1"])
+        XCTAssertEqual(world.events, [])
         XCTAssertFalse(socket.closed)
+    }
+
+    // Protocol v2: call / wake / push / away go to onEvent, binary frames to onAudio (empty and
+    // oversized ones dropped); the host sends text and audio frames on the same socket.
+    func testCallFramesAndAudioBothWays() {
+        for text in [#"{"t":"call","state":"start"}"#, #"{"t":"wake"}"#, #"{"t":"away","on":true}"#,
+                     #"{"t":"push","token":"ABCDEF01","env":"development"}"#, #"{"t":"call","state":"end"}"#] {
+            socket.onReceive?(.success(.text(text)))
+            drain()
+        }
+        XCTAssertEqual(world.events, [.call(true), .wake, .away(true), .push(token: "abcdef01", env: "development"), .call(false)])
+        let frame = Data(repeating: 7, count: 640)
+        for data in [frame, Data(), Data(count: RelayFrame.maxBinary + 1)] {
+            socket.onReceive?(.success(.binary(data)))
+            drain()
+        }
+        XCTAssertEqual(world.audio, [frame])
+        client.sendAudio(frame)
+        client.sendText(RelayFrame.audio(.listening))
+        drain()
+        XCTAssertEqual(socket.sentData, [frame])
+        XCTAssertEqual(socket.sent.last, #"{"t":"audio","state":"listening"}"#)
     }
 
     func testFailureDropsTheSocketAndReportsUnreachable() {

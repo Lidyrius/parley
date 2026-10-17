@@ -28,9 +28,25 @@ final class ControlServer: @unchecked Sendable {
     var replyProvider: ((TurnPayload, @escaping (TurnReply) -> Void) -> Void)?
 
     // Serialize turns: only one is spoken/recorded at a time. Others wait (their hook
-    // connections stay open) and drain FIFO.
-    private var replyQueue: [(TurnPayload, (TurnReply) -> Void)] = []
+    // connections stay open) and drain FIFO. The voice dialogs (resume, permission question,
+    // phone wake) ride the same queue, so nothing ever talks over anything else.
+    private struct Item { let id: Int; let turn: TurnPayload; let respond: (TurnReply) -> Void }
+    private var replyQueue: [Item] = []
     private var replyActive = false
+    private var nextItem = 0
+
+    // Instructions for a folder no reachable session runs in yet (POST /dispatch, a wake routed
+    // to a Zentrale that isn't running), and when a session was last started there.
+    private var pending = PendingInstructions()
+    private var startedAt: [String: Date] = [:]
+    static let restartGuard: TimeInterval = 120   // no second session start in a folder within this
+
+    // Starts a session in a folder (Terminal + `claude '/parley:voice'`); a stub in tests.
+    var starter: (String) -> Void = { SessionStarter.start(folder: $0) }
+
+    // POST /permission holds the hook at most this long, then answers "ask".
+    var permissionHold: TimeInterval = 110
+    private let now: () -> Date
 
     // Parked (paused-but-resumable) sessions. Their Stop hook short-polls /wake; we hand
     // back a pending instruction to wake them — no keystrokes needed. Keyed by session key.
@@ -45,15 +61,20 @@ final class ControlServer: @unchecked Sendable {
 
     // Queue item for the POST /resume voice dialog (rides the turn queue, never overlaps).
     static let resumeEvent = "resume"
+    // The permission question (POST /permission) and the phone's wake dialog, the same way.
+    static let permissionEvent = "permission"
+    static let wakeEvent = "wake"
+    static let dialogEvents: Set<String> = [resumeEvent, permissionEvent, wakeEvent]
     private var lastResumable: [ParkedInfo] = []
 
     // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
     static func sessionKey(session: String, pane: String) -> String { session.isEmpty ? pane : session }
     static func sessionKey(_ turn: TurnPayload) -> String { sessionKey(session: turn.session_id, pane: turn.tmux_pane) }
 
-    init(port: UInt16 = 8787, sessions: SessionRegistry = SessionRegistry()) {
+    init(port: UInt16 = 8787, sessions: SessionRegistry = SessionRegistry(), now: @escaping () -> Date = { Date() }) {
         self.port = NWEndpoint.Port(rawValue: port)!
         self.sessions = sessions
+        self.now = now
     }
 
     func start() {
@@ -98,14 +119,169 @@ final class ControlServer: @unchecked Sendable {
                 send(400, #"{"ok":false,"error":"bad turn payload"}"#, on: conn)
                 return
             }
-            sessions.queued(id: Self.sessionKey(turn), label: turn.label ?? "", project: turn.project)
-            enqueueReply(turn) { [weak self] reply in
+            receiveTurn(turn) { [weak self] reply in
                 self?.send(200, Self.turnJSON(reply), on: conn)
+            }
+            return
+        }
+        // /permission is answered once the question was asked and answered (≤ permissionHold).
+        if req.method == "POST", req.path == "/permission" {
+            guard permission(req.body, respond: { [weak self] json in self?.send(200, json, on: conn) }) else {
+                send(400, #"{"ok":false,"error":"bad permission payload"}"#, on: conn)
+                return
             }
             return
         }
         let (status, json) = handle(req)
         send(status, json, on: conn)
+    }
+
+    // A hook's /turn (on `queue`): queued for its voice — unless a dispatched instruction waits
+    // for its folder (a session just started there): that is the reply, at once and unvoiced;
+    // the session's opening line is moot now.
+    func receiveTurn(_ turn: TurnPayload, respond: @escaping (TurnReply) -> Void) {
+        let key = Self.sessionKey(turn)
+        sessions.queued(id: key, label: turn.label ?? "", project: turn.project, cwd: turn.cwd)
+        if let instruction = takePending(turn.cwd) {
+            Log.write("dispatch: handing the waiting instruction to \(turn.spokenLabel) (its turn)")
+            let reply = TurnReply(transcript: instruction, park: false)
+            sessions.finished(id: key, reply: reply)
+            respond(reply)
+            return
+        }
+        enqueueReply(turn, respond)
+    }
+
+    // MARK: - permission prompts (POST /permission)
+
+    // Unknown session (voice mode off) → "ask" at once: the normal on-screen prompt. Otherwise
+    // the question rides the queue like a turn; its transcript decides. An unanswered request is
+    // answered "ask" after `permissionHold` (and dropped from the queue if not voiced yet).
+    // On `queue`; false = bad payload.
+    func permission(_ body: Data, respond: @escaping (String) -> Void) -> Bool {
+        guard let p = PermissionRequest.decode(body) else { return false }
+        guard sessions.knows(p.sessionId) else {
+            respond(PermissionDecision.ask.json)
+            return true
+        }
+        let project = (p.cwd as NSString).lastPathComponent
+        let label = sessions.label(of: p.sessionId).flatMap { $0.isEmpty ? nil : $0 } ?? project
+        let turn = TurnPayload(event: Self.permissionEvent, session_id: p.sessionId, cwd: p.cwd, project: project,
+                               tmux_pane: "", speak: PermissionPrompt.question(label: label, tool: p.toolName, input: p.input),
+                               label: label, listen: true)
+        let wait = PermissionWait(what: "\(label) \(p.toolName)", respond: respond)
+        sessions.resumeQueued(id: p.sessionId)   // shown as queued until its question is asked
+        let id = enqueue(turn) { reply in wait.answer(PermissionPrompt.decide(reply.transcript)) }
+        let sid = p.sessionId
+        queue.asyncAfter(deadline: .now() + permissionHold) { [weak self] in
+            guard let self, !wait.done else { return }
+            wait.answer(.ask)
+            let before = self.replyQueue.count
+            self.replyQueue.removeAll { $0.id == id }
+            if self.replyQueue.count < before { self.sessions.dialogFinished(id: sid) }
+        }
+        return true
+    }
+
+    // One held /permission request: answered exactly once (the dialog, or the hold timeout).
+    // ponytail: @unchecked Sendable — only touched on the server queue.
+    private final class PermissionWait: @unchecked Sendable {
+        private(set) var done = false
+        private let what: String
+        private let respond: (String) -> Void
+        init(what: String, respond: @escaping (String) -> Void) { self.what = what; self.respond = respond }
+        func answer(_ decision: PermissionDecision) {
+            guard !done else { return }
+            done = true
+            Log.write("permission: \(what) → \(decision.rawValue)")
+            respond(decision.json)
+        }
+    }
+
+    // MARK: - the phone's wake word
+
+    // "Hey Parley" during a call: the wake dialog (greeting → listen → route), only while
+    // nothing is queued or being voiced.
+    func wakeFromPhone() {
+        queue.async {
+            guard !self.replyActive, self.replyQueue.isEmpty else {
+                Log.write("phone: wake while Parley is busy — ignored")
+                return
+            }
+            let turn = TurnPayload(event: Self.wakeEvent, session_id: "", cwd: "", project: "", tmux_pane: "",
+                                   speak: "", label: nil, listen: true)
+            _ = self.enqueue(turn) { _ in }
+        }
+    }
+
+    // Running sessions a wake utterance can be routed to.
+    func routeTargets() -> [RouteTarget] {
+        queue.sync { sessions.routeTargets() }
+    }
+
+    // A routed wake utterance for a session: the resume paths when it can take it now (parked
+    // hook → /wake, the mod → next /presence); a hook-only session that is busy gets it by its
+    // folder, at its next turn or /wake poll.
+    func deliverRouted(id: String, instruction: String) {
+        queue.async {
+            if !self.sessions.reachable(id), let cwd = self.sessions.cwd(of: id), !cwd.isEmpty {
+                self.pending.add(instruction, cwd: cwd, at: self.now())
+                Log.write("route: \(id) busy without the mod → waits for its next turn in \(cwd)")
+            } else {
+                self.deliver(id, instruction)
+            }
+        }
+    }
+
+    // MARK: - dispatch (POST /dispatch, routing to the Zentrale)
+
+    struct DispatchResult: Equatable {
+        var delivered: String   // "session" | "pending" | "none"
+        var started: Bool
+    }
+
+    // Hand `instruction` to the session in `cwd`: a reachable one gets it now (the resume paths);
+    // else it waits there by cwd (≤ 10 min) until a session's presence / turn / wake poll shows
+    // up. `start` launches a session when none is alive in the folder (not twice in 2 min).
+    func dispatch(cwd: String, instruction: String, start: Bool) -> DispatchResult {
+        queue.sync { dispatchOnQueue(cwd: cwd, instruction: instruction, start: start) }
+    }
+
+    private func dispatchOnQueue(cwd raw: String, instruction: String, start: Bool) -> DispatchResult {
+        let cwd = Zentrale.normalize(raw)
+        prunePending()
+        let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let here = sessions.session(inFolder: cwd)
+        var result = DispatchResult(delivered: "none", started: false)
+        if !text.isEmpty {
+            if let s = here, s.reachable {
+                deliver(s.id, text)
+                result.delivered = "session"
+            } else {
+                pending.add(text, cwd: cwd, at: now())
+                result.delivered = "pending"
+            }
+        }
+        if start, here == nil, startedAt[cwd].map({ now().timeIntervalSince($0) >= Self.restartGuard }) ?? true {
+            startedAt[cwd] = now()
+            starter(cwd)
+            result.started = true
+        }
+        Log.write("dispatch: \(cwd) → \(result.delivered)\(result.started ? ", session started" : "")")
+        return result
+    }
+
+    // The instruction(s) waiting for `cwd`, consumed.
+    private func takePending(_ cwd: String?) -> String? {
+        guard let cwd, !cwd.isEmpty else { return nil }
+        prunePending()
+        return pending.take(cwd: Zentrale.normalize(cwd), now: now())
+    }
+
+    private func prunePending() {
+        for cwd in pending.prune(now: now()) {
+            Log.write("dispatch: instruction for \(cwd) expired — no session showed up within 10 min")
+        }
     }
 
     // /wake — a parked session's Stop hook short-polls this. Answer immediately with any
@@ -119,10 +295,11 @@ final class ControlServer: @unchecked Sendable {
         p.project = w?.project ?? p.project
         p.cwd = w?.cwd ?? p.cwd
         p.lastSeen = Date()
-        let pending = p.pending
+        let pending = p.pending ?? takePending(w?.cwd)
         p.pending = nil
         parked[key] = p
-        sessions.wakePoll(id: key, label: w?.label ?? "", project: w?.project ?? "", resumed: pending != nil)
+        sessions.wakePoll(id: key, label: w?.label ?? "", project: w?.project ?? "", resumed: pending != nil,
+                          cwd: w?.cwd ?? "")
         pruneParked()
         notifyParked()
         return Self.turnJSON(TurnReply(transcript: pending ?? "", park: false))
@@ -158,8 +335,7 @@ final class ControlServer: @unchecked Sendable {
         let turn = TurnPayload(event: Self.resumeEvent, session_id: id, cwd: "", project: e.project,
                                tmux_pane: "", speak: "", label: e.label, listen: true)
         sessions.resumeQueued(id: id)
-        replyQueue.append((turn, { _ in }))
-        pumpReplies()
+        _ = enqueue(turn) { _ in }
     }
 
     // POST /resume and the relay's `resume` frame (docs/IPHONE.md): the voice dialog for a
@@ -184,9 +360,15 @@ final class ControlServer: @unchecked Sendable {
     // transcript handed to its session.
     private func complete(_ turn: TurnPayload, _ reply: TurnReply) {
         let id = Self.sessionKey(turn)
-        guard turn.event == Self.resumeEvent else { sessions.finished(id: id, reply: reply); return }
-        sessions.resumeFinished(id: id, replied: !reply.transcript.isEmpty)
-        deliver(id, reply.transcript.isEmpty ? Self.resumeInstruction : reply.transcript)
+        switch turn.event {
+        case Self.resumeEvent:
+            sessions.resumeFinished(id: id, replied: !reply.transcript.isEmpty)
+            deliver(id, reply.transcript.isEmpty ? Self.resumeInstruction : reply.transcript)
+        case Self.permissionEvent, Self.wakeEvent:
+            sessions.dialogFinished(id: id)
+        default:
+            sessions.finished(id: id, reply: reply)
+        }
     }
 
     func resumableList() -> [ParkedInfo] {
@@ -219,9 +401,15 @@ final class ControlServer: @unchecked Sendable {
     // MARK: - turn serialization
 
     private func enqueueReply(_ turn: TurnPayload, _ respond: @escaping (TurnReply) -> Void) {
-        replyQueue.append((turn, respond))
         if replyActive { onQueued?(turn) }   // parked behind an in-flight turn → show as waiting
+        _ = enqueue(turn, respond)
+    }
+
+    private func enqueue(_ turn: TurnPayload, _ respond: @escaping (TurnReply) -> Void) -> Int {
+        nextItem += 1
+        replyQueue.append(Item(id: nextItem, turn: turn, respond: respond))
         pumpReplies()
+        return nextItem
     }
 
     private func pumpReplies() {
@@ -229,18 +417,19 @@ final class ControlServer: @unchecked Sendable {
         guard let provider = replyProvider else {
             // No pipeline wired — answer everything empty so hooks don't hang.
             let waiting = replyQueue; replyQueue.removeAll()
-            for (turn, respond) in waiting {
+            for item in waiting {
                 let reply = TurnReply(transcript: "", park: false)
-                complete(turn, reply)
-                respond(reply)
+                complete(item.turn, reply)
+                item.respond(reply)
             }
             return
         }
         replyActive = true
-        let (turn, respond) = replyQueue.removeFirst()
-        let isResume = turn.event == Self.resumeEvent
-        sessions.activate(id: Self.sessionKey(turn), speak: isResume ? nil : turn.speak)
-        if !isResume { onTurn?(turn) }
+        let item = replyQueue.removeFirst()
+        let (turn, respond) = (item.turn, item.respond)
+        let dialog = Self.dialogEvents.contains(turn.event)
+        sessions.activate(id: Self.sessionKey(turn), speak: dialog ? nil : turn.speak)
+        if !dialog { onTurn?(turn) }
         provider(turn) { [weak self] reply in
             guard let self else { return }
             self.queue.async {
@@ -293,8 +482,16 @@ final class ControlServer: @unchecked Sendable {
                 return (400, #"{"ok":false,"error":"bad presence payload"}"#)
             }
             let project = p.project?.isEmpty == false ? p.project! : ((p.cwd ?? "") as NSString).lastPathComponent
-            let instruction = sessions.presence(id: p.session_id, label: p.label ?? "", project: project,
-                                                state: p.state ?? "idle", usage: p.usage, tasks: p.tasks, host: p.host)
+            var instruction = sessions.presence(id: p.session_id, label: p.label ?? "", project: project,
+                                                state: p.state ?? "idle", usage: p.usage, tasks: p.tasks, host: p.host,
+                                                cwd: p.cwd ?? "")
+            // An instruction waits for this folder: an idle session takes it now (a working one
+            // gets it as the reply to its turn, or once it is idle).
+            if instruction == nil, (p.state ?? "idle") == "idle", let text = takePending(p.cwd) {
+                sessions.handedOver(id: p.session_id)
+                Log.write("dispatch: handing the waiting instruction to \(p.label ?? project) (presence)")
+                instruction = text
+            }
             notifyParked()
             guard let instruction,
                   let data = try? JSONEncoder().encode(["instruction": instruction]),
@@ -302,6 +499,22 @@ final class ControlServer: @unchecked Sendable {
             return (200, json)
         case ("GET", "/sessions"):
             return (200, sessions.json())
+        case ("POST", "/dispatch"):
+            // The Zentrale (or anything local) hands a task to a folder's session, starting one.
+            guard let d = Contract.decodeDispatch(req.body) else {
+                return (400, #"{"ok":false,"error":"bad dispatch payload"}"#)
+            }
+            let cwd = Zentrale.normalize(d.cwd)
+            let instruction = d.instruction ?? ""
+            let start = d.start ?? true
+            guard d.cwd.hasPrefix("/") || d.cwd.hasPrefix("~"), Zentrale.isDirectory(cwd) else {
+                return (400, #"{"ok":false,"error":"cwd must be an existing absolute folder"}"#)
+            }
+            guard !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || start else {
+                return (400, #"{"ok":false,"error":"nothing to do"}"#)
+            }
+            let r = dispatchOnQueue(cwd: cwd, instruction: instruction, start: start)
+            return (200, #"{"ok":true,"delivered":"\#(r.delivered)","started":\#(r.started)}"#)
         case ("POST", "/resume"):
             // The mod's resume button: answer at once, then run the short voice dialog for
             // that session through the turn queue. Only parked / idle-with-mod sessions.

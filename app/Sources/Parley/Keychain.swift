@@ -30,6 +30,14 @@ enum Keychain {
         case relayUrl       // iPhone relay base URL (docs/IPHONE.md); empty = no iPhone connection
         case relayRoom      // the relay room (16 random bytes, base64url), created on first pairing
         case relaySecret    // the room's secret (32 random bytes, base64url)
+        case phonePushToken // the iPhone's VoIP push token (hex), from its `push` frame
+        case phonePushEnv   // "production" | "development" (APNs host)
+        case phoneAway      // "1" = Unterwegs-Modus on (the phone's `away` frame): updates ring the phone
+        case apnsKeyId      // APNs auth key id (from AuthKey_<KEYID>.p8)
+        case apnsTeamId     // Apple team id; empty = 384887N3UL
+        case apnsKeyP8      // the .p8 PEM text
+        case zentraleDir    // the Zentrale's folder; empty = ~/workspace/privat/parley-zentrale
+        case projectsDir    // where the Zentrale creates projects; empty = ~/workspace/privat
     }
 
     static var fileURL: URL {

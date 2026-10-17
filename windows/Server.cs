@@ -212,28 +212,30 @@ public sealed class Server
             }
 
             // /dispatch — the Zentrale (docs/IPHONE.md, v2): deliver an instruction to the session
-            // in a folder, starting one there when none runs. A relative cwd lives under projectsDir.
+            // in a folder, starting one there when none runs. Same answers as macOS:
+            // {"ok":true,"delivered":"session"|"pending","started":bool}; 400 for a relative or
+            // missing folder.
             if (req.HttpMethod == "POST" && path == "/dispatch")
             {
                 var d = DispatchPayload.Decode(body);
-                var cwd = d is null ? null : CwdPath.Resolve(d.Cwd, Config.Load().ProjectsDir);
-                if (d is null || cwd is null)
+                var cwd = d is null || string.IsNullOrWhiteSpace(d.Cwd) || !Path.IsPathRooted(d.Cwd)
+                    ? null : CwdPath.Resolve(d.Cwd, Config.Load().ProjectsDir);
+                if (d is null || cwd is null || !Directory.Exists(cwd))
                 {
-                    await Respond(ctx, 400, "{\"ok\":false,\"error\":\"cwd must be an absolute path\"}");
-                    return;
-                }
-                if (!Directory.Exists(cwd))
-                {
-                    await Respond(ctx, 404, "{\"ok\":false,\"error\":\"no such folder\"}");
+                    await Respond(ctx, 400, "{\"ok\":false,\"error\":\"cwd must be an existing absolute folder\"}");
                     return;
                 }
                 var result = Delivery.Dispatch(cwd, (d.Instruction ?? "").Trim(), d.Start ?? true);
-                var ok = result != DispatchResult.Failed;
-                await Respond(ctx, ok ? 200 : 500, JsonSerializer.Serialize(new
+                if (result == DispatchResult.Failed)
                 {
-                    ok,
-                    result = result.ToString().ToLowerInvariant(),
-                    error = ok ? null : "could not start a session",
+                    await Respond(ctx, 500, "{\"ok\":false,\"error\":\"could not start a session\"}");
+                    return;
+                }
+                await Respond(ctx, 200, JsonSerializer.Serialize(new
+                {
+                    ok = true,
+                    delivered = result == DispatchResult.Delivered ? "session" : "pending",
+                    started = result == DispatchResult.Started,
                 }));
                 return;
             }

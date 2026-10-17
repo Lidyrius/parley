@@ -68,3 +68,51 @@ struct SilenceVAD {
         hasAvg = false
     }
 }
+
+/// One listening stretch at 16 kHz mono: collects the samples and runs the VAD with its beep
+/// grace window and the no-speech timeout. Shared by the Mac's mic (MicCapture) and the phone's
+/// call audio (PhoneListener), so both end a reply the same way.
+struct UtteranceRecorder {
+    static let sampleRate = 16000.0
+    static let graceSeconds = 0.5       // the ready-beep (played while capturing) must not arm the VAD
+    static let noSpeechTimeout = 8.0
+
+    enum Step: Equatable { case listening, ended(String) }   // "vad-silence" | "no-speech"
+
+    private(set) var samples: [Int16] = []
+    private(set) var duration = 0.0
+    private var vad = SilenceVAD(trailingSilence: 1.8)
+
+    var heardSpeech: Bool { vad.started }
+
+    mutating func reset() {
+        samples.removeAll(keepingCapacity: true)
+        duration = 0
+        vad.reset()
+    }
+
+    /// Feed one chunk; returns its level (dBFS) and whether the recording is over.
+    mutating func feed<C: Collection>(_ chunk: C) -> (db: Float, step: Step) where C.Element == Int16 {
+        guard !chunk.isEmpty else { return (-120, .listening) }
+        var floats = [Float]()
+        floats.reserveCapacity(chunk.count)
+        for s in chunk {
+            samples.append(s)
+            floats.append(Float(s) / 32768.0)
+        }
+        let db = Level.dB(Level.rms(floats))
+        let d = Double(chunk.count) / Self.sampleRate
+        duration += d
+        if duration < Self.graceSeconds { return (db, .listening) }
+        let decision = vad.process(rmsDB: db, duration: d)
+        if decision == .waiting && duration >= Self.noSpeechTimeout { return (db, .ended("no-speech")) }
+        if decision == .ended { return (db, .ended("vad-silence")) }
+        return (db, .listening)
+    }
+
+    /// The WAV for Groq. The VAD never heard speech → empty: Whisper turns pure silence into
+    /// "Thank you.".
+    func wav(endReason: String) -> Data {
+        WAV.encode(int16: endReason == "no-speech" ? [] : samples)
+    }
+}
