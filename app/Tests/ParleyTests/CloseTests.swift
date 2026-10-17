@@ -157,4 +157,16 @@ final class CloseTests: XCTestCase {
         XCTAssertFalse(SessionCloser.onlyShell("login\nzsh\nnode\n"))   // an MCP server still exiting
         XCTAssertFalse(SessionCloser.onlyShell("login\nzsh\n2.1.302\n"))   // claude itself
     }
+
+    func testHowEachKindOfSessionEnds() {
+        let term = SessionCloser.Proc(pid: 10, tty: "ttys001", args: "claude /parley:voice")
+        let desk = SessionCloser.Proc(pid: 68140, tty: "??", args: "/Users/s/Library/Application Support/Claude/claude-code/2.1/x/claude.app/Contents/MacOS/claude --output-format stream-json")
+        let helper = "/Applications/Claude.app/Contents/Helpers/disclaimer --pgroup -- /Users/s/Library/Application Support/Claude/claude-code/2.1/x/claude.app/Contents/MacOS/claude"
+        XCTAssertEqual(SessionCloser.ending(term, group: 10, leader: "claude"), .terminal("ttys001"))
+        XCTAssertEqual(SessionCloser.ending(desk, group: 68139, leader: helper), .desktop(group: 68139))
+        // Never the app's own group, nor a group claude leads itself without a terminal.
+        if case .refuse = SessionCloser.ending(desk, group: 500, leader: "/Applications/Claude.app/Contents/MacOS/Claude") {} else { XCTFail("app group") }
+        if case .refuse = SessionCloser.ending(desk, group: 68140, leader: helper) {} else { XCTFail("own group") }
+        if case .refuse = SessionCloser.ending(desk, group: -1, leader: nil) {} else { XCTFail("no group") }
+    }
 }

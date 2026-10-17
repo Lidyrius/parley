@@ -188,10 +188,12 @@ any closed, else the first failure's code: 404 unknown, 403 the Zentrale (by lab
 never closes itself), 409 already stopped / no closable process. The host finds the session's
 `claude` process (`~/.claude/sessions/<pid>.json`, else `--resume <id>` in its command line;
 macOS also: the only unclaimed terminal one in its folder), ends it (macOS: SIGTERM to its
-process group, then closes its Terminal window if it was the only tab; Windows: kills the
-`cmd /k` console tree) and marks it `stopped` at once — a dying mod's last presence within 20 s
-is ignored. The transcript stays, so `/past` + `/dispatch` resume continue it. Desktop-app
-sessions (no terminal) are refused: the Claude app closes those.
+process group, then closes its Terminal window if it was the only tab; a Claude desktop session:
+SIGTERM to its own group under the app's `disclaimer --pgroup` helper — claude and its MCP
+servers, not the app or its other sessions; Windows: kills the `cmd /k` console tree, or just the
+claude tree of a desktop session) and marks it `stopped` at once — a dying mod's last presence
+within 20 s is ignored. The transcript stays, so `/past` + `/dispatch` resume continue it; the
+desktop app resumes its session itself on the next message there.
 
 ## Protocol v4 — the Live Activity (Dynamic Island, Lock Screen, Watch, CarPlay)
 

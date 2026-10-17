@@ -257,11 +257,13 @@ public static class SessionStarter
     }
 }
 
-// POST /close: ends a terminal Claude Code session — its claude process tree and, when it ran
-// under the `cmd /k` SessionStarter opens, that console too (the transcript is on disk, so /past
-// + /dispatch resume continue it). Desktop sessions (stream-json under the Claude app) are the
-// app's to close. ponytail: no folder fallback like macOS (Windows has no cheap cwd of another
-// process) — a fresh `claude /parley:voice` is found through ~/.claude/sessions/<pid>.json.
+// POST /close: ends a Claude Code session — its claude process tree (claude and its MCP servers)
+// and, when it ran under the `cmd /k` SessionStarter opens, that console too (the transcript is
+// on disk, so /past + /dispatch resume continue it). A Claude desktop session ends the same way:
+// only its own claude tree, never the app (its parent) or the app's other sessions; the app
+// resumes it when Sir writes in it again. ponytail: no folder fallback like macOS (Windows has no
+// cheap cwd of another process) — a fresh `claude /parley:voice` is found through
+// ~/.claude/sessions/<pid>.json.
 public static class SessionCloser
 {
     public sealed record Proc(int Pid, int Parent, string Args);
@@ -275,7 +277,6 @@ public static class SessionCloser
     {
         var p = Pick(id, Running(), Claimed());
         if (p is null) return "no running claude process found for that session";
-        if (p.Args.Contains("stream-json")) return "not a terminal session (desktop app?) — close it there";
         try
         {
             using var claude = Process.GetProcessById(p.Pid);

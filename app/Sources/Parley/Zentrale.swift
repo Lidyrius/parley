@@ -114,10 +114,11 @@ enum SessionStarter {
     }
 }
 
-// POST /close: ends a terminal Claude Code session — SIGTERM to its `claude` process group
-// (claude with its hooks and MCP servers; the transcript is already on disk, so /past +
-// /dispatch resume continue it), then closes its Terminal window once only the shell is left.
-// Desktop sessions have no terminal: the Claude app closes those.
+// POST /close: ends a Claude Code session — SIGTERM to its process group (claude with its hooks
+// and MCP servers; the transcript is already on disk, so /past + /dispatch resume continue it).
+// A terminal job: then its Terminal window closes once only the shell is left. A Claude desktop
+// session: its own group under the app's `disclaimer` helper — the app and its other sessions
+// stay; the app resumes that session itself when Sir writes in it again.
 enum SessionCloser {
     struct Proc: Equatable { let pid: Int32; let tty: String; let args: String }
 
@@ -131,6 +132,16 @@ enum SessionCloser {
         return here.count == 1 ? here[0] : nil
     }
 
+    /// How a session's process ends: a terminal job (its tty), or a Claude desktop session — its
+    /// own process group led by the app's `disclaimer` helper (`--pgroup`), never the app's.
+    enum Ending: Equatable { case terminal(String), desktop(group: Int32), refuse(String) }
+
+    static func ending(_ p: Proc, group: Int32, leader: String?) -> Ending {
+        if p.tty != "??" { return .terminal(p.tty) }
+        if group > 1, group != p.pid, leader?.contains("/Contents/Helpers/disclaimer") == true { return .desktop(group: group) }
+        return .refuse("neither a terminal nor a Claude desktop session — not closable from here")
+    }
+
     /// nil = it is closing; else why not.
     static func close(id: String, cwd: String) -> String? {
         let procs = running()
@@ -138,7 +149,22 @@ enum SessionCloser {
         guard let p = pick(id: id, cwd: cwd, procs: procs, claimed: claimed(), cwds: cwds(tty)) else {
             return "no running claude process found for that session"
         }
-        guard p.tty != "??" else { return "not a terminal session (desktop app?) — close it there" }
+        let group = getpgid(p.pid)
+        let leader = group > 1 ? run("/bin/ps", ["-o", "args=", "-p", String(group)]).trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        switch ending(p, group: group, leader: leader) {
+        case .refuse(let why):
+            return why
+        case .desktop(let g):
+            killpg(g, SIGTERM)
+            Log.write("close: SIGTERM to the desktop session's group \(g) (claude \(p.pid))")
+            DispatchQueue.global().async {
+                for _ in 0..<50 where kill(p.pid, 0) == 0 { usleep(100_000) }
+                if kill(p.pid, 0) == 0 { killpg(g, SIGKILL) }
+            }
+            return nil
+        case .terminal:
+            break
+        }
         // A shell job is its own process group: claude, its hooks and MCP servers end together.
         if getpgid(p.pid) == p.pid { killpg(p.pid, SIGTERM) } else { kill(p.pid, SIGTERM) }
         Log.write("close: SIGTERM to claude \(p.pid) on \(p.tty)")

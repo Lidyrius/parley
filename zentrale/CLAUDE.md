@@ -163,9 +163,11 @@ höchstens drei Namen — Details nur auf dem Bildschirm.
 ## Session schließen
 
 Sir will eine laufende Session beenden („mach Literally Apps zu“): die id aus `/sessions`
-holen (genannter Name = `label`), dann `POST /close`. Parley beendet den `claude`-Prozess sauber
-und schließt sein Terminal-Fenster; die Session steht danach auf `stopped` und lässt sich über
-„Frühere Session fortsetzen“ (`/past` + `resume`) mit ganzem Verlauf wieder aufnehmen.
+holen (genannter Name = `label`), dann `POST /close`. Parley beendet den `claude`-Prozess sauber —
+im Terminal samt Fenster, in der Claude-Desktop-App nur diese eine Session (die App und ihre
+anderen Sessions bleiben offen; schreibt Sir dort wieder hinein, nimmt die App sie selbst wieder
+auf). Die Session steht danach auf `stopped` und lässt sich über „Frühere Session fortsetzen“
+(`/past` + `resume`) mit ganzem Verlauf wieder aufnehmen.
 
 ```bash
 id=$(curl -sS "http://127.0.0.1:${PARLEY_PORT:-8787}/sessions" | jq -r --arg n "<Name>" '.sessions[]
@@ -179,7 +181,7 @@ jq -n --arg id "$id" '{id: $id}' \
   Ordnername>"}`.
 - Antwort: `{"ok":true,"closed":[{"id":…,"label":…}],"failed":[]}`. In `failed` steht je id der
   Grund: `unknown session` (404), `the Zentrale does not close itself` (403), `already stopped`
-  oder keine Terminal-Session (409 — Sessions der Claude-Desktop-App schließt Sir dort selbst).
+  oder kein laufender Prozess (409).
 - Schließen bricht laufende Arbeit ab: steht die Session auf `working` oder `background`, vorher
   kurz bestätigen lassen. Danach Sir in einem Satz sagen, was geschlossen ist.
 - Dich selbst schließt du nie (Parley verweigert es auch).
