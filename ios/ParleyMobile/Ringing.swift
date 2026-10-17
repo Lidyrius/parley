@@ -134,19 +134,28 @@ struct RingingStage<Content: View>: View {
                 }
             }
         case .aura:
+            // Two bright arcs with fading tails turn around the ring, in a glow that swells on the beats.
             let glow = 0.5 + 0.5 * min(1, beat(t))
-            let spin = Angle.degrees(t * 75)
-            // Two bright arcs on a dim ring, turning: the turn reads clearly through the glow.
-            let gradient = Gradient(stops: [.init(color: color, location: 0), .init(color: color.opacity(0), location: 0.22),
-                                            .init(color: color.opacity(0), location: 0.5), .init(color: color, location: 0.5),
-                                            .init(color: color.opacity(0), location: 0.72), .init(color: color.opacity(0), location: 1)])
-            ctx.drawLayer { layer in
-                layer.addFilter(.blur(radius: 12 * u))
-                layer.opacity = glow
-                layer.stroke(circle(r0 * 1.04), with: .conicGradient(gradient, center: c, angle: spin), lineWidth: 18 * u)
+            let head = t * 1.4
+            let r = r0 * 1.04
+            func arcs(_ g: inout GraphicsContext, width: CGFloat, alpha: Double) {
+                for k in 0..<2 {
+                    for j in 0..<28 {
+                        let a = head + Double(k) * .pi - Double(j) * 0.05
+                        var seg = Path()
+                        seg.addArc(center: c, radius: r, startAngle: .radians(a - 0.055), endAngle: .radians(a), clockwise: false)
+                        g.stroke(seg, with: .color(color.opacity(alpha * pow(1 - Double(j) / 28, 1.6))),
+                                 style: StrokeStyle(lineWidth: width, lineCap: .butt))
+                    }
+                }
             }
-            ctx.stroke(circle(r0 * 1.04), with: .color(color.opacity(0.12)), lineWidth: 2 * u)
-            ctx.stroke(circle(r0 * 1.04), with: .conicGradient(gradient, center: c, angle: spin), lineWidth: 3 * u)
+            ctx.drawLayer { layer in
+                layer.addFilter(.blur(radius: 10 * u))
+                layer.opacity = glow
+                arcs(&layer, width: 16 * u, alpha: 0.9)
+            }
+            ctx.stroke(circle(r), with: .color(color.opacity(0.12)), lineWidth: 2 * u)
+            arcs(&ctx, width: 3 * u, alpha: 1)
         case .bell:
             // Sound arcs left and right, lighting up outwards while the bell swings.
             let phase = t.truncatingRemainder(dividingBy: cycle)
