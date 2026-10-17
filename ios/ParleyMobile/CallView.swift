@@ -51,6 +51,7 @@ struct CallView: View {
     /// A slide swiped to by hand (the pager follows the voice again 10 s later).
     @State private var picked: String?
     @State private var pickedAt = Date.distantPast
+    @State private var drag: CGFloat = 0
 
     var body: some View {
         let call = model.call
@@ -67,7 +68,7 @@ struct CallView: View {
                 topBar(call)
                 Spacer(minLength: 12)
                 // A slide (docs/CALL-SLIDES.md) takes the ring's place while Parley talks about it;
-                // the session's name stays on top, small. Slides swipe in from the right.
+                // the session's name stays on top, small.
                 TimelineView(.periodic(from: .now, by: 0.1)) { context in
                     let due = call.slide(at: context.date)
                     let name = call.label ?? voiced?.name ?? "Parley"
@@ -75,7 +76,7 @@ struct CallView: View {
                         if let due {
                             compactIdentity(call, look: look, name: name)
                                 .transition(.opacity)
-                            slidePager(call, due: due, at: context.date)
+                            slideDeck(call, due: due, at: context.date)
                                 .transition(.opacity)
                         } else {
                             identity(call, look: look, name: name)
@@ -155,30 +156,52 @@ struct CallView: View {
         }
     }
 
-    /// The line's slides, swipeable. It follows the voice (the slide due now) unless a slide was
-    /// swiped to by hand in the last 10 s; swiping back to the due one follows again.
-    private func slidePager(_ call: CallController, due: Slide, at date: Date) -> some View {
+    /// The line's slides as a deck: the current card in the middle, its neighbours just off to the
+    /// sides (faded, a little smaller). A swipe moves the deck with the finger; when the voice moves
+    /// on, the next card slides in from the right. Nothing clips the cards, so their shadows stay.
+    /// Follows the voice unless a card was swiped to in the last 10 s.
+    private func slideDeck(_ call: CallController, due: Slide, at date: Date) -> some View {
         let order = call.slides.sorted { $0.at < $1.at }
         let shown = Self.shownSlide(order, due: due, picked: picked, pickedAt: pickedAt, now: date)
-        return TabView(selection: Binding(get: { shown }, set: { id in
-            if id == due.id { picked = nil; pickedAt = .distantPast } else { picked = id; pickedAt = .now }
-        })) {
-            ForEach(Array(order.enumerated()), id: \.element.id) { i, s in
-                SlideCard(slide: s, image: model.images[s.id], index: i, count: order.count) {
-                    zoomed = ZoomedImage(id: s.id, image: $0)
+        let current = order.firstIndex { $0.id == shown } ?? 0
+        return GeometryReader { geo in
+            let page = geo.size.width + 32
+            ZStack(alignment: .top) {
+                ForEach(Array(order.enumerated()), id: \.element.id) { k, s in
+                    let d = CGFloat(k - current) + drag / page   // distance from the middle, in cards
+                    if abs(d) < 1.5 {
+                        SlideCard(slide: s, image: model.images[s.id], index: k, count: order.count, active: k == current) {
+                            zoomed = ZoomedImage(id: s.id, image: $0)
+                        }
+                        .scaleEffect(1 - min(abs(d), 1) * 0.06)
+                        .opacity(1 - min(abs(d), 1))
+                        .offset(x: d * page)
+                    }
                 }
-                .padding(.horizontal, 16)   // room for the card's shadow: the pager clips its pages
-                .padding(.top, 6)
-                .padding(.bottom, 20)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .tag(s.id)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 10)
+                .onChanged { v in
+                    let t = v.translation.width
+                    let pastEnd = (current == 0 && t > 0) || (current == order.count - 1 && t < 0)
+                    drag = pastEnd ? t * 0.3 : t
+                }
+                .onEnded { v in
+                    let fling = v.predictedEndTranslation.width
+                    let next = min(max(current + (fling < -page / 3 ? 1 : fling > page / 3 ? -1 : 0), 0), order.count - 1)
+                    withAnimation(Self.deck) {
+                        drag = 0
+                        let id = order[next].id
+                        if id == due.id { picked = nil; pickedAt = .distantPast } else { picked = id; pickedAt = .now }
+                    }
+                })
         }
-        .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 356)
-        .padding(.horizontal, -12)
-        .animation(.easeInOut(duration: 0.45), value: shown)
+        .frame(height: 330)
+        .animation(Self.deck, value: shown)
     }
+
+    private static let deck = Animation.spring(response: 0.6, dampingFraction: 0.88)
 
     /// Which slide the pager shows: one swiped to in the last 10 s, else the one due now.
     nonisolated static func shownSlide(_ order: [Slide], due: Slide, picked: String?, pickedAt: Date, now: Date) -> String {

@@ -2,15 +2,19 @@ import Charts
 import SwiftUI
 
 /// One slide in the call screen (docs/CALL-SLIDES.md): a screenshot, a chart, a big number or a
-/// short card — shown while Parley talks about it. Each kind comes in calmly: bars and lines
-/// grow, the pie fades in, numbers count up, images and text fade in.
+/// short card — shown while Parley talks about it. Each kind comes in calmly once its card is the
+/// current one: images and text fade in; bars and lines grow and the pie fills clockwise, slowly
+/// enough to watch; numbers count up.
 struct SlideCard: View {
     let slide: Slide
     let image: UIImage?
     var index = 0
     var count = 1
+    /// The deck's current card: it builds up when it becomes current (neighbours wait, unbuilt).
+    var active = true
     var onZoom: (UIImage) -> Void = { _ in }
-    @State private var shown = false
+    @State private var shown = false   // fades: text, images, labels
+    @State private var grown = false   // builds: bars, lines, the pie's sweep, the number
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -27,13 +31,18 @@ struct SlideCard: View {
                     RadialGradient(colors: [Theme.claude.opacity(0.16), .clear], center: .topLeading, startRadius: 0, endRadius: 260)
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 }
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)   // stays inside the pager's page padding
+                .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
         }
         .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Theme.stroke))
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.55).delay(0.05)) { shown = true }
-        }
+        .onAppear { if active { reveal() } }
+        .onChange(of: active) { _, now in if now { reveal() } }
         .accessibilityElement(children: .combine)
+    }
+
+    private func reveal() {
+        guard !shown else { return }
+        withAnimation(.easeOut(duration: 0.7).delay(0.1)) { shown = true }
+        withAnimation(.easeInOut(duration: 1.8).delay(0.35)) { grown = true }
     }
 
     private var header: some View {
@@ -98,7 +107,7 @@ struct SlideCard: View {
         case "chart":
             chart.frame(height: slide.chart == "pie" ? 170 : 190)
         case "metric":
-            MetricText(metric: slide.metric ?? "", shown: shown)
+            MetricText(metric: slide.metric ?? "", shown: grown)
             if let note = slide.note {
                 Text(note).font(.title3).foregroundStyle(.secondary)
                     .opacity(shown ? 1 : 0)
@@ -125,16 +134,18 @@ struct SlideCard: View {
     private var chart: some View {
         let unit = slide.unit.map { " " + $0 } ?? ""
         let top = max(1, (points.map(\.value).max() ?? 1) * 1.18)   // fixed scale: the marks grow, not the axis
-        let grow = shown ? 1.0 : 0.0
+        let grow = grown ? 1.0 : 0.0
         switch slide.chart {
         case "pie":
             // Fixed colours per slice and our own legend (name, value, share) — the chart's own
             // labels can't be trusted on small slices.
             let total = max(1, points.map(\.value).reduce(0, +))
+            // An invisible last slice holds what is not yet filled: the ring sweeps round from the top.
+            let rest = Point(id: -1, label: "", value: total * (1 - grow) + 0.0001)
             HStack(alignment: .center, spacing: 18) {
-                Chart(points) { p in
-                    SectorMark(angle: .value("Wert", p.value), innerRadius: .ratio(0.6), angularInset: 1.5)
-                        .foregroundStyle(Self.palette[p.id % Self.palette.count])
+                Chart(points + [rest]) { p in
+                    SectorMark(angle: .value("Wert", p.value), innerRadius: .ratio(0.6), angularInset: p.id < 0 ? 0 : 1.5)
+                        .foregroundStyle(p.id < 0 ? Color.clear : Self.palette[p.id % Self.palette.count])
                         .cornerRadius(4)
                 }
                 .chartLegend(.hidden)
@@ -149,9 +160,9 @@ struct SlideCard: View {
                         }
                         .font(.subheadline)
                     }
+                    .opacity(shown ? 1 : 0)
                 }
             }
-            .opacity(grow)
         case "line":
             Chart(points) { p in
                 AreaMark(x: .value("Name", p.label), y: .value("Wert", p.value * grow))

@@ -26,7 +26,7 @@ From now on, end **every** response — including this one — with a single spo
 - Say what you just did, any problem you hit, and what's next.
 - If you need the user's input or a decision, end with a direct question; if you're just reporting and continuing, don't force one.
 - **If the user's message is a question, prioritise answering it.** Give a direct, concise spoken answer in the `<speak>` line first — fast — before starting any longer work. Don't make the user wait through a long task to hear a simple answer.
-- Keep it under ~40 words. This `<speak>` line is the ONLY thing the app speaks aloud; the rest of your response stays on screen as normal.
+- Keep it under ~40 words (with slides: ~25 words per slide, see below). This `<speak>` line is the ONLY thing the app speaks aloud; the rest of your response stays on screen as normal.
 
 Example ending (Deutsch, in character):
 
@@ -57,14 +57,14 @@ The app extracts the `<speak>` text, speaks it, records the user's voice reply, 
 - Parley renders these while it speaks and plays the matching one the instant the user stops talking. The reply then arrives with a note like `[Parley hat darauf bereits geantwortet: „…“ – nicht wiederholen.]`: don't repeat or re-confirm that line, just carry on. If you then have nothing new to say, end with an empty `<speak-end></speak-end>` (nothing is spoken).
 - Skip them when the answer is open-ended (no likely answers to predict).
 
-**Slides in a call (optional):** when something is easier to show than to say, put `<slide …/>` markers into the spoken line exactly where it should appear. Parley removes them before speaking; if Sir is on the phone, each slide shows the moment the following word is spoken (otherwise they are ignored). At most 3 per line, and the line must still make sense without them:
+**Slides in a call (optional):** when something is easier to show than to say, put `<slide …/>` markers into the spoken line exactly where it should appear. Parley removes them before speaking; if Sir is on the phone, each slide shows the moment the following word is spoken (otherwise they are ignored). At most 3 per line, and the line must still make sense without them. Give every slide its own full sentence that says what it shows and what matters (“Hier sehen Sie die Antwortzeit pro Tag – seit Mittwoch ist sie halbiert.”), so it stays on screen long enough to read and its chart can build; with slides the line may run to ~25 words per slide:
 
 - `<slide image="last" title="Export-Knopf"/>` — the newest screenshot/image in this session (`last-2` = the one before), or `image="/absolute/path.png"`.
 - `<slide chart="bar" labels="Mo,Di,Mi" values="12,18,9" unit="ms" title="Antwortzeit"/>` — `bar`, `line` or `pie`; comma-separated values, dot decimals.
 - `<slide metric="24 / 24" note="alle grün" title="Tests"/>` — one big number.
 - `<slide text="CSV-Export, Beträge mit Komma" title="Gebaut"/>` — a short card.
 
-Example: `<speak>Der Export ist drin, Sir. <slide image="last" title="Export"/>So sieht er aus. <slide metric="24 / 24" title="Tests"/>Alle Tests sind grün. Passt das so?</speak>`
+Example: `<speak>Der Export ist drin, Sir. <slide image="last" title="Export"/>Hier sehen Sie den neuen Knopf oben rechts, er exportiert die Tabelle als CSV. <slide metric="24 / 24" title="Tests"/>Und alle vierundzwanzig Tests sind grün, auch die neuen für den Export. Passt das so?</speak>`
 
 Emit **exactly one** of the two tags per response, always as the very last line. If in doubt, use `<speak>`.
 

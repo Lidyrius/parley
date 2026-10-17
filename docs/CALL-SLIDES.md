@@ -67,7 +67,10 @@ während des Sprechens, kein Versatz durch Netz-Ruckeln.
 
 - v1: Die Folie nimmt den Platz des großen Rings ein, Wellenform und Untertitel bleiben
   darunter; Antippen eines Bildes → Vollbild mit Zoom.
-- Später: Wischen zurück zu früheren Folien dieses Anrufs; nach dem Anruf hängen die Folien in
+- Gebaut: Wischen zwischen den Folien der Zeile (Kartenstapel; folgt nach 10 s wieder der
+  Stimme); Diagramme bauen sich langsam auf, darum spricht Claude zu jeder Folie einen
+  ganzen, erklärenden Satz.
+- Später: nach dem Anruf hängen die Folien in
   der Session-Ansicht am Verlauf; im Auto (CarPlay) nur Ton, die Folien warten in der App.
 
 ## Feedback zu einer Folie
