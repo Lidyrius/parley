@@ -100,9 +100,14 @@ struct SettingsView: View {
                 if developer {
                     Section {
                         NavigationLink {
-                            OrbTuner()
+                            OrbTunerList()
                         } label: {
-                            Label("JARVIS-Regler", systemImage: "slider.horizontal.3")
+                            Label("Kugel-Regler", systemImage: "slider.horizontal.3")
+                        }
+                        NavigationLink {
+                            RingTunerList()
+                        } label: {
+                            Label("Anruf-Regler", systemImage: "slider.horizontal.below.circle.lefthalf.filled")
                         }
                         NavigationLink {
                             PaletteEditor(base: Theme.palette, isNew: true)
@@ -442,81 +447,119 @@ private struct TestCall: ViewModifier {
     }
 }
 
-/// Einstellungen → Entwickler → JARVIS-Regler: every knob of the orb, with a live preview.
-struct OrbTuner: View {
-    private let appearance = Appearance.shared
-    @State private var talking = true
-    @State private var voice = 0.5
-
+/// Einstellungen → Entwickler → Kugel-Regler: the five orbs, each with its own knobs.
+struct OrbTunerList: View {
     var body: some View {
-        @Bindable var a = appearance
-        Form {
-            Section {
-                ParticleOrb(style: .jarvis, color: Theme.claude, size: 220) { date in
-                    guard talking else { return voice }
-                    let t = date.timeIntervalSinceReferenceDate
-                    return t.truncatingRemainder(dividingBy: 6) < 4 ? 0.3 + 0.35 * abs(sin(t * 7.3)) * abs(cos(t * 3.1)) : 0
+        List(OrbStyle.allCases) { style in
+            NavigationLink {
+                KnobTuner(title: style.name, knobs: Knobs.list(style)) { talking in
+                    ParticleOrb(style: style, color: Theme.claude, size: 190) { date in KnobTuner<EmptyView>.voice(date, talking) }
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 250)
-                Toggle("Sprechen simulieren", isOn: $talking)
-                if !talking { slider("Stimme", $voice, 0...1) }
-            }
-            Section("Schalen") {
-                slider("Anzahl", int($a.orbTuning.shells), 1...5, step: 1, format: "%.0f")
-                slider("Abstand", $a.orbTuning.shellGap, 0.04...0.45)
-                slider("Verdrehung", $a.orbTuning.twist, 0...2)
-                slider("Helligkeit innen", $a.orbTuning.innerFade, 0.1...1)
-            }
-            Section("Teilchen") {
-                slider("Anzahl außen", int($a.orbTuning.particles), 80...1500, step: 20, format: "%.0f")
-                slider("Punktgröße", $a.orbTuning.dotSize, 0.3...3)
-                slider("Randleuchten", $a.orbTuning.rim, 0...2.5)
-                slider("Schein", $a.orbTuning.glow, 0...2.5)
-                slider("Größe", $a.orbTuning.size, 0.2...0.5)
-            }
-            Section("Bewegung") {
-                slider("Drehtempo", $a.orbTuning.spin, 0...1.5)
-                slider("Neigung", $a.orbTuning.tilt, -1...1.5)
-                slider("Atmen in Ruhe", $a.orbTuning.breathe, 0...0.1, format: "%.3f")
-            }
-            Section("Stimme") {
-                slider("Empfindlichkeit", $a.orbTuning.reactivity, 0...4)
-                slider("Beben", $a.orbTuning.quiver, 0...0.45)
-                slider("Wellen", $a.orbTuning.waves, 0...8, format: "%.1f")
-                slider("Wellentempo", $a.orbTuning.waveSpeed, 0...14, format: "%.1f")
-                slider("Funken: Weite", $a.orbTuning.sparks, 0...0.6)
-                slider("Funken: jeder n-te Punkt", int($a.orbTuning.sparkEvery), 0...80, step: 1, format: "%.0f")
-            }
-            Section {
-                Button("Standardwerte") { withAnimation { a.orbTuning = .shipped } }
-                    .disabled(a.orbTuning == .shipped)
-            } footer: {
-                Text("Wirkt sofort auf Parley im Anruf; Größe, Empfindlichkeit und Schein auch auf die anderen Kugeln. Mit „Probeanruf“ oben rechts siehst du es im Anruf-Bildschirm.")
+            } label: {
+                LabeledContent(style.name, value: "\(Knobs.list(style).count) Regler")
             }
         }
-        .navigationTitle("JARVIS-Regler")
+        .navigationTitle("Kugel-Regler")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Einstellungen → Entwickler → Anruf-Regler: the five ringing motions, each with its own knobs.
+struct RingTunerList: View {
+    var body: some View {
+        List(RingStyle.allCases) { style in
+            NavigationLink {
+                KnobTuner(title: style.name, knobs: Knobs.list(style), toggleLabel: "Klingeln") { ringing in
+                    RingingStage(style: style, color: Theme.claude, active: ringing, ring: 84) {
+                        ParticleOrb(style: Appearance.shared.orbStyle, color: Theme.claude, size: 126)
+                    }
+                }
+            } label: {
+                LabeledContent(style.name, value: "\(Knobs.list(style).count) Regler")
+            }
+        }
+        .navigationTitle("Anruf-Regler")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Knobs with a live preview pinned on top (it stays in view while the sliders scroll). The
+/// toggle under the preview runs the preview (speaking / ringing); a changed value shows in the
+/// accent, swipe a row to set it back.
+struct KnobTuner<Preview: View>: View {
+    let title: String
+    let knobs: [Knob]
+    var toggleLabel = "Sprechen simulieren"
+    @ViewBuilder let preview: (Bool) -> Preview
+    @State private var on = true
+    private let appearance = Appearance.shared
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 6) {
+                preview(on)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 240)
+                Toggle(toggleLabel, isOn: $on)
+                    .font(.subheadline)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+            }
+            .background(Theme.card)
+            .clipped()
+            .overlay(alignment: .bottom) { Divider() }
+            Form {
+                ForEach(sections, id: \.self) { section in
+                    Section(section) {
+                        ForEach(knobs.filter { $0.section == section }) { slider($0) }
+                    }
+                }
+                Section {
+                    Button("Alle auf Standard") {
+                        withAnimation { for k in knobs { appearance.tuning.values[k.id] = nil } }
+                    }
+                    .disabled(!knobs.contains { appearance.tuning.values[$0.id] != nil })
+                } footer: {
+                    Text("Wirkt sofort im Anruf. Eine Zeile zur Seite wischen setzt nur diesen Wert zurück.")
+                }
+            }
+        }
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .testCall()
     }
 
-    private func slider(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>,
-                        step: Double? = nil, format: String = "%.2f") -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private var sections: [String] {
+        knobs.reduce(into: [String]()) { if !$0.contains($1.section) { $0.append($1.section) } }
+    }
+
+    private func slider(_ k: Knob) -> some View {
+        let value = Binding<Double>(get: { appearance.tuning[k] },
+                                    set: { appearance.tuning.values[k.id] = k.whole ? $0.rounded() : $0 })
+        let changed = appearance.tuning.values[k.id] != nil
+        return VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(title)
+                Text(k.label).font(.subheadline)
                 Spacer()
-                Text(String(format: format, value.wrappedValue)).monospacedDigit().foregroundStyle(.secondary)
+                Text(k.whole ? String(Int(value.wrappedValue)) : String(format: "%.3g", value.wrappedValue))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(changed ? Theme.claude : .secondary)
             }
-            if let step {
-                Slider(value: value, in: range, step: step)
+            if k.whole {
+                Slider(value: value, in: k.range, step: 1)
             } else {
-                Slider(value: value, in: range)
+                Slider(value: value, in: k.range)
             }
+        }
+        .swipeActions {
+            Button("Standard") { appearance.tuning.values[k.id] = nil }
         }
     }
 
-    private func int(_ b: Binding<Int>) -> Binding<Double> {
-        Binding(get: { Double(b.wrappedValue) }, set: { b.wrappedValue = Int($0.rounded()) })
+    /// A voice for the preview: speaking in bursts, or silent.
+    static func voice(_ date: Date, _ talking: Bool) -> Double {
+        guard talking else { return 0 }
+        let t = date.timeIntervalSinceReferenceDate
+        return t.truncatingRemainder(dividingBy: 6) < 4 ? 0.3 + 0.35 * abs(sin(t * 7.3)) * abs(cos(t * 3.1)) : 0
     }
 }

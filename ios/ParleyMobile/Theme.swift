@@ -82,10 +82,11 @@ final class Appearance {
         }
     }
 
-    /// The orb's knobs (developer mode), remembered.
-    var orbTuning = (try? JSONDecoder().decode(OrbTuning.self, from: UserDefaults.standard.data(forKey: "orbTuning") ?? Data()))
-        ?? .shipped {
-        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(orbTuning), forKey: "orbTuning") }
+    /// The animations' knobs (developer mode), remembered. JARVIS values tuned in builds 30–31
+    /// come along.
+    var tuning: Tuning = (try? JSONDecoder().decode(Tuning.self, from: UserDefaults.standard.data(forKey: "tuning") ?? Data()))
+        ?? Knobs.migrated(UserDefaults.standard.data(forKey: "orbTuning")) {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(tuning), forKey: "tuning") }
     }
 
     /// What Parley looks like in a call.

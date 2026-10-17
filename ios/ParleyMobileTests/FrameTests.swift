@@ -234,11 +234,19 @@ struct FrameTests {
         #expect(Shade.luminance(0xFFFFFF) > 0.99 && Shade.luminance(0x000000) < 0.01)
         #expect(Shade.luminance(0xD97757) < 0.5)            // Claude: white text on terracotta
         #expect(Shade.luminance(0xFFFFFF) > 0.5)            // Schwarzweiß dark: black text on white
-        var t = OrbTuning.shipped
-        t.shells = 2
-        t.shellGap = 0.3
-        let back = try JSONDecoder().decode(OrbTuning.self, from: JSONEncoder().encode(t))
-        #expect(back == t && back != .shipped)
+        // Knobs: a changed value keeps, an untouched one is the shipped value; JARVIS values from
+        // builds 30–31 come along.
+        var t = Tuning()
+        t.values[Knobs.Jarvis.shells.id] = 2
+        let back = try JSONDecoder().decode(Tuning.self, from: JSONEncoder().encode(t))
+        #expect(back.int(Knobs.Jarvis.shells) == 2 && back[Knobs.Jarvis.gap] == Knobs.Jarvis.gap.value)
+        let old = try JSONSerialization.data(withJSONObject: ["shells": 2.0, "shellGap": 0.24, "rim": 1.8])
+        let moved = Knobs.migrated(old)
+        #expect(moved.int(Knobs.Jarvis.shells) == 2 && moved[Knobs.Jarvis.rim] == 1.8 && moved.values.count == 2)
+        // Every knob's shipped value lies in its range, and ids are unique.
+        let every = OrbStyle.allCases.flatMap(Knobs.list) + RingStyle.allCases.flatMap(Knobs.list)
+        #expect(every.allSatisfy { $0.range.contains($0.value) })
+        #expect(Set(every.map(\.id)).count == every.count)
     }
 
     @Test func orbParticlesSitOnTheSphere() {

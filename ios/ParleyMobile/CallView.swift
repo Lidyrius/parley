@@ -425,10 +425,10 @@ final class LevelSmoother {
     private(set) var value: Double = 0
     private var last: Double?
 
-    func next(_ target: Double, at t: Double) -> Double {
+    func next(_ target: Double, at t: Double, rise: Double = 0.04, fall: Double = 0.11) -> Double {
         let dt = last.map { min(0.1, max(0, t - $0)) } ?? 0
         last = t
-        let tau = target > value ? 0.04 : 0.11
+        let tau = max(0.001, target > value ? rise : fall)
         value += (target - value) * (1 - exp(-dt / tau))
         return value
     }

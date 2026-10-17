@@ -29,31 +29,6 @@ enum OrbStyle: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// The orb's knobs (Einstellungen → Entwickler → JARVIS-Regler). The defaults are the shipped
-/// look; size, voice gain and glow apply to every style, the rest shapes JARVIS.
-struct OrbTuning: Codable, Equatable, Sendable {
-    var shells = 3            // nested shells, 1…5
-    var shellGap = 0.24       // each shell this much smaller (of the outer radius)
-    var particles = 560       // points on the outer shell; inner ones scale with their size
-    var innerFade = 0.85      // brightness kept per shell inward
-    var twist = 0.9           // each shell's lattice turned this much (radians) against the last
-    var size = 0.40           // radius / view size
-    var dotSize = 1.3
-    var rim = 1.1             // how much a shell's outline outshines its face
-    var spin = 0.32           // turn speed (radians a second)
-    var tilt = 0.38           // tilt towards you (radians)
-    var reactivity = 1.6      // voice gain
-    var quiver = 0.12         // how deep the voice ripples the shells
-    var waves = 3.0           // ripple lobes around the globe
-    var waveSpeed = 5.0
-    var breathe = 0.02        // the idle wobble of each point
-    var sparks = 0.12         // how far a lifted point drifts
-    var sparkEvery = 23       // every n-th point can lift off
-    var glow = 1.0            // the soft light behind
-
-    static let shipped = OrbTuning()
-}
-
 /// The orb. `energy` is the voice level, 0…1 (eased per display frame here).
 struct ParticleOrb: View {
     let style: OrbStyle
@@ -67,8 +42,10 @@ struct ParticleOrb: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60, paused: paused)) { context in
             let t = paused ? 12.0 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 10_000)
-            let tuning = Appearance.shared.orbTuning
-            let e = smoother.next(min(1, energy(context.date) * tuning.reactivity), at: context.date.timeIntervalSinceReferenceDate)
+            let tuning = Appearance.shared.tuning
+            let g = Knobs.general(style)
+            let e = smoother.next(min(1, energy(context.date) * tuning[g.gain]), at: context.date.timeIntervalSinceReferenceDate,
+                                  rise: tuning[g.rise], fall: tuning[g.fall])
             Canvas { ctx, canvas in
                 // On dark, overlapping particles add up to light — the hologram's glow.
                 Self.draw(style, in: &ctx, size: canvas, orb: size, t: t, energy: e, color: color, tuning: tuning,
@@ -102,27 +79,30 @@ struct ParticleOrb: View {
     }
 
     nonisolated static func draw(_ style: OrbStyle, in ctx: inout GraphicsContext, size: CGSize, orb: CGFloat, t: Double,
-                                 energy e: Double, color: Color, tuning k: OrbTuning, dense: Bool, glows: Bool) {
+                                 energy e: Double, color: Color, tuning k: Tuning, dense: Bool, glows: Bool) {
+        let g = Knobs.general(style)
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        let R = orb * k.size * (1 + 0.06 * e)
+        let R = orb * k[g.size] * (1 + k[g.swell] * e)
         let unit = orb / 168
+        let few = dense ? 1.0 : 0.33   // the small orb above a slide: fewer points
 
         // The glow behind: brighter while speaking.
-        let glow = R * (1.25 + 0.35 * e)
+        let glow = R * (k[g.glowReach] + 0.35 * e)
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - glow, y: c.y - glow, width: 2 * glow, height: 2 * glow)),
-                 with: .radialGradient(Gradient(colors: [color.opacity((0.22 + 0.25 * e) * k.glow), color.opacity(0)]),
+                 with: .radialGradient(Gradient(colors: [color.opacity((0.22 + 0.25 * e) * k[g.glow]), color.opacity(0)]),
                                        center: c, startRadius: 0, endRadius: glow))
 
         if glows { ctx.blendMode = .plusLighter }
 
+        let perspective = k[g.depth], fadeFar = k[g.fadeFar], sizeFar = k[g.sizeFar]
         /// One particle at a 3D point (unit sphere scale); nearer ones bigger and brighter.
         func dot(_ p: SIMD3<Double>, size s: Double, alpha a: Double) {
             let depth = max(0, min(1, (p.z + 1.4) / 2.6))       // 0 far … 1 near
-            let persp = 1 / (1.35 - 0.35 * p.z)
+            let persp = 1 / (1 + perspective - perspective * p.z)
             let x = c.x + CGFloat(p.x * persp) * R, y = c.y + CGFloat(p.y * persp) * R
-            let r = CGFloat(s * 0.62 * (0.4 + 0.75 * depth)) * unit
+            let r = CGFloat(s * 0.71 * (1 - sizeFar + sizeFar * depth)) * unit
             ctx.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r)),
-                     with: .color(color.opacity(min(1, a * (0.12 + 0.95 * depth)))))
+                     with: .color(color.opacity(min(1, a * (1 - fadeFar + fadeFar * 1.08 * depth)))))
         }
 
         switch style {
@@ -132,82 +112,104 @@ struct ParticleOrb: View {
             // makes every shell quiver the same way; a few points lift off, but stay close. Points
             // near a shell's outline glow most (rim-lit, like a hologram), so each shell reads as
             // its own ring of light.
-            let yaw = t * k.spin, tilt = k.tilt
-            for s in 0..<max(1, k.shells) {
-                let radius = max(0.05, 1 - Double(s) * k.shellGap)
-                let count = max(12, Int(Double(k.particles) * pow(radius, 1.6) * (dense ? 1 : 0.36)))
-                let alpha = pow(k.innerFade, Double(s))
-                let twist = Double(s) * k.twist
+            typealias J = Knobs.Jarvis
+            let yaw = t * k[J.spin], tilt = k[J.tilt]
+            let quiver = k[J.quiver], lat0 = k[J.latWaves], lon0 = k[J.lonWaves], speed = k[J.waveSpeed]
+            let breathe = k[J.breathe], breatheSpeed = k[J.breatheSpeed]
+            let sparkEvery = k.int(J.sparkEvery), sparks = k[J.sparks], sparkSpeed = k[J.sparkSpeed]
+            let dotSize = k[J.dot], dotVar = k[J.dotVar], rimK = k[J.rim], face = k[J.face], light = k[J.voiceLight]
+            for s in 0..<max(1, k.int(J.shells)) {
+                let radius = max(0.05, 1 - Double(s) * k[J.gap])
+                let count = max(8, Int(k[J.particles] * pow(radius, k[J.countFalloff]) * few))
+                let alpha = pow(k[J.innerFade], Double(s))
+                let twist = Double(s) * k[J.twist]
                 for i in 0..<count {
-                    let p = rotate(sphere(i, of: count), yaw: twist, tilt: twist * 0.5)
+                    let p = rotate(sphere(i, of: count), yaw: twist, tilt: twist * k[J.twistTilt])
                     let lat = asin(p.y), lon = atan2(p.z, p.x)
-                    var r = 1 + k.breathe * sin(t * 1.3 + Double(i)) + e * k.quiver * sin(k.waves * lat + 2 * lon + t * k.waveSpeed)
-                    if k.sparkEvery > 0, i % k.sparkEvery == 0 {
-                        r += e * k.sparks * (t * 0.6 + rand(i, 1)).truncatingRemainder(dividingBy: 1)
+                    var r = 1 + breathe * sin(t * breatheSpeed + Double(i)) + e * quiver * sin(lat0 * lat + lon0 * lon + t * speed)
+                    if sparkEvery > 0, i % sparkEvery == 0 {
+                        r += e * sparks * (t * sparkSpeed + rand(i, 1)).truncatingRemainder(dividingBy: 1)
                     }
                     let q = rotate(p, yaw: yaw, tilt: tilt)
                     let rim = 1 - abs(q.z)
-                    dot(q * (r * radius), size: k.dotSize + rand(i, 2) * 0.6,
-                        alpha: alpha * (0.2 + k.rim * rim * rim) * (0.85 + 0.35 * e))
+                    dot(q * (r * radius), size: dotSize + rand(i, 2) * dotVar,
+                        alpha: alpha * (face + rimK * rim * rim) * (1 - light + 0.5 * light + light * e))
                 }
             }
         case .nebula:
             // Particles inside the ball, each drifting on its own slow path.
-            let n = dense ? 700 : 220
-            let yaw = t * 0.18
+            typealias N = Knobs.Nebula
+            let n = max(1, Int(k[N.count] * few))
+            let yaw = t * k[N.spin], tilt = k[N.tilt], ds = k[N.driftSpeed]
+            let drift = k[N.drift] + k[N.voiceDrift] * e
+            let radius = k[N.radius] + k[N.voiceRadius] * e, compact = k[N.compact]
+            let alpha = k[N.alpha] + k[N.voiceAlpha] * e, dotSize = k[N.dot], dotVar = k[N.dotVar]
             for i in 0..<n {
-                let rr = pow(rand(i, 0), 0.45) * (0.95 + 0.25 * e)
+                let rr = pow(rand(i, 0), compact) * radius
                 var p = sphere(Int(rand(i, 1) * 5000), of: 5000) * rr
-                let drift: Double = 0.06 + 0.08 * e
-                let dx: Double = sin(t * 0.7 + rand(i, 2) * 6.3)
-                let dy: Double = cos(t * 0.6 + rand(i, 3) * 6.3)
-                let dz: Double = sin(t * 0.5 + rand(i, 4) * 6.3)
+                let dx: Double = sin(t * 0.7 * ds + rand(i, 2) * 6.3)
+                let dy: Double = cos(t * 0.6 * ds + rand(i, 3) * 6.3)
+                let dz: Double = sin(t * 0.5 * ds + rand(i, 4) * 6.3)
                 p += SIMD3(dx, dy, dz) * drift
-                dot(rotate(p, yaw: yaw, tilt: 0.2), size: 1 + rand(i, 5) * 1.6, alpha: 0.35 + 0.4 * e)
+                dot(rotate(p, yaw: yaw, tilt: tilt), size: dotSize + rand(i, 5) * dotVar, alpha: alpha)
             }
         case .wave:
             // Rows of dots around the globe; the voice runs across them as waves.
-            let rows = dense ? 22 : 12, cols = dense ? 40 : 22
-            let yaw = t * 0.25
+            typealias W = Knobs.Wave
+            let rows = max(2, Int(Double(k.int(W.rows)) * (dense ? 1 : 0.55)))
+            let cols = max(3, Int(Double(k.int(W.cols)) * (dense ? 1 : 0.55)))
+            let yaw = t * k[W.spin], tilt = k[W.tilt]
+            let amp = k[W.amp] + k[W.voiceAmp] * e
+            let lonF = k[W.lonFreq], latF = k[W.latFreq], lonS = k[W.lonSpeed], latS = k[W.latSpeed]
+            let alpha = k[W.alpha] + k[W.voiceAlpha] * e, dotSize = k[W.dot]
             for a in 0..<rows {
                 let lat = -Double.pi / 2 + .pi * (Double(a) + 0.5) / Double(rows)
                 for b in 0..<cols {
                     let lon = 2 * .pi * Double(b) / Double(cols)
-                    let r = 1 + (0.04 + 0.22 * e) * sin(lon * 3 + t * 2.4) * cos(lat * 2 - t * 1.6)
+                    let r = 1 + amp * sin(lon * lonF + t * lonS) * cos(lat * latF - t * latS)
                     let p = SIMD3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon)) * r
-                    dot(rotate(p, yaw: yaw, tilt: 0.35), size: 1.2, alpha: 0.5 + 0.45 * e)
+                    dot(rotate(p, yaw: yaw, tilt: tilt), size: dotSize, alpha: alpha)
                 }
             }
         case .orbit:
-            // A bright core and four tilted rings of particles circling it.
-            let core = dense ? 140 : 50
+            // A bright core and tilted rings of particles circling it.
+            typealias O = Knobs.Orbit
+            let core = Int(k[O.coreCount] * few)
+            let coreR = k[O.coreSize], pulse = k[O.corePulse], coreVoice = k[O.coreVoice], coreSpin = k[O.coreSpin]
             for i in 0..<core {
-                let p = sphere(i, of: core) * (0.32 + 0.05 * sin(t * 3 + Double(i)) + 0.12 * e)
-                dot(rotate(p, yaw: t * 0.5, tilt: 0.3), size: 1.5, alpha: 0.9)
+                let p = sphere(i, of: core) * (coreR + pulse * sin(t * 3 + Double(i)) + coreVoice * e)
+                dot(rotate(p, yaw: t * coreSpin, tilt: 0.3), size: k[O.coreDot], alpha: 0.9)
             }
-            let per = dense ? 120 : 40
-            for ring in 0..<4 {
-                let tiltRing = 0.25 + Double(ring) * 0.8, turn = Double(ring) * 0.9 + t * 0.15
-                let speed = (0.45 + 0.15 * Double(ring)) * (1 + 2.2 * e)
+            let per = max(3, Int(k[O.perRing] * few))
+            let alpha = k[O.alpha] + k[O.voiceAlpha] * e, dotSize = k[O.dot], dotVar = k[O.dotVar], wobble = k[O.wobble]
+            for ring in 0..<k.int(O.rings) {
+                let tiltRing = k[O.tilt] + Double(ring) * k[O.tiltStep], turn = Double(ring) * 0.9 + t * k[O.precession]
+                let speed = (k[O.speed] + k[O.speedStep] * Double(ring)) * (1 + k[O.voiceSpeed] * e)
+                let base = k[O.radius] + k[O.radiusStep] * Double(ring)
                 for j in 0..<per {
                     let a = Double(j) / Double(per) * 2 * .pi + t * speed
-                    let rr = 0.82 + 0.1 * Double(ring) + 0.03 * sin(Double(j) * 1.7 + t)
+                    let rr = base + wobble * sin(Double(j) * 1.7 + t)
                     let p = SIMD3(cos(a) * rr, 0.02 * sin(Double(j) * 3.1), sin(a) * rr)
                     dot(rotate(rotate(p, yaw: 0, tilt: tiltRing), yaw: turn, tilt: 0.25),
-                        size: 1.1 + 0.6 * rand(j, ring), alpha: 0.45 + 0.4 * e)
+                        size: dotSize + dotVar * rand(j, ring), alpha: alpha)
                 }
             }
         case .swirl:
-            // A tilted galaxy with three arms that open up with the voice.
-            let n = dense ? 760 : 240
+            // A tilted galaxy whose arms open up with the voice.
+            typealias S = Knobs.Swirl
+            let n = max(1, Int(k[S.count] * few))
+            let arms = max(1, k.int(S.arms))
+            let winding = k[S.winding], spread = k[S.spread] + k[S.voiceSpread] * e
+            let radius = k[S.radius] * (1 + k[S.voiceRadius] * e), conc = k[S.concentration], thick = k[S.thickness]
+            let spin = t * k[S.spin], tilt = k[S.tilt]
+            let alpha = k[S.alpha] + k[S.voiceAlpha] * e, dotSize = k[S.dot], dotVar = k[S.dotVar]
             for i in 0..<n {
-                let arm = Double(i % 3) * 2 * .pi / 3
-                let rr = pow(rand(i, 0), 0.6) * (1 + 0.25 * e)
+                let arm = Double(i % arms) * 2 * .pi / Double(arms)
+                let rr = pow(rand(i, 0), conc)
                 // The arms turn as one (a turn per star would wind them up into a plain disc).
-                let spread = (rand(i, 1) - 0.5) * (0.35 + 0.45 * e)
-                let a = arm + rr * 4.6 + spread + t * 0.35
-                let p = SIMD3(cos(a) * rr * 1.15, (rand(i, 2) - 0.5) * 0.12 * (1 - rr), sin(a) * rr * 1.15)
-                dot(rotate(p, yaw: 0, tilt: 1.05), size: 0.9 + rand(i, 3) * 1.4, alpha: 0.5 + 0.4 * e)
+                let a = arm + rr * winding + (rand(i, 1) - 0.5) * spread + spin
+                let p = SIMD3(cos(a) * rr * radius, (rand(i, 2) - 0.5) * thick * (1 - rr), sin(a) * rr * radius)
+                dot(rotate(p, yaw: 0, tilt: tilt), size: dotSize + rand(i, 3) * dotVar, alpha: alpha)
             }
         }
     }

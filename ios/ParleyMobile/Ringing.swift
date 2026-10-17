@@ -41,26 +41,31 @@ struct RingingStage<Content: View>: View {
     @State private var bloom = 1.0   // 0 → 1: the answer's wave; 1 = done
 
     var body: some View {
+        let k = Appearance.shared.tuning
+        let g = Knobs.general(style)
+        let reach = ring * 2.8 * k[g.scale]
         TimelineView(.animation(paused: paused || !active)) { context in
             let t = paused ? 0.35 : context.date.timeIntervalSinceReferenceDate
             content
-                .scaleEffect(active && style == .breathe ? 1 + 0.05 * Self.breath(t) : 1)
-                .rotationEffect(.degrees(active && style == .bell ? Self.bell(t) : 0), anchor: .top)
+                .scaleEffect(active && style == .breathe ? 1 + k[Knobs.Breathe.scale] * Self.breath(t, k) : 1)
+                .rotationEffect(.degrees(active && style == .bell ? Self.bell(t, k) : 0), anchor: .top)
                 .background {
-                    Canvas { ctx, size in Self.draw(style, in: &ctx, size: size, t: t, ring: ring, color: color) }
-                        .frame(width: ring * 2.8, height: ring * 2.8)
-                        .opacity(active ? 1 : 0)
-                        .scaleEffect(active ? 1 : 0.6)
-                        .allowsHitTesting(false)
+                    Canvas { ctx, size in
+                        Self.draw(style, in: &ctx, size: size, t: t, ring: ring * k[g.scale], color: color, k: k)
+                    }
+                    .frame(width: max(reach, ring * 2.8), height: max(reach, ring * 2.8))
+                    .opacity(active ? min(1, k[g.opacity]) : 0)
+                    .scaleEffect(active ? 1 : 0.6)
+                    .allowsHitTesting(false)
                 }
         }
         .background {
             // The answer: one soft wave from the ring out over the screen.
             Circle()
-                .fill(RadialGradient(colors: [color.opacity(0), color.opacity(0.22), color.opacity(0)],
+                .fill(RadialGradient(colors: [color.opacity(0), color.opacity(k[g.answerGlow]), color.opacity(0)],
                                      center: .center, startRadius: 0, endRadius: ring * 0.6))
                 .frame(width: ring * 1.2, height: ring * 1.2)
-                .scaleEffect(1 + 7 * bloom)
+                .scaleEffect(1 + k[g.answerReach] * bloom)
                 .opacity(bloom < 1 ? 1 - bloom : 0)
                 .allowsHitTesting(false)
         }
@@ -68,106 +73,119 @@ struct RingingStage<Content: View>: View {
         .onChange(of: active) { _, now in
             guard !now, !paused else { return }
             bloom = 0
-            withAnimation(.easeOut(duration: 1.1)) { bloom = 1 }
+            withAnimation(.easeOut(duration: k[g.answerTime])) { bloom = 1 }
         }
     }
 
     // MARK: - Motion
 
-    nonisolated static var cycle: Double { 2.4 }
-
-    /// The ring-ring beat: two short swells in each 2.4 s cycle, 0…1.
-    nonisolated static func beat(_ t: Double) -> Double {
-        let c = t.truncatingRemainder(dividingBy: 2.4)
-        return exp(-pow((c - 0.2) / 0.12, 2)) + 0.85 * exp(-pow((c - 0.62) / 0.12, 2))
+    /// The ring-ring beat: two short swells each cycle, 0…1.
+    nonisolated static func beat(_ t: Double, _ k: Tuning, _ g: RingGeneral) -> Double {
+        let c = t.truncatingRemainder(dividingBy: max(0.1, k[g.cycle])), w = max(0.01, k[g.beatWidth])
+        return exp(-pow((c - k[g.beat1]) / w, 2)) + k[g.beat2Strength] * exp(-pow((c - k[g.beat2]) / w, 2))
     }
 
-    nonisolated static func breath(_ t: Double) -> Double { 0.5 - 0.5 * cos(2 * .pi * t / 2.8) }
+    nonisolated static func breath(_ t: Double, _ k: Tuning) -> Double {
+        0.5 - 0.5 * cos(2 * .pi * t / max(0.1, k[Knobs.Breathe.period]))
+    }
 
     /// The bell's swing in degrees: a damped shake through both beats, then rest.
-    nonisolated static func bell(_ t: Double) -> Double {
-        let c = t.truncatingRemainder(dividingBy: 2.4)
-        guard c < 1.1 else { return 0 }
-        return 7 * sin(c * 2 * .pi * 5.5) * exp(-c * 1.6)
+    nonisolated static func bell(_ t: Double, _ k: Tuning) -> Double {
+        typealias B = Knobs.Bell
+        let c = t.truncatingRemainder(dividingBy: max(0.1, k[B.general.cycle]))
+        guard c < k[B.swingTime] else { return 0 }
+        return k[B.swing] * sin(c * 2 * .pi * k[B.freq]) * exp(-c * k[B.damping])
     }
 
     nonisolated static func draw(_ style: RingStyle, in ctx: inout GraphicsContext, size: CGSize, t: Double,
-                                 ring: CGFloat, color: Color) {
+                                 ring: CGFloat, color: Color, k: Tuning) {
+        let g = Knobs.general(style)
+        let cycle = max(0.1, k[g.cycle])
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
         let r0 = ring * 0.66   // just outside the ring's disc
         let u = ring / 128
         func circle(_ r: CGFloat) -> Path { Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)) }
+        let fade = min(1, max(0, k[g.opacity]))
 
         switch style {
         case .ripples:
-            // Each beat sends a ring outwards; it lives 2 s, so the last one still fades as the next cycle starts.
-            let phase = t.truncatingRemainder(dividingBy: cycle)
-            for back in 0...1 {
-                for launch in [0.1, 0.52] {
+            // Each beat sends a ring outwards; the last one may still fade as the next cycle starts.
+            typealias R = Knobs.Ripples
+            let phase = t.truncatingRemainder(dividingBy: cycle), life = max(0.1, k[R.life])
+            let start = ring * k[R.start], reach = k[R.reach], ease = k[R.ease]
+            for back in 0...Int(ceil(life / cycle)) {
+                for launch in [k[g.beat1], k[g.beat2]] {
                     let age = phase - launch + Double(back) * cycle
-                    guard age >= 0, age < 2.0 else { continue }
-                    let p = age / 2.0
-                    let r = r0 * (1 + 0.6 * (1 - pow(1 - p, 2.2)))
-                    let a = 0.5 * pow(1 - p, 1.6)
-                    ctx.fill(circle(r), with: .color(color.opacity(a * 0.18)))
-                    ctx.stroke(circle(r), with: .color(color.opacity(a)), lineWidth: 2 * u)
+                    guard age >= 0, age < life else { continue }
+                    let p = age / life
+                    let r = start * (1 + reach * (1 - pow(1 - p, ease)))
+                    let a = fade * pow(1 - p, k[R.fade])
+                    ctx.fill(circle(r), with: .color(color.opacity(a * k[R.fill] * 0.5)))
+                    ctx.stroke(circle(r), with: .color(color.opacity(a * k[R.stroke])), lineWidth: k[R.width] * u)
                 }
             }
         case .breathe:
-            let s = breath(t)
-            let r = r0 * (1.05 + 0.3 * s)
-            ctx.fill(circle(r), with: .radialGradient(Gradient(colors: [color.opacity(0.32 * (0.45 + 0.55 * s)), color.opacity(0)]),
+            typealias B = Knobs.Breathe
+            let s = breath(t, k)
+            let r = r0 * (1.05 + k[B.reach] * s)
+            ctx.fill(circle(r), with: .radialGradient(Gradient(colors: [color.opacity(fade * k[B.glow] * (0.45 + 0.55 * s)), color.opacity(0)]),
                                                       center: c, startRadius: r0 * 0.6, endRadius: r))
-            ctx.stroke(circle(r0 * (1.0 + 0.12 * s)), with: .color(color.opacity(0.18 + 0.25 * s)), lineWidth: 1.5 * u)
+            ctx.stroke(circle(r0 * (1.0 + k[B.ringGrow] * s)), with: .color(color.opacity(fade * (k[B.ringAlpha] * (0.7 + s)))),
+                       lineWidth: k[B.ringWidth] * u)
         case .orbit:
-            for k in 0..<3 {
-                let speed = 1.25 + 0.3 * Double(k)
-                let head = t * speed + Double(k) * 2.1
-                let r = r0 * (1.1 + 0.11 * CGFloat(k))
-                for j in 0..<18 {
-                    let a = head - Double(j) * 0.06
-                    let f = 1 - Double(j) / 18
-                    let dot = (3.6 - 0.6 * CGFloat(k)) * u * CGFloat(0.35 + 0.65 * f)
+            typealias O = Knobs.RingOrbit
+            let tail = max(1, k.int(O.tail)), spacing = k[O.spacing]
+            for n in 0..<max(1, k.int(O.dots)) {
+                let speed = k[O.speed] + k[O.speedStep] * Double(n)
+                let head = t * speed + Double(n) * 2.1
+                let r = r0 * (k[O.radius] + k[O.radiusStep] * CGFloat(n))
+                for j in 0..<tail {
+                    let a = head - Double(j) * spacing * (speed < 0 ? -1 : 1)
+                    let f = 1 - Double(j) / Double(tail)
+                    let dot = max(0.3, k[O.dot] - k[O.dotStep] * CGFloat(n)) * u * CGFloat(0.35 + 0.65 * f)
                     let p = CGPoint(x: c.x + r * CGFloat(cos(a)), y: c.y + r * CGFloat(sin(a)))
                     ctx.fill(Path(ellipseIn: CGRect(x: p.x - dot, y: p.y - dot, width: 2 * dot, height: 2 * dot)),
-                             with: .color(color.opacity(0.85 * f * f)))
+                             with: .color(color.opacity(fade * k[O.alpha] * f * f)))
                 }
             }
         case .aura:
-            // Two bright arcs with fading tails turn around the ring, in a glow that swells on the beats.
-            let glow = 0.5 + 0.5 * min(1, beat(t))
-            let head = t * 1.4
-            let r = r0 * 1.04
-            func arcs(_ g: inout GraphicsContext, width: CGFloat, alpha: Double) {
-                for k in 0..<2 {
-                    for j in 0..<28 {
-                        let a = head + Double(k) * .pi - Double(j) * 0.05
-                        var seg = Path()
-                        seg.addArc(center: c, radius: r, startAngle: .radians(a - 0.055), endAngle: .radians(a), clockwise: false)
-                        g.stroke(seg, with: .color(color.opacity(alpha * pow(1 - Double(j) / 28, 1.6))),
+            // Bright arcs with fading tails turn around the ring, in a glow that swells on the beats.
+            typealias A = Knobs.Aura
+            let glow = k[A.base] + (1 - k[A.base]) * min(1, beat(t, k, g))
+            let head = t * k[A.spin]
+            let r = r0 * k[A.radius]
+            let arcs = max(1, k.int(A.arcs)), pieces = max(1, k.int(A.tail)), seg = k[A.seg]
+            func draw(_ g: inout GraphicsContext, width: CGFloat, alpha: Double) {
+                for n in 0..<arcs {
+                    for j in 0..<pieces {
+                        let a = head + Double(n) * 2 * .pi / Double(arcs) - Double(j) * seg
+                        var piece = Path()
+                        piece.addArc(center: c, radius: r, startAngle: .radians(a - seg * 1.1), endAngle: .radians(a), clockwise: false)
+                        g.stroke(piece, with: .color(color.opacity(fade * alpha * pow(1 - Double(j) / Double(pieces), 1.6))),
                                  style: StrokeStyle(lineWidth: width, lineCap: .butt))
                     }
                 }
             }
             ctx.drawLayer { layer in
-                layer.addFilter(.blur(radius: 10 * u))
+                layer.addFilter(.blur(radius: k[A.blur] * u))
                 layer.opacity = glow
-                arcs(&layer, width: 16 * u, alpha: 0.9)
+                draw(&layer, width: k[A.width] * u, alpha: 0.9)
             }
-            ctx.stroke(circle(r), with: .color(color.opacity(0.12)), lineWidth: 2 * u)
-            arcs(&ctx, width: 3 * u, alpha: 1)
+            ctx.stroke(circle(r), with: .color(color.opacity(fade * k[A.track])), lineWidth: 2 * u)
+            if k[A.line] > 0 { draw(&ctx, width: k[A.line] * u, alpha: 1) }
         case .bell:
             // Sound arcs left and right, lighting up outwards while the bell swings.
+            typealias B = Knobs.Bell
             let phase = t.truncatingRemainder(dividingBy: cycle)
-            for i in 0..<3 {
-                let local = (phase - 0.08 - Double(i) * 0.13) / 0.75
+            for i in 0..<k.int(B.arcs) {
+                let local = (phase - 0.08 - Double(i) * k[B.delay]) / max(0.05, k[B.arcTime])
                 guard local > 0, local < 1 else { continue }
-                let a = 0.75 * sin(.pi * local)
-                let r = r0 * (1.08 + 0.2 * CGFloat(i))
+                let a = fade * k[B.alpha] * sin(.pi * local)
+                let r = r0 * (k[B.first] + k[B.step] * CGFloat(i))
                 for side in [0.0, 180.0] {
                     var arc = Path()
-                    arc.addArc(center: c, radius: r, startAngle: .degrees(side - 26), endAngle: .degrees(side + 26), clockwise: false)
-                    ctx.stroke(arc, with: .color(color.opacity(a)), style: StrokeStyle(lineWidth: 3 * u, lineCap: .round))
+                    arc.addArc(center: c, radius: r, startAngle: .degrees(side - k[B.spread]), endAngle: .degrees(side + k[B.spread]), clockwise: false)
+                    ctx.stroke(arc, with: .color(color.opacity(a)), style: StrokeStyle(lineWidth: k[B.width] * u, lineCap: .round))
                 }
             }
         }
