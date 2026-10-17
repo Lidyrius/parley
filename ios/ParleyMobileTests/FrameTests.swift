@@ -220,6 +220,12 @@ struct FrameTests {
         #expect(SlideCard.format(24) == "24")
     }
 
+    @Test func metricCountsInTheNumbersOwnShape() {
+        #expect(CountUp.text(41.6, like: "80") == "42")
+        #expect(CountUp.text(40.24, like: "98,5") == "40,2")
+        #expect(CountUp.text(0, like: "1.25") == "0.00")
+    }
+
     @Test func pagerFollowsTheVoiceUnlessSwiped() {
         let s = Demo.slides
         let now = Date.now

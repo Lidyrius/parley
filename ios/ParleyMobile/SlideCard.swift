@@ -215,14 +215,20 @@ private struct MetricText: View {
         let (number, rest) = Self.split(metric)
         Group {
             if let number {
-                let value = shown ? number : 0
-                Text(SlideCard.format(number.rounded() == number ? value.rounded() : value) + rest)
-                    .contentTransition(.numericText(value: value))
+                let raw = String(metric.dropLast(rest.count)).trimmingCharacters(in: .whitespaces)
+                HStack(spacing: 0) {
+                    // The final number holds the width, so the count never pushes " / 80" around.
+                    ZStack(alignment: .trailing) {
+                        Text(raw).hidden()
+                        CountUp(value: shown ? number : 0, like: raw)
+                    }
+                    Text(rest)
+                }
             } else {
                 Text(metric).opacity(shown ? 1 : 0).scaleEffect(shown ? 1 : 0.9, anchor: .leading)
             }
         }
-        .font(.system(size: 60, weight: .bold, design: .rounded))
+        .font(.system(size: 60, weight: .bold, design: .rounded).monospacedDigit())
         .foregroundStyle(Theme.claude.gradient)
         .minimumScaleFactor(0.5)
         .lineLimit(1)
@@ -231,5 +237,23 @@ private struct MetricText: View {
     static func split(_ s: String) -> (Double?, String) {
         guard let m = s.firstMatch(of: /^\s*(\d+(?:[.,]\d+)?)(.*)$/) else { return (nil, s) }
         return (Double(m.1.replacingOccurrences(of: ",", with: ".")), String(m.2))
+    }
+}
+
+/// A number counting from 0 to its value while animated, written like `like` ("80", "98,5").
+struct CountUp: View, Animatable {
+    var value: Double
+    let like: String
+    nonisolated var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View { Text(Self.text(value, like: like)) }
+
+    nonisolated static func text(_ v: Double, like: String) -> String {
+        guard let sep = like.firstIndex(where: { $0 == "," || $0 == "." }) else { return String(Int(v.rounded())) }
+        let decimals = like.distance(from: sep, to: like.endIndex) - 1
+        return String(format: "%.\(decimals)f", v).replacingOccurrences(of: ".", with: String(like[sep]))
     }
 }
