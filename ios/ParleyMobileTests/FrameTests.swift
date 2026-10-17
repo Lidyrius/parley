@@ -220,6 +220,16 @@ struct FrameTests {
         #expect(SlideCard.format(24) == "24")
     }
 
+    @Test func customPalettesKeepAndWarn() throws {
+        var p = Palette.claude
+        p.id = "custom-test"
+        p.waiting = p.accent                       // a clash the editor should point out
+        let back = try JSONDecoder().decode(Palette.self, from: JSONEncoder().encode(p))
+        #expect(back == p)
+        #expect(p.clashes.contains { $0.contains("Akzent und Wartet") })
+        #expect((Palette.all + Palette.classics).allSatisfy { $0.clashes.isEmpty || $0.id == "claude" })
+    }
+
     @Test func textOnAccentReadsAndTuningKeeps() throws {
         #expect(Shade.luminance(0xFFFFFF) > 0.99 && Shade.luminance(0x000000) < 0.01)
         #expect(Shade.luminance(0xD97757) < 0.5)            // Claude: white text on terracotta

@@ -45,7 +45,24 @@ final class Appearance {
         }
     }
 
-    var palette: Palette { (Palette.all + Palette.classics).first { $0.id == paletteID } ?? .claude }
+    var palette: Palette { (Palette.all + Palette.classics + customPalettes).first { $0.id == paletteID } ?? .claude }
+
+    /// Palettes built in the developer mode's editor, remembered.
+    var customPalettes: [Palette] = (try? JSONDecoder().decode([Palette].self,
+                                                               from: UserDefaults.standard.data(forKey: "customPalettes") ?? Data())) ?? [] {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(customPalettes), forKey: "customPalettes") }
+    }
+
+    /// Adds or replaces a custom palette and picks it.
+    func save(_ p: Palette) {
+        if let i = customPalettes.firstIndex(where: { $0.id == p.id }) { customPalettes[i] = p } else { customPalettes.append(p) }
+        paletteID = p.id
+    }
+
+    func delete(_ id: String) {
+        customPalettes.removeAll { $0.id == id }
+        if paletteID == id { paletteID = Palette.claude.id }
+    }
 
     /// Light, dark, or as the iPhone is set — the app's own choice.
     var scheme = SchemeChoice(rawValue: UserDefaults.standard.string(forKey: "scheme") ?? "") ?? .system {
@@ -110,9 +127,9 @@ enum SchemeChoice: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// A colour for light and for dark mode.
-struct Shade: Equatable, Sendable {
-    let light: UInt32
-    let dark: UInt32
+struct Shade: Codable, Equatable, Sendable {
+    var light: UInt32
+    var dark: UInt32
 
     init(_ light: UInt32, _ dark: UInt32) { self.light = light; self.dark = dark }
     init(_ both: UInt32) { self.init(both, both) }
@@ -151,20 +168,20 @@ struct Shade: Equatable, Sendable {
 
 /// A colour palette for the whole app: neutrals for both modes, the accent, and the colours the
 /// session states keep in every palette (waiting yellow, working blue, idle green …).
-struct Palette: Identifiable, Equatable, Sendable {
-    let id: String
-    let name: String
-    let note: String
-    let background: Shade
-    let card: Shade
-    let raised: Shade      // the user's bubble, inline code
-    let accent: Shade
-    let waiting: Shade     // yellow
-    let working: Shade     // blue
-    let purple: Shade      // running in the background
-    let idle: Shade        // green
-    let stopped: Shade     // grey
-    let red: Shade
+struct Palette: Identifiable, Codable, Equatable, Sendable {
+    var id: String
+    var name: String
+    var note: String
+    var background: Shade
+    var card: Shade
+    var raised: Shade      // the user's bubble, inline code
+    var accent: Shade
+    var waiting: Shade     // yellow
+    var working: Shade     // blue
+    var purple: Shade      // running in the background
+    var idle: Shade        // green
+    var stopped: Shade     // grey
+    var red: Shade
     var alwaysDark = false   // the night light: dark whatever the setting
 
     static let claude = Palette(
@@ -287,6 +304,29 @@ struct Palette: Identifiable, Equatable, Sendable {
                 red: Shade(0xD1242F, 0xF85149)),
     ]
 
+    /// Pairs of rings too alike to tell apart, per mode ("Hell: Akzent ~ Wartet"); FrameTests
+    /// requires none for the shipped palettes, the editor shows them as hints.
+    var clashes: [String] {
+        let rings: [(String, Shade)] = [("Akzent", accent), ("Wartet", waiting), ("Arbeitet", working),
+                                        ("Bereit", idle), ("Gestoppt", stopped)]
+        var out: [String] = []
+        for (mode, pick) in [("Hell", \Shade.light), ("Dunkel", \Shade.dark)] where !(mode == "Hell" && alwaysDark) {
+            for i in rings.indices {
+                for j in rings.indices where j > i && !Self.far(rings[i].1[keyPath: pick], rings[j].1[keyPath: pick]) {
+                    out.append("\(mode): \(rings[i].0) und \(rings[j].0) sind kaum zu unterscheiden")
+                }
+            }
+            if !Self.far(background[keyPath: pick], accent[keyPath: pick]) { out.append("\(mode): Akzent hebt sich kaum vom Hintergrund ab") }
+        }
+        return out
+    }
+
+    /// Far enough apart to tell at a glance (RGB distance > 50).
+    static func far(_ a: UInt32, _ b: UInt32) -> Bool {
+        let d = [16, 8, 0].map { Double(Int((a >> $0) & 0xFF) - Int((b >> $0) & 0xFF)) }
+        return d.map { $0 * $0 }.reduce(0, +).squareRoot() > 50
+    }
+
     /// Six distinct colours for charts (the pie's slices).
     var series: [Shade] { [accent, working, idle, waiting, purple, stopped] }
 }
@@ -329,6 +369,16 @@ extension Color {
 
     init(light: UInt32, dark: UInt32) {
         self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
+    }
+}
+
+extension Color {
+    /// The colour as 0xRRGGBB (sRGB, clamped) — what the palette editor stores.
+    var hex: UInt32 {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a)
+        func c(_ v: CGFloat) -> UInt32 { UInt32(max(0, min(255, (v * 255).rounded()))) }
+        return c(r) << 16 | c(g) << 8 | c(b)
     }
 }
 

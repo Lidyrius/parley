@@ -104,6 +104,18 @@ struct SettingsView: View {
                         } label: {
                             Label("JARVIS-Regler", systemImage: "slider.horizontal.3")
                         }
+                        NavigationLink {
+                            PaletteEditor(base: Theme.palette, isNew: true)
+                        } label: {
+                            Label("Palette bauen", systemImage: "paintbrush.pointed.fill")
+                        }
+                        ForEach(Appearance.shared.customPalettes) { p in
+                            NavigationLink {
+                                PaletteEditor(base: p, isNew: false)
+                            } label: {
+                                Label(p.name, systemImage: "swatchpalette")
+                            }
+                        }
                         Toggle(isOn: $developer) {
                             Label("Entwicklermodus", systemImage: "hammer.fill")
                         }
@@ -148,6 +160,15 @@ struct PalettePicker: View {
                 ForEach(Palette.all) { row($0) }
             } footer: {
                 Text("Gilt für die ganze App, hell und dunkel; Nachtlicht bleibt immer dunkel. In jeder Palette bleiben die Zustände klar unterscheidbar: spricht, wartet, arbeitet, bereit.")
+            }
+            if !appearance.customPalettes.isEmpty {
+                Section {
+                    ForEach(appearance.customPalettes) { row($0) }
+                } header: {
+                    Text("Eigene")
+                } footer: {
+                    Text("Gebaut im Entwicklermodus; dort lassen sie sich bearbeiten und löschen.")
+                }
             }
             Section {
                 ForEach(Palette.classics) { row($0) }
