@@ -178,7 +178,8 @@ final class CallController {
         guard action.callUUID == uuid, phase == .ringing else { action.fail(); return }
         try? Self.configureSession()
         phase = .connecting
-        if UIApplication.shared.applicationState == .active { showsScreen = true }
+        // Answered on the lock screen, in a banner or in the app: opening Parley shows the call.
+        showsScreen = true
         dial()
         action.fulfill()
     }

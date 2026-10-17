@@ -305,11 +305,13 @@ struct Waveform: View {
     var paused = false
     let level: (Date) -> Float
     private let bars = 41
+    @State private var smoother = LevelSmoother()
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: paused)) { context in
+        // Every display frame (60/120 Hz), the level eased between the 20 ms meter steps.
+        TimelineView(.animation(paused: paused)) { context in
             let t = paused ? 0 : context.date.timeIntervalSinceReferenceDate
-            let lvl = Double(level(context.date))
+            let lvl = smoother.next(Double(level(context.date)), at: context.date.timeIntervalSinceReferenceDate)
             Canvas { ctx, size in
                 let gap: CGFloat = 4
                 let w = max(2, (size.width - gap * CGFloat(bars - 1)) / CGFloat(bars))
@@ -325,6 +327,7 @@ struct Waveform: View {
     }
 
     /// 0…1 height of bar `i` at time `t`.
+    // (LevelSmoother: below.)
     nonisolated static func amplitude(_ mood: CallLook.Mood, bar i: Int, of n: Int, t: Double, level: Double) -> Double {
         let p = (Double(i) + 0.5) / Double(n)
         let envelope = pow(sin(.pi * p), 1.3)
@@ -343,6 +346,21 @@ struct Waveform: View {
             let pulse = exp(-pow((beat - 0.15) / 0.07, 2)) + 0.8 * exp(-pow((beat - 0.42) / 0.07, 2))
             return 0.06 + 0.5 * envelope * pulse
         }
+    }
+}
+
+/// The meter moves in 20 ms steps; this eases it per display frame — quick to rise, gentle
+/// to fall — so the bars glide instead of jumping.
+final class LevelSmoother {
+    private(set) var value: Double = 0
+    private var last: Double?
+
+    func next(_ target: Double, at t: Double) -> Double {
+        let dt = last.map { min(0.1, max(0, t - $0)) } ?? 0
+        last = t
+        let tau = target > value ? 0.04 : 0.11
+        value += (target - value) * (1 - exp(-dt / tau))
+        return value
     }
 }
 

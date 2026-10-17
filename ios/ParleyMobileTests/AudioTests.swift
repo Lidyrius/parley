@@ -193,4 +193,16 @@ struct AudioTests {
         jb.reset()
         #expect(jb.inFlight == 0 && jb.waiting.isEmpty)
     }
+
+    @Test func levelSmootherEases() {
+        let s = LevelSmoother()
+        #expect(s.next(1, at: 0) == 0)                       // no time passed yet
+        let up = s.next(1, at: 0.02)
+        #expect(up > 0.3 && up < 1)                           // rises fast, not in one jump
+        for k in 2...18 { _ = s.next(1, at: 0.02 + Double(k) / 60) }   // 60 Hz frames for ~0.3 s
+        #expect(s.value > 0.99)
+        let down = s.next(0, at: 0.02 + 19.0 / 60)
+        #expect(down > 0.7)                                   // falls gently
+    }
 }
+
