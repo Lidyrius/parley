@@ -118,18 +118,6 @@ final class CallAudio {
         }
     }
 
-    /// A short sound of the phone's own (the hang-up tone), straight to the player — past the
-    /// jitter buffer and the frame counters, so captions and the drain check don't see it.
-    func playLocal(_ samples: [Float]) {
-        guard isRunning, !samples.isEmpty,
-              let buffer = AVAudioPCMBuffer(pcmFormat: PCM.playFormat, frameCapacity: AVAudioFrameCount(samples.count)),
-              let channel = buffer.floatChannelData?[0] else { return }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
-        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
-        player.scheduleBuffer(buffer)
-        if !player.isPlaying { player.play() }
-    }
-
     private func schedule(_ frame: Data) {
         let buffer = frame.count == PCM.hiFiFrameBytes
             ? PCM.buffer(frame, format: PCM.playFormat)

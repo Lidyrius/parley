@@ -388,6 +388,11 @@ final class ControlServer: @unchecked Sendable {
         queue.sync { sessions.setCallback(id, at: at) }
     }
 
+    // No turn waits behind the one being voiced.
+    func nothingQueued() -> Bool {
+        queue.sync { replyQueue.isEmpty }
+    }
+
     // True if any session besides `id` is alive (any state but stopped) → announce the turn.
     func othersAlive(except id: String) -> Bool {
         queue.sync { sessions.othersAlive(except: id) }

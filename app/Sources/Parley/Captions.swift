@@ -83,11 +83,13 @@ enum Captions {
         return Timed(words: words, starts: starts.map { $0 * scale }, end: Double(last + 1) * scale)
     }
 
-    /// `{"t":"caption","words":[…],"at":[…],"end":…}` — sent just before the line's first frame.
-    static func frame(_ t: Timed) -> String {
-        struct Wire: Encodable { let t = "caption"; let words: [String]; let at: [Double]; let end: Double }
+    /// `{"t":"caption","words":[…],"at":[…],"end":…,"last":…}` — sent just before the line's first
+    /// frame. `last`: nothing follows on this call (a speak-end line, no other turn waiting) — a
+    /// phone that hangs up after the talk starts leaving before the line ends.
+    static func frame(_ t: Timed, last: Bool = false) -> String {
+        struct Wire: Encodable { let t = "caption"; let words: [String]; let at: [Double]; let end: Double; let last: Bool }
         func r(_ x: Double) -> Double { (x * 100).rounded() / 100 }
-        let data = (try? JSONEncoder().encode(Wire(words: t.words, at: t.starts.map(r), end: r(t.end)))) ?? Data()
+        let data = (try? JSONEncoder().encode(Wire(words: t.words, at: t.starts.map(r), end: r(t.end), last: last))) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }
 }

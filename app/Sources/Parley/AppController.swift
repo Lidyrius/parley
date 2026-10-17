@@ -126,7 +126,8 @@ final class AppController: ObservableObject {
     }
 
     // `audio` state for the phone: speaking while any queue item or ack clip runs (the phone
-    // and listener refine it), idle once all are done — the phone listens for its wake word then.
+    // and listener refine it), idle once all are done and no turn waits — the phone listens for
+    // its wake word then, or hangs up after the talk; never between two queued turns.
     private func beginAudioWork() {
         audioWork += 1
         phone.setAudioState(.speaking)
@@ -134,7 +135,7 @@ final class AppController: ObservableObject {
 
     private func endAudioWork() {
         audioWork = max(0, audioWork - 1)
-        if audioWork == 0 { phone.setAudioState(.idle) }
+        if audioWork == 0, server.nothingQueued() { phone.setAudioState(.idle) }
     }
 
     // MARK: - /ready greeting
@@ -256,7 +257,8 @@ final class AppController: ObservableObject {
         Log.write("speak start (listen=\(turn.wantsListen))")
         let prefetchedPCM: Data? = prefetch == nil ? nil : await prefetch!.value
         await speakAndBeep(turn.speak, config: config, prefetched: prefetchedPCM, beep: turn.wantsListen,
-                           slides: turn.slides ?? [], session: ControlServer.sessionKey(turn))
+                           slides: turn.slides ?? [], session: ControlServer.sessionKey(turn),
+                           last: !turn.wantsListen && server.nothingQueued())
         Log.write("speak done")
 
         // speak-only turn (<speak-end>): no mic, no pill. Resume media (queue permitting),
@@ -724,7 +726,7 @@ final class AppController: ObservableObject {
     // During a call the line goes to the phone; if the call ends first, the part not yet heard
     // (and the beep) plays on the Mac.
     private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil, beep: Bool = true,
-                              slides: [SlideSpec] = [], session: String = "") async {
+                              slides: [SlideSpec] = [], session: String = "", last: Bool = false) async {
         if phone.callActive {
             let voice = PhoneVoice(link: phone, rate: config.speakingRate)
             var captioned = false
@@ -734,7 +736,7 @@ final class AppController: ObservableObject {
                 if !captioned {
                     let t = config.useGoogle
                         ? Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate) : nil
-                    if let t { phone.reply(Captions.frame(t)) }
+                    if let t { phone.reply(Captions.frame(t, last: last)) }
                     Log.write("phone: caption \(t.map { "\($0.words.count) words, \(Int($0.end)) s" } ?? "none")")
                     if !slides.isEmpty { sendSlides(slides, timed: t, session: session) }
                 }

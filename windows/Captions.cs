@@ -87,12 +87,15 @@ public static class Captions
         return new Timed(words, starts.Select(s => s * 0.01).ToArray(), (last + 1) * 0.01);
     }
 
-    // {"t":"caption","words":[…],"at":[…],"end":…} — sent just before the line's first frame.
-    public static string Frame(Timed t) => JsonSerializer.Serialize(new
+    // {"t":"caption","words":[…],"at":[…],"end":…,"last":…} — sent just before the line's first
+    // frame. `last`: nothing follows on this call (a speak-end line, no other turn waiting) — a
+    // phone that hangs up after the talk starts leaving before the line ends.
+    public static string Frame(Timed t, bool last = false) => JsonSerializer.Serialize(new
     {
         t = "caption",
         words = t.Words,
         at = t.Starts.Select(s => Math.Round(s, 2)).ToArray(),
         end = Math.Round(t.End, 2),
+        last,
     });
 }

@@ -238,7 +238,8 @@ public sealed class TurnPipeline
         {
             Log.Write($"speak start ({pcm.Length} bytes, rate {config.SpeakingRate:0.00})");
             await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak,
-                                   slides: turn.Slides, session: Server.SessionKey(turn));
+                                   slides: turn.Slides, session: Server.SessionKey(turn),
+                                   last: !turn.WantsListen && _queuedTurns() == 0);
         }
         else Log.Write("no TTS audio (missing key or synth failed)");
 

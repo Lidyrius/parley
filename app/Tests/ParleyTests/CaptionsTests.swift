@@ -33,6 +33,9 @@ final class CaptionsTests: XCTestCase {
         XCTAssertEqual(frame["t"] as? String, "caption")
         XCTAssertEqual(frame["words"] as? [String], ["eins", "zwei"])
         XCTAssertEqual((frame["at"] as? [Double])?.count, 2)
+        XCTAssertEqual(frame["last"] as? Bool, false)
+        let last = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Captions.frame(t, last: true).utf8)) as? [String: Any])
+        XCTAssertEqual(last["last"] as? Bool, true)
     }
 
     // PARLEY_GOOGLE_KEY=… PARLEY_GOOGLE_VOICE=… swift test --filter testRealGoogleLine

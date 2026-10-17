@@ -60,7 +60,7 @@ public static class AudioOut
     /// `slides` at the times of their words (`session` finds "last" screenshots).
     public static async Task PlayPcm(byte[] pcm, int sampleRate = GoogleTts.SampleRate,
                                      CancellationToken cancellationToken = default, string? caption = null,
-                                     IReadOnlyList<SlideSpec>? slides = null, string session = "")
+                                     IReadOnlyList<SlideSpec>? slides = null, string session = "", bool last = false)
     {
         if (pcm.Length < 2) return;
         // In an iPhone call (docs/IPHONE.md, v2) all of Parley's audio goes to the phone; if the
@@ -68,7 +68,7 @@ public static class AudioOut
         if (PhoneCall.Active)
         {
             var timed = caption is null ? null : Captions.Timings(caption, pcm, sampleRate);
-            if (timed is not null) await PhoneCall.Reply(Captions.Frame(timed));   // just before the line's first frame
+            if (timed is not null) await PhoneCall.Reply(Captions.Frame(timed, last));   // just before the line's first frame
             if (slides is { Count: > 0 }) await Slides.Send(slides, timed, session);
             var rest = await PhoneCall.PlayAsync(pcm, sampleRate, cancellationToken);
             if (rest is null || rest.Length < 2) return;

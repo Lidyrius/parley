@@ -78,6 +78,8 @@ struct Caption: Hashable, Sendable {
     var words: [String]
     var starts: [Double]
     var end: Double
+    /// Nothing follows on this call (the turn's last line, no listening, no other turn waiting).
+    var last = false
 
     /// The word being spoken `t` seconds in (-1 before the first).
     func index(at t: Double) -> Int { (starts.lastIndex { $0 <= t }) ?? -1 }
@@ -165,7 +167,7 @@ enum Frame: Equatable, Sendable {
         case "caption":
             guard let w = try? decoder.decode(CaptionWire.self, from: data), w.words.count == w.at.count, !w.words.isEmpty
             else { return .other(head.t) }
-            return .caption(Caption(words: w.words, starts: w.at, end: w.end))
+            return .caption(Caption(words: w.words, starts: w.at, end: w.end, last: w.last ?? false))
         case "image":
             guard let w = try? decoder.decode(ImageWire.self, from: data) else { return .other(head.t) }
             return .image(key: w.key, data: w.data.flatMap { Data(base64Encoded: $0) })
@@ -181,7 +183,7 @@ enum Frame: Equatable, Sendable {
 
     private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
-    private struct CaptionWire: Decodable { let words: [String]; let at: [Double]; let end: Double }
+    private struct CaptionWire: Decodable { let words: [String]; let at: [Double]; let end: Double; let last: Bool? }
     private struct SlidesWire: Decodable { let items: Lossy<Slide> }
 
     private struct Head: Decodable {

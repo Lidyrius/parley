@@ -206,6 +206,12 @@ struct FrameTests {
         #expect(c.index(at: 0) == -1 && c.index(at: 0.6) == 1 && c.index(at: 9) == 3)
         #expect(c.chunks == [0..<2, 2..<4])
         #expect(Frame.decode(#"{"t":"caption","words":["a"],"at":[],"end":1}"#) == .other("caption"))
+        // `last`: the talk's final line (older hosts don't send it).
+        #expect(!c.last)
+        guard case .caption(let l) = Frame.decode(#"{"t":"caption","words":["Fertig."],"at":[0],"end":0.8,"last":true}"#) else {
+            Issue.record("no last caption"); return
+        }
+        #expect(l.last)
         let long = Caption(words: (1...15).map { "w\($0)" }, starts: (0..<15).map(Double.init), end: 15)
         #expect(long.chunks == [0..<12, 12..<15])
         #expect(Demo.caption.words.count == Demo.caption.starts.count)
