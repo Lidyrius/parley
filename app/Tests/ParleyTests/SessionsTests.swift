@@ -71,6 +71,15 @@ final class SessionsTests: XCTestCase {
 
     // MARK: - /presence + /sessions shape
 
+    // A desktop id that the desktop's own record gives to another session is an inherited leak.
+    func testReportedHostLeakedFromAnotherSessionIsDropped() {
+        let map = ["cli-desktop": "local_mine"]
+        XCTAssertEqual(DesktopSessions.resolve(cli: "cli-desktop", reported: nil, map: map), "local_mine")
+        XCTAssertNil(DesktopSessions.resolve(cli: "cli-terminal", reported: "local_mine", map: map))
+        XCTAssertEqual(DesktopSessions.resolve(cli: "cli-new", reported: "local_new", map: map), "local_new")
+        XCTAssertNil(DesktopSessions.resolve(cli: "cli-x", reported: nil, map: map))
+    }
+
     // The desktop app's own session files map our (CLI) ids to its local_… ids.
     func testDesktopSessionFilesMapCliIdToDesktopId() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ccs-\(UUID().uuidString)")

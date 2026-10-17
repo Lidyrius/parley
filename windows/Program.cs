@@ -10,6 +10,11 @@ internal static class Program
         using var mutex = new Mutex(true, "de.developaway.parley", out var createdNew);
         if (!createdNew) return;   // already running
 
+        // Started from inside a Claude Code session, Parley would inherit its CLAUDE_CODE_*
+        // variables and pass them on to every session it starts.
+        foreach (var key in Environment.GetEnvironmentVariables().Keys.Cast<object>().Select(k => k.ToString() ?? ""))
+            if (key.StartsWith("CLAUDE_CODE_", StringComparison.OrdinalIgnoreCase)) Environment.SetEnvironmentVariable(key, null);
+
         ApplicationConfiguration.Initialize();
         Application.Run(new TrayApp());
     }

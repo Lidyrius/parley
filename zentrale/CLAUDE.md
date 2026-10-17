@@ -96,6 +96,10 @@ jq -n --arg cwd "$dir" --arg task "$auftrag" '{cwd: $cwd, instruction: $task, st
 
 - Läuft dort keine Session, startet Parley eine Claude-Code-Session mit Sprachmodus und liefert
   den Auftrag nach; läuft schon eine, bekommt sie den Auftrag direkt.
+- **Sprachmodus ist garantiert:** Eine neu gestartete Session beginnt mit `/parley:voice`, und der
+  Auftrag kommt erst nach ihrer ersten Runde an. Bestehende Sessions erreicht `/dispatch` nur,
+  wenn Parley sie kennt — und Parley kennt nur Sessions, in denen der Sprachmodus läuft. Ein
+  Ordner ohne solche Session bekommt eine neue. Es gibt nichts extra einzuschalten.
 - **Niemals** den Deep Link (`claude://…`) selbst öffnen und keine Session per `claude` im
   Terminal starten — das macht ausschließlich Parley über `/dispatch`.
 - `cwd` ist immer ein absoluter Pfad. `/sessions` enthält keine Pfade — für ein laufendes
@@ -114,6 +118,10 @@ curl -sS http://127.0.0.1:8787/sessions | jq -r '.sessions[]
   | [(.label // .project), .state, ((.tasks // []) | map(.description) | join(", ")),
      (.stats.lastLine // "")] | @tsv'
 ```
+
+**`voice` heißt nicht „Sprachmodus an“**, sondern „hat gerade die Stimme“ (spricht oder hört
+in diesem Moment zu). Eine arbeitende Session hat `voice: false` und trotzdem Sprachmodus — jede
+Session in dieser Liste hat ihn.
 
 Zustände: `working` arbeitet · `background` wartet auf Hintergrundarbeit · `idle` fertig, wartet ·
 `speaking`/`listening`/`transcribing` spricht gerade mit Sir · `queued` wartet darauf, sprechen

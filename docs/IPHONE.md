@@ -60,7 +60,7 @@ Authorization: Bearer <secret>
 
 | `t`        | direction        | body |
 |------------|------------------|------|
-| `sessions` | host → phones    | the host's `GET /sessions` JSON (`sessions`, `today`) plus `at` (host clock, epoch ms). Sent on change, at least every 10 s. The relay keeps the latest one and sends it to a phone right after it connects. |
+| `sessions` | host → phones    | the host's `GET /sessions` JSON (`sessions`, `today`) plus `at` (host clock, epoch ms). A row's `voice` means *holds the voice right now* (speaking/listening), not "voice mode on" — every listed session has voice mode. Sent on change, at least every 10 s. The relay keeps the latest one and sends it to a phone right after it connects. |
 | `peer`     | relay → phones   | `{ "t": "peer", "host": true|false }` on connect and whenever the host comes or goes. |
 | `resume`   | phone → host     | `{ "t": "resume", "id": "<session id>" }` — same as `POST /resume` on the host. |
 | `hello`    | phone → host     | `{ "t": "hello", "device": "<name>" }` after connecting (informational). |

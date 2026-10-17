@@ -20,6 +20,9 @@ struct ParleyApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Started from inside a Claude Code session (a terminal, `open -a`), Parley inherits that
+        // session's CLAUDE_CODE_* variables and would pass them on to every session it starts.
+        for key in ProcessInfo.processInfo.environment.keys where key.hasPrefix("CLAUDE_CODE_") { unsetenv(key) }
         // Menu-bar only: no dock icon. LSUIElement in Info.plist covers bundled
         // launches; this covers `swift run` / bare-executable launches.
         NSApp.setActivationPolicy(.accessory)

@@ -330,7 +330,7 @@ public sealed class SessionRegistry
                     voice = e.Id == active,
                     resumable = Resumable(e),
                     tasks = e.Tasks,
-                    host = e.Host ?? DesktopSessions.Host(e.Id),
+                    host = DesktopSessions.Resolve(e.Id, e.Host),
                     stats = new
                     {
                         startedAt = (long?)Ms(e.StartedAt ?? e.FirstSeen),
@@ -445,6 +445,17 @@ public static class DesktopSessions
 
     public static string Root => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude-code-sessions");
+
+    // The desktop's own record wins. A reported id that it assigns to another session leaked in
+    // through an inherited environment and would open the wrong session. 1:1 with macOS.
+    public static string? Resolve(string cliId, string? reported, Dictionary<string, string>? map = null)
+    {
+        if (map is null) { Host(cliId); lock (Gate) map = _map; }
+        if (map.TryGetValue(cliId, out var own)) return own;
+        if (string.IsNullOrEmpty(reported)) return null;
+        foreach (var kv in map) if (kv.Value == reported && kv.Key != cliId) return null;
+        return reported;
+    }
 
     public static string? Host(string cliId)
     {

@@ -264,7 +264,7 @@ final class SessionRegistry {
         }.map { e in
             Row(id: e.id, label: e.label, project: e.project, state: e.state, since: Self.ms(e.since),
                 until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil, voice: e.id == activeId,
-                resumable: Self.resumable(e), tasks: e.tasks, host: e.host ?? DesktopSessions.host(for: e.id),
+                resumable: Self.resumable(e), tasks: e.tasks, host: DesktopSessions.resolve(cli: e.id, reported: e.host),
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
         }
@@ -393,6 +393,16 @@ enum DesktopSessions {
     static func host(for cliId: String) -> String? {
         if Date().timeIntervalSince(cache.at) > 10 { cache = (Date(), load(root)) }
         return cache.map[cliId]
+    }
+
+    // The desktop's own record wins. A reported id that it assigns to another session leaked in
+    // through an inherited environment (a terminal session started by a process that a desktop
+    // session launched) and would open the wrong session.
+    static func resolve(cli: String, reported: String?, map: [String: String]? = nil) -> String? {
+        let m = map ?? { _ = host(for: cli); return cache.map }()
+        if let own = m[cli] { return own }
+        guard let r = reported, !m.contains(where: { $0.value == r && $0.key != cli }) else { return nil }
+        return r
     }
 
     static func load(_ root: URL) -> [String: String] {
