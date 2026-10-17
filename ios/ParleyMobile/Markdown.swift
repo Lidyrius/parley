@@ -71,7 +71,7 @@ enum Markdown {
     }
 
     /// Inline Markdown with `code` in the Claude app's colours.
-    static func inline(_ s: String) -> AttributedString {
+    @MainActor static func inline(_ s: String) -> AttributedString {
         var a = (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(s)
         for run in a.runs where run.inlinePresentationIntent?.contains(.code) == true {
@@ -83,7 +83,7 @@ enum Markdown {
     }
 
     /// Plain text for read-aloud / copy: no fences, markers or link syntax.
-    static func plain(_ s: String) -> String {
+    @MainActor static func plain(_ s: String) -> String {
         blocks(s).map { block -> String in
             switch block {
             case .paragraph(let t), .heading(_, let t), .bullet(let t, _), .quote(let t): String(inline(t).characters)

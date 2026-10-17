@@ -36,6 +36,17 @@ struct SettingsView: View {
                 } footer: {
                     Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Mit „Stumm“ kommt stattdessen eine Mitteilung; tippe darauf und antworte schriftlich. Anrufe starten auf dem Lautsprecher (AirPods und Auto bleiben, wie sie sind). Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“.")
                 }
+                Section("Darstellung") {
+                    NavigationLink {
+                        PalettePicker()
+                    } label: {
+                        LabeledContent {
+                            Text(Theme.palette.name)
+                        } label: {
+                            Label("Farbpalette", systemImage: "paintpalette.fill")
+                        }
+                    }
+                }
                 if model.pairing != nil {
                     Section {
                         Button("Neu verbinden") { model.relay.reconnect() }
@@ -63,6 +74,79 @@ struct SettingsView: View {
             } message: {
                 Text("Das iPhone sieht deine Sessions erst wieder, wenn du es neu koppelst.")
             }
+        }
+    }
+}
+
+/// Einstellungen → Farbpalette: every palette with a light and a dark preview.
+struct PalettePicker: View {
+    private let appearance = Appearance.shared
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(Palette.all) { p in
+                    let picked = p.id == appearance.paletteID
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.35)) { appearance.paletteID = p.id }
+                    } label: {
+                        HStack(spacing: 14) {
+                            PalettePreview(palette: p)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(p.name).font(.headline).foregroundStyle(.primary)
+                                Text(p.note).font(.subheadline).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(picked ? Theme.claude : Color.secondary.opacity(0.4))
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)   // the row's text stays black/white, not the accent
+                    .accessibilityAddTraits(picked ? .isSelected : [])
+                }
+            } footer: {
+                Text("Gilt für die ganze App, hell und dunkel. In jeder Palette bleiben die Zustände klar unterscheidbar: spricht, wartet, arbeitet, bereit.")
+            }
+        }
+        .navigationTitle("Farbpalette")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// A palette at a glance: light and dark side by side, each a card with the accent and state dots.
+private struct PalettePreview: View {
+    let palette: Palette
+
+    var body: some View {
+        HStack(spacing: 0) {
+            half(dark: false)
+            half(dark: true)
+        }
+        .frame(width: 88, height: 58)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
+        .accessibilityHidden(true)
+    }
+
+    private func half(dark: Bool) -> some View {
+        let pick = { (s: Shade) in Color(hex: dark ? s.dark : s.light) }
+        return ZStack {
+            pick(palette.background)
+            VStack(spacing: 5) {
+                Circle().fill(pick(palette.accent)).frame(width: 15, height: 15)
+                HStack(spacing: 3) {
+                    ForEach(Array([palette.waiting, palette.working, palette.idle].enumerated()), id: \.offset) { _, s in
+                        Circle().fill(pick(s)).frame(width: 5, height: 5)
+                    }
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(pick(palette.card)))
         }
     }
 }

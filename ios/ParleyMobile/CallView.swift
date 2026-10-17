@@ -39,8 +39,8 @@ struct CallLook: Equatable {
         }
     }
 
-    var color: Color { state.color }
-    var ink: Color { state.ink }
+    @MainActor var color: Color { state.color }
+    @MainActor var ink: Color { state.ink }
 }
 
 /// The call screen: who Parley is voicing, what it is doing, a live waveform, and the controls.
@@ -326,7 +326,7 @@ private struct CallControl: View {
         switch style {
         case .toggle(true): .primary
         case .toggle(false): Theme.card
-        case .end: Color(hex: 0xE5484D)
+        case .end: Theme.danger
         case .accept: SessionState.idle.color
         }
     }

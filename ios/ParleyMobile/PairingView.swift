@@ -117,7 +117,7 @@ private struct Step: View {
 struct AppMark: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .fill(LinearGradient(colors: [Color(hex: 0xE38A6B), Theme.claude], startPoint: .top, endPoint: .bottom))
+            .fill(LinearGradient(colors: [Theme.claudeLight, Theme.claude], startPoint: .top, endPoint: .bottom))
             .overlay(Image(systemName: "waveform").font(.system(size: 40, weight: .semibold)).foregroundStyle(.white))
             .shadow(color: Theme.claude.opacity(0.35), radius: 14, y: 6)
             .accessibilityHidden(true)

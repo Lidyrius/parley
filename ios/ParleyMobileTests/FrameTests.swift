@@ -182,7 +182,7 @@ struct FrameTests {
         #expect(!SessionView.endsTurn(rows, at: 0))
     }
 
-    @Test func markdownBlocks() {
+    @MainActor @Test func markdownBlocks() {
         let b = Markdown.blocks("Hallo **Sir**\nweiter.\n\n## Titel\n- eins\n  - zwei\n1. erstens\n> Zitat\n\n```bash\nls -la\n```\n| a | b |\n|---|---|\n---")
         #expect(b == [.paragraph("Hallo **Sir** weiter."), .heading(2, "Titel"), .bullet("eins", level: 0), .bullet("zwei", level: 1),
                       .numbered("1.", "erstens"), .quote("Zitat"), .code(lang: "bash", code: "ls -la"), .table("| a | b |\n|---|---|"), .rule])
@@ -218,6 +218,24 @@ struct FrameTests {
         #expect(Slide.current(s, at: 1)?.id == "a")
         #expect(Slide.current(s, at: 5)?.id == "b")
         #expect(SlideCard.format(24) == "24")
+    }
+
+    @Test func palettesKeepTheirStatesApart() {
+        #expect(Palette.all.count == 10)
+        #expect(Set(Palette.all.map(\.id)).count == Palette.all.count)
+        func far(_ a: UInt32, _ b: UInt32) -> Bool {
+            let d = [16, 8, 0].map { Double(Int((a >> $0) & 0xFF) - Int((b >> $0) & 0xFF)) }
+            return (d.map { $0 * $0 }.reduce(0, +)).squareRoot() > 50   // Claude: terracotta vs ochre = 53
+        }
+        for p in Palette.all {
+            let rings = [p.accent, p.waiting, p.working, p.idle, p.stopped]   // the call screen and the tiles
+            for (i, a) in rings.enumerated() {
+                for b in rings[(i + 1)...] {
+                    #expect(far(a.light, b.light) && far(a.dark, b.dark), "\(p.name): \(a) ~ \(b)")
+                }
+            }
+            #expect(far(p.background.light, p.accent.light) && far(p.background.dark, p.accent.dark), "\(p.name): accent on background")
+        }
     }
 
     @Test func metricCountsInTheNumbersOwnShape() {

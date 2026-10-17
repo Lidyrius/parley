@@ -288,7 +288,7 @@ private struct CallParleyButton: View {
                 .background {
                     let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
                     if canCall {
-                        shape.fill(LinearGradient(colors: [Color(hex: 0xE38A6B), Theme.claude], startPoint: .top, endPoint: .bottom))
+                        shape.fill(LinearGradient(colors: [Theme.claudeLight, Theme.claude], startPoint: .top, endPoint: .bottom))
                             .shadow(color: Theme.claude.opacity(0.3), radius: 12, y: 5)
                     } else {
                         shape.fill(Theme.card).overlay(shape.strokeBorder(Theme.stroke))
@@ -318,7 +318,7 @@ private struct CallFailureBanner: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "phone.down.fill").foregroundStyle(Color(hex: 0xE5484D))
+            Image(systemName: "phone.down.fill").foregroundStyle(Theme.danger)
             Text(text).font(.subheadline).frame(maxWidth: .infinity, alignment: .leading)
             Button(action: dismiss) {
                 Image(systemName: "xmark").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
@@ -326,7 +326,7 @@ private struct CallFailureBanner: View {
             .accessibilityLabel("Schließen")
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(hex: 0xE5484D).opacity(0.10)))
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.danger.opacity(0.10)))
         .task {
             try? await Task.sleep(for: .seconds(8))
             dismiss()

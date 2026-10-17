@@ -192,8 +192,7 @@ struct SlideCard: View {
         }
     }
 
-    private static let palette: [Color] = [Color(hex: 0xD97757), Color(hex: 0x5B8DEF), Color(hex: 0x4EBA65),
-                                           Color(hex: 0xD9A43B), Color(hex: 0x9B87F5), Color(hex: 0x8B8A85)]
+    private static var palette: [Color] { Theme.palette.series.map(\.color) }
 
     /// "38 %", "<1 %".
     static func share(_ f: Double) -> String {
