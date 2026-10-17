@@ -13,6 +13,8 @@ struct ParleyAttributes: ActivityAttributes {
         var line: String?             // Parley's latest spoken line…
         var from: String?             // …and whose session it was
         var ask: Ask?                 // Stumm: a question waiting for Sir, with answers to tap
+        var caption: String?          // in a call: the subtitle line spoken now (the app sets it)…
+        var speaker: String?          // …and whose session speaks
     }
 
     /// A question Parley asked while Stumm is on: answered with a tap (the predicted answers)
@@ -117,6 +119,14 @@ extension ParleyAttributes.ContentState {
             .init(id: "c", label: "Tippfrei", state: "background", since: t - 1240),
             .init(id: "d", label: "Zentrale", state: "idle", since: t - 3000),
         ], alive: 4, line: "Die Tests sind grün, Sir. Soll ich deployen?", from: "Shirts")
+    }
+
+    /// `-demoActivity speech`: in a call, Parley speaking.
+    static func demoSpeech(now: Date = Date()) -> Self {
+        var s = demo(now: now)
+        s.caption = "Die Tests sind grün, Sir. Soll ich auf Produktion deployen?"
+        s.speaker = "Shirts"
+        return s
     }
 
     /// `-demoActivity ask`: Stumm with a question waiting.

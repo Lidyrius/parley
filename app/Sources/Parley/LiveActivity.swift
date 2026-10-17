@@ -74,7 +74,7 @@ enum LiveActivity {
 
     /// GET /sessions (the registry's JSON, times in epoch ms) → the activity's content. Stopped
     /// sessions are left out; the line is the most urgent session's last spoken one.
-    static func content(fromSessions json: String, ask: Ask? = nil) -> Content {
+    static func content(fromSessions json: String, ask: Ask? = nil, rows maxRows: Int = maxRows) -> Content {
         guard let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
               let list = obj["sessions"] as? [[String: Any]] else { return Content() }
         var rows: [(row: Row, line: String?)] = []
@@ -90,6 +90,51 @@ enum LiveActivity {
         let spoken = rows.first { !($0.line ?? "").isEmpty }
         return Content(sessions: rows.prefix(maxRows).map(\.row), alive: rows.count,
                        line: spoken?.line.map { String($0.prefix(120)) }, from: spoken?.row.label, ask: ask)
+    }
+
+    // MARK: - the widgets (a silent push the app stores for them)
+
+    /// The widgets' picture (ios/Shared/WidgetSnapshot.swift `WidgetPush`): up to 8 sessions,
+    /// the line, and today's figures from GET /sessions.
+    struct Widget: Codable, Equatable, Sendable {
+        var sessions: [Row] = []
+        var line: String?
+        var from: String?
+        var cost: Double?
+        var updates: Int?
+        var limit: Double?
+        var week: Double?
+
+        /// What makes a push worth it: the sessions, the line, the limit in whole percent — not
+        /// the cost, which creeps up all the time.
+        var key: String { "\(sessions)|\(line ?? "")|\(limit.map { Int($0) } ?? -1)" }
+    }
+
+    static func widget(fromSessions json: String) -> Widget {
+        let c = content(fromSessions: json, rows: 8)
+        var w = Widget(sessions: c.sessions, line: c.line, from: c.from)
+        if let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
+           let today = obj["today"] as? [String: Any] {
+            w.cost = (today["costUsd"] as? NSNumber)?.doubleValue
+            w.updates = (today["turns"] as? NSNumber)?.intValue
+            let limits = today["rateLimits"] as? [[String: Any]] ?? []
+            func used(_ kind: String) -> Double? {
+                (limits.first { $0["kind"] as? String == kind }?["percentUsed"] as? NSNumber)?.doubleValue
+            }
+            w.limit = used("five_hour")
+            w.week = used("seven_day")
+        }
+        return w
+    }
+
+    /// `{"aps":{"content-available":1},"widget":{…}}` — wakes the app, shows nothing.
+    static func widgetPayload(_ w: Widget) -> Data {
+        struct Aps: Encodable {
+            let contentAvailable = 1
+            enum CodingKeys: String, CodingKey { case contentAvailable = "content-available" }
+        }
+        struct Payload: Encodable { let aps = Aps(); let widget: Widget }
+        return (try? JSONEncoder().encode(Payload(widget: w))) ?? Data()
     }
 
     // MARK: - payloads (APNs `liveactivity`)
@@ -209,5 +254,20 @@ struct LiveActivityFeed: Sendable {
         sent = content
         sentAt = now
         return .update(content, priority: newlyWanted ? 10 : 5)
+    }
+}
+
+// When the widgets get a silent push: iOS throttles them (a few an hour), so at most every
+// 20 min, and only when what they show changed.
+struct WidgetPushFeed: Sendable {
+    static let every: TimeInterval = 20 * 60
+    private var sent: String?
+    private var sentAt = Date.distantPast
+
+    mutating func due(_ w: LiveActivity.Widget, now: Date) -> Bool {
+        guard w.key != sent, now.timeIntervalSince(sentAt) >= Self.every else { return false }
+        sent = w.key
+        sentAt = now
+        return true
     }
 }

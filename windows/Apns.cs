@@ -142,6 +142,11 @@ public static class Apns
     public static Task<(int Status, string Body)> SendActivity(string token, string env, string json, int priority) =>
         Post(token, env, ActivityTopic, "liveactivity", json, expiration: null, priority);
 
+    // A silent push (the widgets' picture): wakes the app in the background, shows nothing.
+    // Priority 5 and push type `background` are what APNs requires for it.
+    public static Task<(int Status, string Body)> SendBackground(string token, string env, string json) =>
+        Post(token, env, AlertTopic, "background", json, expiration: null, 5);
+
     private static async Task<bool> Send(string token, string env, string topic, string pushType, string json, string? expiration) =>
         (await Post(token, env, topic, pushType, json, expiration, 10)).Status is >= 200 and < 300;
 

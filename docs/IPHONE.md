@@ -224,3 +224,14 @@ Action Button: "Parley anrufen", "Unterwegs", "Stumm") and the activity's call b
 `LiveActivityIntent`s — they run in the app's process, which dials the relay in the background
 to tell the host. The switches live in the App Group `group.de.developaway.parley`.
 
+**Widgets.** The phone's widgets show what the app last stored in the App Group — from each
+`sessions` frame while it runs, and from the host's **silent push** while it doesn't: `apns-push-
+type: background`, priority 5, topic `de.developaway.parley.mobile`, to the notification token,
+`{"aps":{"content-available":1},"widget":{sessions (up to 8, as above), line, from, cost, updates,
+limit, week}}`. iOS throttles these, so the host sends one at most every 20 min and only when the
+sessions, the line or the limit (whole %) changed. An old picture shows "Stand hh:mm".
+
+**Subtitles in a call.** While a call runs the app sets `caption` / `speaker` on the running
+activity itself (local updates, no push): the line spoken now, so the Lock Screen and the expanded
+Island follow the talk. A host push in between clears them; the next line brings them back.
+

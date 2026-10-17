@@ -131,6 +131,7 @@ final class AppController: ObservableObject {
 
     private var activityFeed = LiveActivityFeed()
     private var activityAsk: LiveActivity.Ask?   // Stumm: the latest question, until answered
+    private var widgetFeed = WidgetPushFeed()
     private var activityTimer: Timer?
     private var seenActivityToken: String?
 
@@ -147,6 +148,17 @@ final class AppController: ObservableObject {
         let sessions = server.sessionsJSON()
         if let ask = activityAsk, !LiveActivity.isOpen(ask, sessions: sessions) { activityAsk = nil }
         let content = LiveActivity.content(fromSessions: sessions, ask: activityAsk)
+        // The widgets: a silent push now and then, which the app stores for them.
+        if let alert = phone.alertTarget {
+            let widget = LiveActivity.widget(fromSessions: sessions)
+            if widgetFeed.due(widget, now: now) {
+                let apns = self.apns, body = LiveActivity.widgetPayload(widget)
+                Task.detached {
+                    let r = await apns.background(token: alert.token, env: alert.env, body: body)
+                    Log.write("widgets: silent push → \(r.status)\(r.reason.map { " \($0)" } ?? "")")
+                }
+            }
+        }
         guard let action = activityFeed.step(content, away: phone.away, canStart: start != nil,
                                              canUpdate: update != nil, now: now) else { return }
         let (target, body, priority, what): ((token: String, env: String)?, Data, Int, String) = switch action {

@@ -109,6 +109,21 @@ enum APNs {
         return req
     }
 
+    // A silent push (the widgets' picture): wakes the app in the background, shows nothing.
+    // Priority 5 and push type `background` are what APNs requires for it.
+    static func backgroundRequest(token: String, env: String, jwt: String, body: Data) -> URLRequest {
+        var req = URLRequest(url: URL(string: "https://\(host(env: env))/3/device/\(token)")!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("bearer \(jwt)", forHTTPHeaderField: "authorization")
+        req.setValue(alertTopic, forHTTPHeaderField: "apns-topic")
+        req.setValue("background", forHTTPHeaderField: "apns-push-type")
+        req.setValue("5", forHTTPHeaderField: "apns-priority")
+        req.setValue("application/json", forHTTPHeaderField: "content-type")
+        req.httpBody = body
+        return req
+    }
+
     /// APNs' error body: {"reason":"BadDeviceToken"}.
     static func reason(_ data: Data) -> String? {
         ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["reason"] as? String
@@ -164,6 +179,12 @@ final class APNsClient: @unchecked Sendable {
     @discardableResult
     func notify(token: String, env: String, title: String, body: String, session: String) async -> (status: Int, reason: String?) {
         await send(env: env) { APNs.alertRequest(token: token, env: env, jwt: $0, title: title, body: body, session: session) }
+    }
+
+    /// One silent push for the widgets.
+    @discardableResult
+    func background(token: String, env: String, body: Data) async -> (status: Int, reason: String?) {
+        await send(env: env) { APNs.backgroundRequest(token: token, env: env, jwt: $0, body: body) }
     }
 
     /// One Live Activity push (start / update / end).

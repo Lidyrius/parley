@@ -129,6 +129,7 @@ internal sealed class TrayApp : ApplicationContext
     // ---- the iPhone's Live Activity (docs/LIVE-ACTIVITIES.md) --------------------------
 
     private readonly LiveActivityFeed _activityFeed = new();
+    private readonly WidgetPushFeed _widgetFeed = new();
     private System.Threading.Timer? _activityTimer;
     private string? _seenActivityToken;
     private int _activityTicking;
@@ -152,6 +153,17 @@ internal sealed class TrayApp : ApplicationContext
             var sessions = _server.Sessions.Json();
             if (LiveActivity.CurrentAsk is { } ask && !LiveActivity.IsOpen(ask, sessions)) LiveActivity.CurrentAsk = null;
             var content = LiveActivity.FromSessions(sessions, LiveActivity.CurrentAsk);
+            // The widgets: a silent push now and then, which the app stores for them.
+            var alert = PhoneCall.Alert;
+            if (alert.Token.Length > 0)
+            {
+                var widget = LiveActivity.WidgetFrom(sessions);
+                if (_widgetFeed.Due(widget, now))
+                {
+                    var (ws, _) = Apns.SendBackground(alert.Token, alert.Env, LiveActivity.WidgetPayload(widget)).GetAwaiter().GetResult();
+                    Log.Write($"widgets: silent push → {ws}");
+                }
+            }
             var action = _activityFeed.Step(content, PhoneCall.Away, start.Token.Length > 0, update.Token.Length > 0, now);
             if (action is null) return;
             var (target, ev, priority) = action switch

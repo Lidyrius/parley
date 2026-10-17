@@ -40,8 +40,9 @@ targets:
         NSCameraUsageDescription: Parley nutzt die Kamera, um den QR-Code zum Verbinden mit deinem Mac zu scannen.
         NSMicrophoneUsageDescription: Parley nutzt das Mikrofon während eines Anrufs, damit du mit Parley auf deinem Mac sprechen kannst.
         NSSpeechRecognitionUsageDescription: Parley erkennt während eines Anrufs „Hey Parley“ – die Spracherkennung läuft dafür nach Möglichkeit direkt auf dem iPhone.
-        # A call keeps running with the screen locked (audio); VoIP pushes ring the phone (voip).
-        UIBackgroundModes: [audio, voip]
+        # A call keeps running with the screen locked (audio); VoIP pushes ring the phone (voip);
+        # the host's silent pushes keep the widgets current (remote-notification).
+        UIBackgroundModes: [audio, voip, remote-notification]
         CFBundleURLTypes:
           - CFBundleURLName: de.developaway.parley.mobile
             CFBundleURLSchemes: [parley]

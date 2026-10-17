@@ -364,5 +364,22 @@ struct FrameTests {
         #expect(snap.cost == 3.5 && snap.updates == 7 && snap.limit == 42 && snap.week == 18)
         #expect(!snap.isStale(at: Date(timeIntervalSince1970: 9 + 599)) && snap.isStale(at: Date(timeIntervalSince1970: 9 + 601)))
     }
+
+    /// The host's silent push for the widgets (app/Sources/Parley/LiveActivity.swift `Widget`).
+    @Test @MainActor func widgetPushFromTheHost() throws {
+        let json = #"{"sessions":[{"id":"c","label":"Website","state":"idle","since":2000,"callback":0}],"line":"Deployen?","from":"Website","cost":3.5,"updates":7,"limit":42.4,"week":18}"#
+        let payload = try JSONSerialization.jsonObject(with: Data(json.utf8))
+        #expect(WidgetFeed.received(payload, now: Date(timeIntervalSince1970: 5)))
+        let snap = try #require(SharedState.snapshot)
+        #expect(snap.at == Date(timeIntervalSince1970: 5) && snap.top?.kind == .callBack && snap.limit == 42.4 && snap.line == "Deployen?")
+        #expect(!WidgetFeed.received(["sessions": 3]))
+    }
+
+    /// The subtitle line spoken at a time (the Live Activity follows it in a call).
+    @Test func subtitleLineAtATime() {
+        let c = Caption(words: ["Hallo", "Sir.", "Alles", "fertig."], starts: [0.1, 0.5, 1.2, 1.5], end: 2)
+        #expect(c.line(at: 0) == "Hallo Sir.")
+        #expect(c.line(at: 1.3) == "Alles fertig.")
+    }
 }
 

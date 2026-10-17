@@ -14,6 +14,7 @@ final class ActivityLink {
     var onChange: (() -> Void)?
     private var watched: [String] = []   // in the order they appeared
     private var demoStarted = false
+    private var subtitle: String?
 
     func start() {
         if #available(iOS 17.2, *) {
@@ -58,6 +59,20 @@ final class ActivityLink {
         }
     }
 
+    /// In a call: the line spoken now (nil = done), updated in place — the app runs anyway, and a
+    /// local update costs no push. The host's next push clears it, the next line brings it back.
+    func subtitle(_ text: String?, from label: String?) async {
+        guard text != subtitle else { return }
+        subtitle = text
+        for activity in Activity<ParleyAttributes>.activities where activity.activityState == .active {
+            var state = activity.content.state
+            guard state.caption != text else { continue }
+            state.caption = text
+            state.speaker = text == nil ? nil : label
+            await activity.update(.init(state: state, staleDate: activity.content.staleDate))
+        }
+    }
+
     /// A tapped answer: the question goes, the answer shows as the last line.
     func answered(_ text: String) async {
         for activity in Activity<ParleyAttributes>.activities where activity.activityState == .active {
@@ -81,9 +96,9 @@ final class ActivityLink {
         demoStarted = true
         await endAll()
         do {
-            let ask = ProcessInfo.processInfo.arguments.contains("ask")
-            _ = try Activity.request(attributes: ParleyAttributes(),
-                                     content: .init(state: ask ? .demoAsk() : .demo(), staleDate: nil, relevanceScore: 50))
+            let args = ProcessInfo.processInfo.arguments
+            let state: ParleyAttributes.ContentState = args.contains("ask") ? .demoAsk() : args.contains("speech") ? .demoSpeech() : .demo()
+            _ = try Activity.request(attributes: ParleyAttributes(), content: .init(state: state, staleDate: nil, relevanceScore: 50))
         } catch {
             NSLog("demo activity: %@", "\(error)")
         }

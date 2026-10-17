@@ -84,6 +84,12 @@ struct Caption: Hashable, Sendable {
     /// The word being spoken `t` seconds in (-1 before the first).
     func index(at t: Double) -> Int { (starts.lastIndex { $0 <= t }) ?? -1 }
 
+    /// The subtitle line (`chunks`) being spoken `t` seconds in — the first before it starts.
+    func line(at t: Double) -> String? {
+        let i = max(0, index(at: t))
+        return chunks.first { $0.contains(i) }.map { words[$0].joined(separator: " ") }
+    }
+
     /// Subtitle lines: up to a sentence end, or a comma once there are 7 words, at most 12.
     var chunks: [Range<Int>] {
         var out: [Range<Int>] = []

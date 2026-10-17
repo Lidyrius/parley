@@ -30,6 +30,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return true
     }
 
+    /// The host's silent push for the widgets: store what it carries, the widgets reload.
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+        guard let widget = userInfo["widget"] else { return .noData }
+        return WidgetFeed.received(widget) ? .newData : .failed
+    }
+
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         AppModel.shared.alertToken = PushPayload.hex(deviceToken)
     }
@@ -124,6 +130,10 @@ final class AppModel {
         call.ensureRelay = { [weak self] in self?.dialIfIdle() }
         call.onEnded = { [weak self] in self?.callEnded() }
         call.onDeclined = { [weak self] label in self?.offerLater(label) }
+        call.onSubtitle = { [weak self] line in
+            guard let self else { return }
+            Task { await self.activity.subtitle(line, from: self.call.label) }
+        }
         relay.onEvent = { [weak self] in self?.handle($0) }
         if demo {
             relay.startDemo()

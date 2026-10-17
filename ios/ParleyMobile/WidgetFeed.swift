@@ -7,8 +7,17 @@ import WidgetKit
 enum WidgetFeed {
     private static var last: WidgetSnapshot?
 
-    static func publish(_ s: Snapshot, now: Date = .now) {
-        let snap = snapshot(s, now: now)
+    static func publish(_ s: Snapshot, now: Date = .now) { store(snapshot(s, now: now)) }
+
+    /// The host's silent push (`widget`): the app was woken just to keep the widgets current.
+    static func received(_ payload: Any, now: Date = .now) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let push = try? JSONDecoder().decode(WidgetPush.self, from: data) else { return false }
+        store(push.snapshot(at: now))
+        return true
+    }
+
+    static func store(_ snap: WidgetSnapshot) {
         var compare = snap
         compare.at = last?.at ?? snap.at   // the time alone is no change
         guard compare != last else { return }

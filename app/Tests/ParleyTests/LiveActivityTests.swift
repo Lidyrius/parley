@@ -180,4 +180,31 @@ final class LiveActivityTests: XCTestCase {
         XCTAssertNil(feed.step(c, away: true, canStart: true, canUpdate: true, now: t + 10))
         XCTAssertEqual(feed.step(plain, away: true, canStart: true, canUpdate: true, now: t + 15), .update(plain, priority: 5))
     }
+
+    // MARK: - the widgets' silent push
+
+    func testWidgetPictureAndItsPush() throws {
+        let json = sessions.replacingOccurrences(of: #""today":{}"#, with:
+            #""today":{"costUsd":3.5,"turns":7,"rateLimits":[{"kind":"five_hour","percentUsed":42.4},{"kind":"seven_day","percentUsed":18}]}"#)
+        let w = LiveActivity.widget(fromSessions: json)
+        XCTAssertEqual(w.sessions.map(\.id), ["c", "p", "w", "b", "i"])   // all running ones, up to 8
+        XCTAssertEqual(w.cost, 3.5)
+        XCTAssertEqual(w.updates, 7)
+        XCTAssertEqual(w.limit, 42.4)
+        XCTAssertEqual(w.week, 18)
+        let o = try XCTUnwrap(JSONSerialization.jsonObject(with: LiveActivity.widgetPayload(w)) as? [String: Any])
+        XCTAssertEqual((o["aps"] as? [String: Any])?["content-available"] as? Int, 1)
+        XCTAssertEqual(((o["widget"] as? [String: Any])?["sessions"] as? [Any])?.count, 5)
+
+        var feed = WidgetPushFeed()
+        let t = Date(timeIntervalSince1970: 0)
+        XCTAssertTrue(feed.due(w, now: t))
+        var changed = w
+        changed.sessions.removeLast()
+        XCTAssertFalse(feed.due(changed, now: t + 60))                         // 20 min apart at least
+        var costOnly = w
+        costOnly.cost = 9
+        XCTAssertFalse(feed.due(costOnly, now: t + WidgetPushFeed.every))       // the cost alone is no news
+        XCTAssertTrue(feed.due(changed, now: t + WidgetPushFeed.every))
+    }
 }

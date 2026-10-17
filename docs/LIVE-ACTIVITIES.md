@@ -3,8 +3,8 @@
 Status: **Stufen 1–5 gebaut** (Steuerelemente; Parley-Aktivität mit Rückruf / Später /
 Pausiert und Antworten per Tipp im Stumm-Modus, gestartet und aktualisiert per Push vom Mac und
 von Windows — Protokoll in docs/IPHONE.md, „Protocol v4“; Widgets klein/mittel/groß und
-Sperrbildschirm aus dem letzten Stand, den die App vom Mac hat). Offen: Untertitel im Anruf (6),
-Widget-Pushes, damit die Widgets auch ohne laufende App frisch bleiben. Apple-Stand: iOS 26 / iOS 27 (geprüft gegen Apples Doku, Oktober 2026).
+Sperrbildschirm, frisch gehalten per stillem Push vom Mac; Untertitel im Anruf). Alles gebaut —
+offen ist nur der Test auf dem Gerät, besonders wie iOS Anruf und Aktivität nebeneinander zeigt. Apple-Stand: iOS 26 / iOS 27 (geprüft gegen Apples Doku, Oktober 2026).
 
 ## Die Idee in einem Satz
 

@@ -26,6 +26,23 @@ struct WidgetSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+/// The host's silent push for the widgets (`widget` beside `aps`): every running session, most
+/// urgent first (epoch s, as in the Live Activity), and today's figures. It wakes the app, which
+/// stores it for the widgets.
+struct WidgetPush: Decodable, Sendable {
+    var sessions: [ParleyAttributes.Row] = []
+    var line: String?
+    var from: String?
+    var cost: Double?
+    var updates: Int?
+    var limit: Double?
+    var week: Double?
+
+    func snapshot(at: Date) -> WidgetSnapshot {
+        WidgetSnapshot(at: at, sessions: sessions, line: line, from: from, cost: cost, updates: updates, limit: limit, week: week)
+    }
+}
+
 extension ParleyAttributes.Row {
     /// The order that matters to Sir (as the host sorts the Live Activity): a call back owed, a
     /// ring to come, talking, wanting to talk, paused, working, background, parked, ready.

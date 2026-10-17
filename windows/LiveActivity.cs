@@ -107,7 +107,7 @@ public static class LiveActivity
 
     // GET /sessions (times in epoch ms) → the activity's content. Stopped sessions are left out;
     // the line is the most urgent session's last spoken one.
-    public static Content FromSessions(string json, Ask? ask = null)
+    public static Content FromSessions(string json, Ask? ask = null, int maxRows = MaxRows)
     {
         try
         {
@@ -127,10 +127,63 @@ public static class LiveActivity
             rows.Sort((a, b) => Rank(a.Row) != Rank(b.Row) ? Rank(a.Row).CompareTo(Rank(b.Row)) : b.Row.Since.CompareTo(a.Row.Since));
             var spoken = rows.FirstOrDefault(r => !string.IsNullOrEmpty(r.Line));
             var text = spoken.Line is { } t ? (t.Length > 120 ? t[..120] : t) : null;
-            return new Content(rows.Take(MaxRows).Select(r => r.Row).ToList(), rows.Count, text, text is null ? null : spoken.Row.Label, ask);
+            return new Content(rows.Take(maxRows).Select(r => r.Row).ToList(), rows.Count, text, text is null ? null : spoken.Row.Label, ask);
         }
         catch (JsonException) { return Content.Empty; }
     }
+
+    // ---- the widgets (a silent push the app stores for them) ---------------------------
+
+    // The widgets' picture (ios/Shared/WidgetSnapshot.swift `WidgetPush`): up to 8 sessions, the
+    // line, and today's figures from GET /sessions — as macOS.
+    public sealed record Widget(
+        [property: JsonPropertyName("sessions")] IReadOnlyList<Row> Sessions,
+        [property: JsonPropertyName("line")] string? Line,
+        [property: JsonPropertyName("from")] string? From,
+        [property: JsonPropertyName("cost")] double? Cost,
+        [property: JsonPropertyName("updates")] int? Updates,
+        [property: JsonPropertyName("limit")] double? Limit,
+        [property: JsonPropertyName("week")] double? Week)
+    {
+        // What makes a push worth it: the sessions, the line, the limit in whole percent — not
+        // the cost, which creeps up all the time.
+        [JsonIgnore]
+        public string Key => string.Join(";", Sessions.Select(r => $"{r.Id}/{r.State}/{r.Since}/{r.Until}/{r.Callback}"))
+                             + "|" + (Line ?? "") + "|" + (Limit is { } l ? (int)l : -1);
+    }
+
+    public static Widget WidgetFrom(string json)
+    {
+        var c = FromSessions(json, maxRows: 8);
+        double? cost = null, limit = null, week = null;
+        int? updates = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("today", out var today) && today.ValueKind == JsonValueKind.Object)
+            {
+                if (today.TryGetProperty("costUsd", out var cu) && cu.ValueKind == JsonValueKind.Number) cost = cu.GetDouble();
+                if (today.TryGetProperty("turns", out var tu) && tu.ValueKind == JsonValueKind.Number) updates = tu.GetInt32();
+                if (today.TryGetProperty("rateLimits", out var rl) && rl.ValueKind == JsonValueKind.Array)
+                    foreach (var r in rl.EnumerateArray())
+                    {
+                        var kind = r.TryGetProperty("kind", out var k) ? k.GetString() : null;
+                        double? used = r.TryGetProperty("percentUsed", out var p) && p.ValueKind == JsonValueKind.Number ? p.GetDouble() : null;
+                        if (kind == "five_hour") limit = used;
+                        if (kind == "seven_day") week = used;
+                    }
+            }
+        }
+        catch (JsonException) { }
+        return new Widget(c.Sessions, c.Line, c.From, cost, updates, limit, week);
+    }
+
+    // {"aps":{"content-available":1},"widget":{…}} — wakes the app, shows nothing.
+    public static string WidgetPayload(Widget w) => JsonSerializer.Serialize(new Dictionary<string, object>
+    {
+        ["aps"] = new Dictionary<string, int> { ["content-available"] = 1 },
+        ["widget"] = w,
+    }, Json);
 
     public enum Event { Start, Update, End }
 
@@ -244,5 +297,22 @@ public sealed class LiveActivityFeed
         _sent = content;
         _sentAt = now;
         return new Update(content, newlyWanted ? 10 : 5);
+    }
+}
+
+// When the widgets get a silent push: iOS throttles them (a few an hour), so at most every
+// 20 min, and only when what they show changed — as macOS (WidgetPushFeed).
+public sealed class WidgetPushFeed
+{
+    public static readonly TimeSpan Every = TimeSpan.FromMinutes(20);
+    private string? _sent;
+    private DateTime _sentAt = DateTime.MinValue;
+
+    public bool Due(LiveActivity.Widget w, DateTime now)
+    {
+        if (w.Key == _sent || now - _sentAt < Every) return false;
+        _sent = w.Key;
+        _sentAt = now;
+        return true;
     }
 }

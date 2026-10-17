@@ -30,7 +30,8 @@ struct ParleyLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     Detail(state: state, colors: colors, dark: true)
-                        .padding(.horizontal, 6)
+                        .padding(.leading, 1)   // the bottom region sits a little in from the corners: align with "Parley"
+                        .padding(.trailing, 6)
                         .padding(.top, state.ask == nil ? 6 : 2)
                 }
             } compactLeading: {
@@ -184,7 +185,9 @@ private struct Detail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let ask = state.ask {
+            if let caption = state.caption {
+                Speech(speaker: state.speaker, text: caption, color: Paint.color(.accent, colors, dark: dark))
+            } else if let ask = state.ask {
                 Question(ask: ask, colors: colors, dark: dark)
             } else if let top = state.top {
                 Hero(row: top, line: state.from == top.label ? state.line : nil, color: Paint.color(top.role, colors, dark: dark))
@@ -227,6 +230,27 @@ private struct Hero: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// In a call: what Parley says right now, as subtitles.
+private struct Speech: View {
+    let speaker: String?
+    let text: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(speaker.map { "\($0) spricht" } ?? "Parley spricht")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+            Text(text)
+                .font(.title3.weight(.medium))
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+                .contentTransition(.opacity)
         }
         .accessibilityElement(children: .combine)
     }
@@ -293,7 +317,9 @@ private struct Badge: View {
         let top = state.top
         let color = Paint.color(state.ask != nil ? .accent : top?.role ?? .idle, colors, dark: true)
         Group {
-            if state.ask != nil {
+            if state.caption != nil {
+                Image(systemName: "waveform")
+            } else if state.ask != nil {
                 Image(systemName: "bubble.left.fill")
             } else {
                 switch top?.kind {

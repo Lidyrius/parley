@@ -50,6 +50,9 @@ final class CallController {
     @ObservationIgnored var onEnded: () -> Void = {}
     /// A ringing call declined on the lock screen (no "later" buttons there): the label it was for.
     @ObservationIgnored var onDeclined: (String?) -> Void = { _ in }
+    /// The subtitle line spoken now, on change (nil = none any more): the Live Activity shows it.
+    @ObservationIgnored var onSubtitle: (String?) -> Void = { _ in }
+    @ObservationIgnored private var subtitleTask: Task<Void, Never>?
     /// Ended from the app's own ringing screen (Ablehnen, In 1 Min. …): no notification after.
     @ObservationIgnored private var endedInApp = false
     /// An unanswered ring ends itself (the host gives up at 45 s) and leaves the "later" notification.
@@ -290,6 +293,7 @@ final class CallController {
         slides = []   // a new line: its slides (if any) come right after
         captionBase = audio.received
         captionAt = .now
+        followSubtitles(c)
         leaveEarly?.cancel()
         if c.last, Self.autoHangUp, phase.isActive, !isTest {
             // The talk's last line: the screen slides away half a second before it ends (the
@@ -300,6 +304,24 @@ final class CallController {
                     guard let self, phase.isActive else { return }
                     if captionTime(at: .now) >= c.end - 0.5 { leftEarly = true; showsScreen = false; return }
                 }
+            }
+        }
+    }
+
+    /// The line's subtitles, line by line, to `onSubtitle` — kept a moment after it ends, so the
+    /// activity doesn't flicker between lines.
+    private func followSubtitles(_ c: Caption) {
+        subtitleTask?.cancel()
+        guard !isDemo else { return }
+        subtitleTask = Task { [weak self] in
+            var shown: String?
+            while !Task.isCancelled {
+                guard let self, phase.isActive else { return }
+                let t = captionTime(at: .now)
+                let line = t > c.end + 3 ? nil : c.line(at: t)
+                if line != shown { shown = line; onSubtitle(line) }
+                if line == nil { return }
+                try? await Task.sleep(for: .milliseconds(200))
             }
         }
     }
@@ -484,6 +506,8 @@ final class CallController {
     }
 
     private func reset() {
+        subtitleTask?.cancel()
+        onSubtitle(nil)
         leaveEarly?.cancel()
         leftEarly = false
         autoHangUpTask?.cancel()
