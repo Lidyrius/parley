@@ -5,10 +5,11 @@ using System.Text.Json;
 
 namespace Parley;
 
-// The iPhone connection (docs/IPHONE.md, relay protocol v1), 1:1 with the macOS Relay.swift.
+// The iPhone connection (docs/IPHONE.md, relay protocol v1 + v2), 1:1 with the macOS Relay.swift.
 // Parley dials OUT to a small relay on Cloudflare as the host of one room — no port opens on
-// the PC. It mirrors GET /sessions to the phones in the room and takes a phone's `resume` down
-// the POST /resume path.
+// the PC. It mirrors GET /sessions to the phones in the room, takes a phone's `resume` down
+// the POST /resume path, and carries the v2 call: binary audio frames both ways, the phone's
+// `call` / `wake` / `push` / `away`, and the host's `audio` / `ring`.
 
 // The relay settings in credentials.json. relayUrl empty = the feature is off.
 public sealed record RelayConfig
@@ -104,24 +105,57 @@ public static class RelayFrame
         return head + (rest == "}" ? "" : ",") + rest;
     }
 
-    // A phone's frame: `resume` takes the POST /resume path; `hello`, the relay's `pong` and
-    // unknown types are ignored (forward compatible).
-    public static void Dispatch(string text, Action<string> resume)
+    // A phone's frame → its message; `hello`, the relay's `pong`, unknown types and malformed
+    // bodies → null, ignored (forward compatible).
+    public static PhoneMessage? Parse(string text)
     {
-        string? id;
         try
         {
             using var doc = JsonDocument.Parse(text);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("t", out var t) || t.ValueKind != JsonValueKind.String || t.GetString() != "resume"
-                || !root.TryGetProperty("id", out var i) || i.ValueKind != JsonValueKind.String) return;
-            id = i.GetString();
+                || !root.TryGetProperty("t", out var t) || t.ValueKind != JsonValueKind.String) return null;
+            string? Str(string key) =>
+                root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            switch (t.GetString())
+            {
+                case "resume":
+                    return Str("id") is { Length: > 0 } id ? new PhoneResume(id) : null;
+                case "call":
+                    return Str("state") switch
+                    {
+                        "start" => new PhoneCallState(true),
+                        "end" => new PhoneCallState(false),
+                        _ => null,
+                    };
+                case "wake":
+                    return new PhoneWake();
+                case "push":
+                    return Str("token") is { Length: > 0 } token ? new PhonePush(token, Str("env") ?? "production") : null;
+                case "away":
+                    return root.TryGetProperty("on", out var flag) && (flag.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                        ? new PhoneAway(flag.ValueKind == JsonValueKind.True) : null;
+                default:
+                    return null;
+            }
         }
-        catch (JsonException) { return; }
-        if (!string.IsNullOrEmpty(id)) resume(id);
+        catch (JsonException) { return null; }
     }
+
+    // host → phone (v2): what the host does with the call audio — speaking | listening | idle.
+    public static string Audio(string state) => JsonSerializer.Serialize(new { t = "audio", state });
+
+    // host → phone (v2): an update wants the phone (next to the VoIP push).
+    public static string Ring(string label) => JsonSerializer.Serialize(new { t = "ring", label });
 }
+
+// A phone's message (protocol v1 + v2).
+public abstract record PhoneMessage { }
+public sealed record PhoneResume(string Id) : PhoneMessage;          // resume a session (POST /resume)
+public sealed record PhoneCallState(bool Started) : PhoneMessage;    // `call` start / end
+public sealed record PhoneWake : PhoneMessage { }                     // "Hey Parley" while the host was idle
+public sealed record PhonePush(string Token, string Env) : PhoneMessage;   // VoIP token, production | development
+public sealed record PhoneAway(bool On) : PhoneMessage;              // Unterwegs-Modus
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never
 // counts), else at least every 10 s. A new connection starts with a fresh one → sent at once.
@@ -143,7 +177,8 @@ public sealed class RelaySync
 
 // The host's one connection to its room: reconnects with capped exponential backoff (1 s →
 // 30 s), pings every 25 s (the relay answers `pong` itself), checks the overview every 2 s and
-// sends it on change / every 10 s, and hands a phone's `resume` on. One background task; the
+// sends it on change / every 10 s, and hands a phone's messages and audio on. One background
+// task receives; sends come from it and from the call (audio, state) through one gate. The
 // tray reads `Connected` when its menu opens.
 public sealed class RelayClient
 {
@@ -151,32 +186,69 @@ public sealed class RelayClient
     private static readonly TimeSpan PingEvery = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan SilentLimit = TimeSpan.FromSeconds(60);   // nothing from the relay (not even a pong) → dead link
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);   // a stuck send gives up (and drops the link)
     private const int MaxFrame = 1 << 20;   // as URLSessionWebSocketTask's receive limit on macOS
+    private const int MaxAudioFrame = 64 * 1024;   // the relay drops bigger binary frames; so do we
 
     public static TimeSpan NextBackoff(TimeSpan b) => b * 2 < MaxBackoff ? b * 2 : MaxBackoff;
 
     public RelayConfig Config { get; }
     public bool Connected => Volatile.Read(ref _connected);
 
+    // After each (re)connect, on the relay task — the call state is sent again. Set before Start.
+    public Action? OnConnected { get; set; }
+
     private readonly Uri _uri;
     private readonly Func<string> _sessions;
-    private readonly Action<string> _resume;
+    private readonly Action<PhoneMessage> _phone;
+    private readonly Action<byte[]>? _audio;
     private readonly CancellationTokenSource _stop = new();
+    private readonly SemaphoreSlim _sendGate = new(1, 1);   // ClientWebSocket allows one send at a time
     private Task? _loop;
     private bool _connected;
+    private ClientWebSocket? _ws;   // the live connection, for sends from outside the loop
     private long _lastInbound;   // UTC ticks of the last frame from the relay (receive loop → send loop)
 
-    private RelayClient(RelayConfig config, Uri uri, Func<string> sessions, Action<string> resume)
+    private RelayClient(RelayConfig config, Uri uri, Func<string> sessions, Action<PhoneMessage> phone, Action<byte[]>? audio)
     {
         Config = config;
         _uri = uri;
         _sessions = sessions;
-        _resume = resume;
+        _phone = phone;
+        _audio = audio;
     }
 
-    // null unless the config is complete (http(s) relayUrl, room, secret).
-    public static RelayClient? Create(RelayConfig config, Func<string> sessions, Action<string> resume) =>
-        config.IsComplete && RelayLink.Socket(config) is { } uri ? new RelayClient(config, uri, sessions, resume) : null;
+    // null unless the config is complete (http(s) relayUrl, room, secret). `phone` gets each
+    // phone message, `audio` each binary frame (the phone's mic), both on the receive task.
+    public static RelayClient? Create(RelayConfig config, Func<string> sessions, Action<PhoneMessage> phone, Action<byte[]>? audio = null) =>
+        config.IsComplete && RelayLink.Socket(config) is { } uri ? new RelayClient(config, uri, sessions, phone, audio) : null;
+
+    public Task<bool> SendTextAsync(string text) => SendOutsideAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text);
+
+    public Task<bool> SendAudioAsync(byte[] frame) => SendOutsideAsync(frame, WebSocketMessageType.Binary);
+
+    // A send from the call (audio, `audio`, `ring`): false when not connected or it failed — the
+    // connection loop notices a dead link on its own.
+    private async Task<bool> SendOutsideAsync(byte[] data, WebSocketMessageType type)
+    {
+        var ws = Volatile.Read(ref _ws);
+        if (ws is null || ws.State != WebSocketState.Open) return false;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        timeout.CancelAfter(SendTimeout);
+        try
+        {
+            await SendLockedAsync(ws, data, type, timeout.Token);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    private async Task SendLockedAsync(ClientWebSocket ws, byte[] data, WebSocketMessageType type, CancellationToken ct)
+    {
+        await _sendGate.WaitAsync(ct);
+        try { await ws.SendAsync(new ArraySegment<byte>(data), type, true, ct); }
+        finally { _sendGate.Release(); }
+    }
 
     public void Start() => _loop ??= Task.Run(() => RunAsync(_stop.Token));
 
@@ -203,9 +275,13 @@ public sealed class RelayClient
                     await ws.ConnectAsync(_uri, connect.Token);
                 }
                 Volatile.Write(ref _connected, true);
+                Volatile.Write(ref _ws, ws);
                 backoff = TimeSpan.FromSeconds(1);
                 Log.Write($"relay: connected to {_uri.Host}");
-                await RunConnectedAsync(ws, ct);
+                try { OnConnected?.Invoke(); }
+                catch (Exception e) { Log.Write($"relay: on-connect failed: {e.Message}"); }
+                try { await RunConnectedAsync(ws, ct); }
+                finally { Volatile.Write(ref _ws, null); }
             }
             catch (Exception e) { error = e; }
             if (ct.IsCancellationRequested) break;
@@ -241,11 +317,11 @@ public sealed class RelayClient
                     if (now - new DateTime(Volatile.Read(ref _lastInbound), DateTimeKind.Utc) > SilentLimit)
                         throw new TimeoutException($"no answer from the relay for {(int)SilentLimit.TotalSeconds} s");
                     lastPing = now;
-                    await SendAsync(ws, "ping", ct);
+                    await SendLockedAsync(ws, Encoding.UTF8.GetBytes("ping"), WebSocketMessageType.Text, ct);
                 }
                 var json = _sessions();
                 if (sync.Due(json, now) && RelayFrame.Sessions(json, new DateTimeOffset(now).ToUnixTimeMilliseconds()) is { } frame)
-                    await SendAsync(ws, frame, ct);
+                    await SendLockedAsync(ws, Encoding.UTF8.GetBytes(frame), WebSocketMessageType.Text, ct);
                 await Task.WhenAny(receive, Task.Delay(TickEvery, ct));
             }
         }
@@ -254,7 +330,13 @@ public sealed class RelayClient
             if (ct.IsCancellationRequested && ws.State == WebSocketState.Open)
             {
                 using var closing = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-                try { await ws.CloseOutputAsync(WebSocketCloseStatus.EndpointUnavailable, null, closing.Token); } catch { }
+                try
+                {
+                    await _sendGate.WaitAsync(closing.Token);   // the close is a send too
+                    try { await ws.CloseOutputAsync(WebSocketCloseStatus.EndpointUnavailable, null, closing.Token); }
+                    finally { _sendGate.Release(); }
+                }
+                catch { }
             }
             receiveCts.Cancel();
             try { await receive; } catch { }
@@ -274,13 +356,21 @@ public sealed class RelayClient
             if (frame.Length > MaxFrame) throw new WebSocketException("frame too large");
             if (!r.EndOfMessage) continue;
             Volatile.Write(ref _lastInbound, DateTime.UtcNow.Ticks);
-            if (r.MessageType == WebSocketMessageType.Text)   // binary: reserved for audio (stage 2)
-                RelayFrame.Dispatch(Encoding.UTF8.GetString(frame.GetBuffer(), 0, (int)frame.Length), _resume);
+            // A handler's failure must never end the connection.
+            if (r.MessageType == WebSocketMessageType.Text)
+            {
+                if (RelayFrame.Parse(Encoding.UTF8.GetString(frame.GetBuffer(), 0, (int)frame.Length)) is { } message)
+                {
+                    try { _phone(message); }
+                    catch (Exception e) { Log.Write($"relay: {message.GetType().Name} failed: {e.Message}"); }
+                }
+            }
+            else if (frame.Length <= MaxAudioFrame && _audio is not null)   // binary: the phone's mic (v2)
+            {
+                try { _audio(frame.ToArray()); }
+                catch (Exception e) { Log.Write($"relay: audio frame failed: {e.Message}"); }
+            }
             frame.SetLength(0);
         }
     }
-
-    // Only the connection loop sends, so sends never overlap (ClientWebSocket allows one at a time).
-    private static Task SendAsync(ClientWebSocket ws, string text, CancellationToken ct) =>
-        ws.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(text)), WebSocketMessageType.Text, true, ct);
 }

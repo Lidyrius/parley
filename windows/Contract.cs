@@ -17,6 +17,8 @@ public sealed class TurnPayload
 
     [JsonIgnore] public bool WantsListen => Listen ?? true;
     [JsonIgnore] public string SpokenLabel => string.IsNullOrEmpty(Label) ? Project : Label!;
+    // Host-side only: a permission question past this has no one waiting for its answer.
+    [JsonIgnore] public DateTime? Deadline { get; set; }
 
     public static TurnPayload? Decode(string body)
     {
@@ -71,6 +73,37 @@ public sealed class RateLimit
     [JsonPropertyName("kind")] public string? Kind { get; set; }             // "five_hour", …
     [JsonPropertyName("percentUsed")] public double? PercentUsed { get; set; }
     [JsonPropertyName("resetsAt")] public string? ResetsAt { get; set; }     // ISO 8601
+}
+
+// POST /permission — the plugin's PermissionRequest hook, long-polling ≤ 120 s
+// (docs/IPHONE.md, v2). tool_input is the tool's own arguments object.
+public sealed class PermissionPayload
+{
+    [JsonPropertyName("session_id")] public string? SessionId { get; set; }
+    [JsonPropertyName("cwd")] public string? Cwd { get; set; }
+    [JsonPropertyName("tool_name")] public string? ToolName { get; set; }
+    [JsonPropertyName("tool_input")] public JsonElement? ToolInput { get; set; }
+
+    public static PermissionPayload? Decode(string body)
+    {
+        try { return JsonSerializer.Deserialize<PermissionPayload>(body); }
+        catch { return null; }
+    }
+}
+
+// POST /dispatch — the Zentrale starts / instructs a session in a folder (docs/IPHONE.md, v2).
+// start defaults to true.
+public sealed class DispatchPayload
+{
+    [JsonPropertyName("cwd")] public string? Cwd { get; set; }
+    [JsonPropertyName("instruction")] public string? Instruction { get; set; }
+    [JsonPropertyName("start")] public bool? Start { get; set; }
+
+    public static DispatchPayload? Decode(string body)
+    {
+        try { return JsonSerializer.Deserialize<DispatchPayload>(body); }
+        catch { return null; }
+    }
 }
 
 // POST /resume — resume a parked / idle session by its session_id (as listed by GET /sessions).

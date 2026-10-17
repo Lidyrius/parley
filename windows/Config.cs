@@ -21,6 +21,16 @@ public sealed class Config
     public string RelayUrl { get; init; } = "";      // iPhone relay base URL (docs/IPHONE.md); empty = no iPhone connection
     public string RelayRoom { get; init; } = "";     // the relay room (16 random bytes, base64url), created on first pairing
     public string RelaySecret { get; init; } = "";   // the room's secret (32 random bytes, base64url)
+    // iPhone protocol v2 (docs/IPHONE.md): the Zentrale's folder, where it creates projects, the
+    // APNs key for ringing, and what the phone told us (VoIP token, Unterwegs-Modus).
+    public string ZentraleDir { get; init; } = DefaultZentraleDir;
+    public string ProjectsDir { get; init; } = DefaultProjectsDir;
+    public string ApnsKeyId { get; init; } = "";
+    public string ApnsTeamId { get; init; } = Apns.DefaultTeamId;
+    public string ApnsKeyP8 { get; init; } = "";     // the .p8 PEM text
+    public string PhonePushToken { get; init; } = "";
+    public string PhonePushEnv { get; init; } = "production";   // production | development
+    public bool PhoneAway { get; init; }
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
@@ -35,6 +45,15 @@ public sealed class Config
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Parley");
 
     public static string CredentialsPath => Path.Combine(Dir, "credentials.json");
+
+    private static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    public static string DefaultProjectsDir => Path.Combine(Home, "workspace", "privat");
+    public static string DefaultZentraleDir => Path.Combine(Home, "workspace", "privat", "parley-zentrale");
+
+    // The Parley checkout (integration scripts, the zentrale\ template): sourceDir, else where
+    // the installer puts it.
+    public string ResolvedSourceDir =>
+        SourceDir.Trim().Length > 0 ? SourceDir.Trim() : Path.Combine(Home, ".parley", "src");
 
     public static Config Load()
     {
@@ -53,6 +72,7 @@ public sealed class Config
             double.TryParse(rateStr, System.Globalization.CultureInfo.InvariantCulture, out var rate);
             if (rate <= 0) rate = 1.0;
             var voice = S("googleVoice");
+            string Or(string key, string fallback) => S(key).Trim() is { Length: > 0 } v ? v : fallback;
             return new Config
             {
                 GoogleKey = S("googleAPIKey"),
@@ -69,6 +89,14 @@ public sealed class Config
                 RelayUrl = S("relayUrl"),
                 RelayRoom = S("relayRoom"),
                 RelaySecret = S("relaySecret"),
+                ZentraleDir = Or("zentraleDir", DefaultZentraleDir),
+                ProjectsDir = Or("projectsDir", DefaultProjectsDir),
+                ApnsKeyId = S("apnsKeyId").Trim(),
+                ApnsTeamId = Or("apnsTeamId", Apns.DefaultTeamId),
+                ApnsKeyP8 = S("apnsKeyP8"),
+                PhonePushToken = S("phonePushToken").Trim(),
+                PhonePushEnv = S("phonePushEnv") == "development" ? "development" : "production",
+                PhoneAway = S("phoneAway") == "1",
             };
         }
         catch

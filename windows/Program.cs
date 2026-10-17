@@ -22,6 +22,8 @@ internal sealed class TrayApp : ApplicationContext
     private readonly Server _server;
     private readonly PillOverlay _pill = new();
     private readonly ToolStripMenuItem _relayStatus = new() { Enabled = false, Visible = false };
+    private readonly ToolStripMenuItem _callStatus = new("iPhone: Anruf aktiv") { Enabled = false, Visible = false };
+    private readonly ToolStripMenuItem _awayStatus = new("Unterwegs-Modus an") { Enabled = false, Visible = false };
     private RelayClient? _relay;
 
     public TrayApp()
@@ -38,6 +40,11 @@ internal sealed class TrayApp : ApplicationContext
         // A session's label appeared → pre-render its "Update zu" + resume lines in the
         // background, so the first announcement / resume click is instant.
         _server.Sessions.OnLabel = label => Clips.Prerender(label, Config.Load());
+        // iPhone (docs/IPHONE.md, v2): Unterwegs-Modus rings before a turn; a wake utterance is
+        // routed to a session or the Zentrale. The phone's settings survive restarts.
+        _pipeline.Ring = label => Ringer.Ring(label);
+        _pipeline.Route = (text, config) => _server.Delivery.Route(text, config);
+        PhoneCall.LoadSettings(Config.Load());
 
         var menu = new ContextMenuStrip();
         // Resumable sessions (parked, or idle with the mod running) are inserted at the top on open.
@@ -54,6 +61,12 @@ internal sealed class TrayApp : ApplicationContext
         pair.Click += (_, _) => PairIPhone();
         menu.Items.Add(pair);
         menu.Items.Add(_relayStatus);
+        menu.Items.Add(_callStatus);
+        menu.Items.Add(_awayStatus);
+        // The APNs key that lets Parley ring the phone (Unterwegs-Modus).
+        var pushKey = new ToolStripMenuItem("Push-Schlüssel wählen…");
+        pushKey.Click += (_, _) => ChoosePushKey();
+        menu.Items.Add(pushKey);
         var stats = new ToolStripMenuItem("Statistiken…");
         stats.Click += (_, _) => new StatsForm().Show();
         menu.Items.Add(stats);
@@ -123,14 +136,82 @@ internal sealed class TrayApp : ApplicationContext
         var config = RelayConfig.Load();
         if (_relay is not null && _relay.Config == config) return;
         _relay?.Stop();
-        _relay = RelayClient.Create(config, () => _server.Sessions.Json(), id => _server.StartResume(id));
+        _relay = RelayClient.Create(config, () => _server.Sessions.Json(), OnPhone, PhoneCall.OnAudio);
+        if (_relay is not null) _relay.OnConnected = PhoneCall.Resync;
+        PhoneCall.Attach(_relay);
         _relay?.Start();
+        if (_relay is not null) Clips.PrerenderGreet(Config.Load());   // the first "Hey Parley" answers at once
+    }
+
+    // A phone's message (docs/IPHONE.md, v1 + v2), on the relay's receive task.
+    private void OnPhone(PhoneMessage message)
+    {
+        switch (message)
+        {
+            case PhoneResume r: _server.StartResume(r.Id); break;
+            case PhoneCallState c: PhoneCall.OnCall(c.Started); break;
+            case PhoneWake _: _server.StartWake(); break;
+            case PhonePush p: PhoneCall.SetPush(p.Token, p.Env); break;
+            case PhoneAway a: PhoneCall.SetAway(a.On); break;
+        }
     }
 
     private void RefreshRelayStatus()
     {
         _relayStatus.Visible = _relay is not null;
         _relayStatus.Text = _relay?.Connected == true ? "iPhone: verbunden mit Relay" : "iPhone: Relay nicht erreichbar";
+        _callStatus.Visible = PhoneCall.Active;
+        _awayStatus.Visible = PhoneCall.Away;
+    }
+
+    // "Push-Schlüssel wählen…": the APNs auth key (AuthKey_<KEYID>.p8 from Apple's developer
+    // portal) → credentials.json apnsKeyId / apnsTeamId / apnsKeyP8. Checked by signing a token.
+    private static void ChoosePushKey()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "APNs-Schlüssel wählen (AuthKey_<KEYID>.p8)",
+            Filter = "APNs-Schlüssel (AuthKey_*.p8)|AuthKey_*.p8|Alle .p8-Dateien (*.p8)|*.p8",
+            CheckFileExists = true,
+        };
+        if (dialog.ShowDialog() != DialogResult.OK) return;
+        var keyId = ApnsJwt.KeyIdFromFileName(Path.GetFileName(dialog.FileName));
+        if (keyId is null)
+        {
+            MessageBox.Show("Der Dateiname muss AuthKey_<KEYID>.p8 lauten — so lädt Apple den Schlüssel herunter; " +
+                "die Key ID wird daraus gelesen.", "Push-Schlüssel", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        string pem;
+        try
+        {
+            pem = File.ReadAllText(dialog.FileName);
+            ApnsJwt.Build(keyId, Apns.DefaultTeamId, pem, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        }
+        catch (Exception e)
+        {
+            Log.Write($"apns: chosen key unusable ({e.Message})");
+            MessageBox.Show($"Das ist kein gültiger APNs-Schlüssel (.p8): {e.Message}", "Push-Schlüssel",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        var saved = Config.Merge(new Dictionary<string, string>
+        {
+            ["apnsKeyId"] = keyId,
+            ["apnsTeamId"] = Apns.DefaultTeamId,
+            ["apnsKeyP8"] = pem,
+        });
+        if (!saved)
+        {
+            MessageBox.Show("credentials.json konnte nicht gelesen werden — der Schlüssel wurde nicht gespeichert.",
+                "Push-Schlüssel", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        Apns.ResetToken();
+        Log.Write($"apns: push key {keyId} saved");
+        MessageBox.Show($"Push-Schlüssel gespeichert (Key ID {keyId}, Team {Apns.DefaultTeamId}). " +
+            "Im Unterwegs-Modus klingelt Parley jetzt dein iPhone an.", "Push-Schlüssel",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private static void ShowRelayHint()

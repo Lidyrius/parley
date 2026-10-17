@@ -3,7 +3,8 @@ using NAudio.Wave;
 namespace Parley;
 
 // PCM playback for TTS output + tone synthesis. Fresh WasapiOut per playback (mirrors
-// the macOS fresh-player pattern); Play() then wait until the buffer drains.
+// the macOS fresh-player pattern); Play() then wait until the buffer drains. During an iPhone
+// call PlayPcm sends to the phone instead.
 public static class AudioOut
 {
     /// Time-stretch (pitch-preserved) 16-bit mono PCM by `rate` via SoundTouch —
@@ -38,6 +39,7 @@ public static class AudioOut
     /// to 16/24 kHz while their mic is used; playing during the switch is swallowed).
     public static async Task WaitForHiFiOutput(CancellationToken cancellationToken = default)
     {
+        if (PhoneCall.Active) return;   // in a call the voice goes to the phone, not this device
         var start = DateTime.UtcNow;
         while ((DateTime.UtcNow - start).TotalSeconds < 3.0)
         {
@@ -58,6 +60,16 @@ public static class AudioOut
                                      CancellationToken cancellationToken = default)
     {
         if (pcm.Length < 2) return;
+        // In an iPhone call (docs/IPHONE.md, v2) all of Parley's audio goes to the phone; if the
+        // call drops midway, the rest plays here.
+        if (PhoneCall.Active)
+        {
+            var rest = await PhoneCall.PlayAsync(pcm, sampleRate, cancellationToken);
+            if (rest is null || rest.Length < 2) return;
+            Log.Write("phone: call gone mid-playback → the rest on the speaker");
+            pcm = rest;
+            sampleRate = PhoneAudio.SampleRate;
+        }
         var format = new WaveFormat(sampleRate, 16, 1);
         var provider = new BufferedWaveProvider(format)
         {

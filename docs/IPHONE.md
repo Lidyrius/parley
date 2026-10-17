@@ -107,7 +107,7 @@ Everything in v1 stays. Additions (unknown types are still ignored everywhere):
   created from `zentrale/` in this repo: `CLAUDE.md` + `.parley.json` `{"name":"Zentrale"}`). If it
   is not alive, the host starts it as a visible interactive Claude Code CLI session in a terminal
   (macOS: Terminal.app via `osascript`, `cd <dir> && claude '/parley:voice'`; Windows: Windows
-  Terminal `wt -d <dir> claude /parley:voice`, `cmd` fallback) and keeps the routed instruction
+  Terminal `wt -d <dir> cmd /k claude /parley:voice`, `cmd` fallback) and keeps the routed instruction
   **pending by cwd** until a presence from that folder arrives. (The desktop deep link
   `claude://code/new?folder=…&q=…` was tested: it only pre-fills the prompt, so it can't start a
   session unattended.) The instruction text never goes on a command line.
@@ -115,7 +115,7 @@ Everything in v1 stays. Additions (unknown types are still ignored everywhere):
   folder, `git init`, `.parley.json`), and starts new sessions the same way (terminal + first prompt
   `/parley:voice` + the task delivered as pending-by-cwd via `POST /dispatch`).
 - **`POST /dispatch`** (local, for the Zentrale): `{"cwd":"<abs path>","instruction":"<task>","start":true}`
-  → starts a session there if none is alive (deep link) and delivers the instruction to it.
+  → starts a session there if none is alive (terminal) and delivers the instruction to it.
 - **Ringing (Unterwegs-Modus).** While `away` is on and no call is connected, a turn that is about to
   be voiced instead sends a **VoIP push** (APNs, topic `de.developaway.parley.mobile.voip`, push type
   `voip`, payload `{"label":…}`) plus a `ring` frame, and waits up to 45 s for `call start`; then it

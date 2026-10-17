@@ -17,8 +17,15 @@ public sealed class MicCapture
     public Action<float>? OnLevel;   // 0…1 live level for a future waveform UI
 
     /// Record until trailing silence (or timeout); returns 16 kHz mono 16-bit WAV bytes.
+    /// In an iPhone call the phone's microphone is the input.
     public async Task<byte[]> Record()
     {
+        if (PhoneCall.Active)
+        {
+            var phone = await RecordFromPhone();
+            if (phone is not null) return phone;
+            Log.Write("mic: call ended before any speech → local mic");
+        }
         var vad = new Vad();
         var samples = new List<short>(16000 * 30);
         var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -88,6 +95,65 @@ public sealed class MicCapture
         // VAD never heard speech → send nothing; Whisper turns pure silence into "Thank you.".
         if (reason == "no-speech") samples.Clear();
         return Wav.Encode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(samples));
+    }
+
+    // The phone's microphone (docs/IPHONE.md, v2): its 16 kHz frames from the relay through the
+    // same VAD, grace and limits as the local mic. null = the call ended before anything was
+    // said → the caller listens on the local mic instead; once speech started, what was heard
+    // is used.
+    private async Task<byte[]?> RecordFromPhone()
+    {
+        var vad = new Vad();
+        var samples = new List<short>(16000 * 30);
+        var gate = new object();
+        double totalDuration = 0;
+        var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var hold = PhoneCall.Hold();
+        PhoneCall.SetAudio("listening");
+        Log.Write("mic: listening on the phone");
+        using (PhoneCall.Listen(frame =>
+        {
+            lock (gate)
+            {
+                if (done.Task.IsCompleted) return;
+                var chunk = PhoneAudio.ToSamples(frame);
+                if (chunk.Length == 0) return;
+                samples.AddRange(chunk);
+                var duration = chunk.Length / TargetRate;
+                totalDuration += duration;
+                var db = Vad.Db(PhoneAudio.Rms(chunk));
+                OnLevel?.Invoke(PhoneAudio.Level(db));
+                if (totalDuration < VadGraceSeconds) return;
+                var decision = vad.Process(db, duration);
+                if (decision == Vad.Decision.Waiting && totalDuration >= NoSpeechTimeout)
+                    done.TrySetResult("no-speech");
+                else if (decision == Vad.Decision.Ended)
+                    done.TrySetResult("vad-silence");
+            }
+        }))
+        {
+            // Wall clock for the cap and the call: frames may simply stop coming.
+            var start = DateTime.UtcNow;
+            while (!done.Task.IsCompleted)
+            {
+                if (!PhoneCall.Active) done.TrySetResult("call-ended");
+                else if ((DateTime.UtcNow - start).TotalSeconds >= MaxListenSeconds) done.TrySetResult("max-cap");
+                else await Task.WhenAny(done.Task, Task.Delay(200));
+            }
+        }
+        var reason = await done.Task;
+        short[] captured;
+        bool heard;
+        lock (gate)
+        {
+            captured = samples.ToArray();
+            heard = vad.Started;
+        }
+        Log.Write($"mic: phone finished reason={reason} samples={captured.Length}");
+        if (reason == "call-ended" && !heard) return null;
+        // VAD never heard speech → send nothing; Whisper turns pure silence into "Thank you.".
+        if (reason == "no-speech") captured = Array.Empty<short>();
+        return Wav.Encode(captured);
     }
 
     private static float[] ToMonoFloats(byte[] buffer, int bytes, WaveFormat fmt, int channels)

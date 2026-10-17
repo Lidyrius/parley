@@ -5,9 +5,16 @@ namespace Parley;
 // session alive) → speak at speaking rate (+beep on listen turns) → record with pill overlay
 // (VAD) → transcribe (min-audio guard) → classify → cached ack line + media resume in
 // the background (transcript returns immediately) → stats. "" ends the conversation.
+// iPhone (docs/IPHONE.md, v2): in a call every step speaks/listens through the phone (AudioOut,
+// MicCapture); Unterwegs-Modus rings the phone first; plus the wake greeting and the permission
+// question, which ride the same gate as turns.
 public sealed class TurnPipeline
 {
     public volatile bool Muted;
+    // Set once at startup. Ring: Unterwegs-Modus — ring the phone for this label and wait for
+    // the call (true = connected). Route: a wake utterance → delivered; returns the line to confirm with.
+    public Func<string, Task<bool>>? Ring;
+    public Func<string, Config, Task<string>>? Route;
     private readonly MicCapture _mic = new();
     private readonly Func<int> _queuedTurns;
     private readonly PillOverlay? _pill;
@@ -32,7 +39,13 @@ public sealed class TurnPipeline
     public async Task<(string transcript, bool park, int wait, string resume)> Run(TurnPayload turn)
     {
         LiveStatus.Begin(turn.SessionId);
-        try { return turn.Event == Server.ResumeEvent ? await RunResume(turn) : await RunTurn(turn); }
+        try
+        {
+            if (turn.Event == Server.ResumeEvent) return await RunResume(turn);
+            if (turn.Event == Server.WakeEvent) return await RunWake(turn);
+            if (turn.Event == Server.PermissionEvent) return await RunPermission(turn);
+            return await RunTurn(turn);
+        }
         finally { LiveStatus.Set("idle"); }
     }
 
@@ -63,6 +76,70 @@ public sealed class TurnPipeline
         return (text, false, 0, "");
     }
 
+    // "Hey Parley" during a call: cached greeting → beep → listen on the phone → route the
+    // utterance (a running session by name, else the Zentrale) → a short spoken confirmation.
+    private async Task<(string transcript, bool park, int wait, string resume)> RunWake(TurnPayload turn)
+    {
+        var config = Config.Load();
+        _resumeGen++;
+        Log.Write("wake: greeting");
+        if (Muted)
+        {
+            Log.Write("muted → ignoring the wake word");
+            return ("", false, 0, "");
+        }
+        if (_ackTask is not null) { await _ackTask; _ackTask = null; }
+
+        var greeting = await Clips.GreetClip(config);
+        if (greeting is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(greeting, config.SpeakingRate));
+        var (_, text) = await ListenOnce(config);
+        if (text.Length == 0)
+        {
+            Log.Write("wake: nothing said");
+            return ("", false, 0, "");
+        }
+        string line;
+        try { line = Route is null ? "" : await Route(text, config); }
+        catch (Exception e)
+        {
+            Log.Write($"wake: routing failed ({e.Message})");
+            line = "Das konnte ich leider nicht weitergeben, Sir.";
+        }
+        if (line.Length > 0) await SpeakLine(line, config);
+        Log.Write($"wake: done chars={text.Length}");
+        return (text, false, 0, "");
+    }
+
+    // POST /permission: "<Projekt> möchte … — erlauben?" → beep → listen. The transcript goes back;
+    // the server maps it to allow / deny / ask. No TTS (nothing could be asked) or past the
+    // request's deadline → "" (= ask: the on-screen prompt decides).
+    private async Task<(string transcript, bool park, int wait, string resume)> RunPermission(TurnPayload turn)
+    {
+        var config = Config.Load();
+        _resumeGen++;
+        Log.Write($"permission question project={turn.Project}");
+        if (Muted)
+        {
+            Log.Write("muted → permission left to the screen");
+            return ("", false, 0, "");
+        }
+        var synth = GoogleTts.Synthesize(turn.Speak, config);
+        if (Ring is not null) await Ring(turn.SpokenLabel);
+        if (_ackTask is not null) { await _ackTask; _ackTask = null; }
+        var pcm = await synth;
+        if (pcm is null || DateTime.UtcNow >= (turn.Deadline ?? DateTime.MaxValue))
+        {
+            Log.Write(pcm is null ? "permission: no TTS → left to the screen" : "permission: too late to ask → left to the screen");
+            return ("", false, 0, "");
+        }
+        await PauseMediaIfPlaying();
+        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate));
+        var (_, text) = await ListenOnce(config);
+        ScheduleResume();
+        Log.Write($"permission answer chars={text.Length}");
+        return (text, false, 0, "");
+    }
+
     private async Task<(string transcript, bool park, int wait, string resume)> RunTurn(TurnPayload turn)
     {
         var config = Config.Load();
@@ -86,6 +163,10 @@ public sealed class TurnPipeline
                 TtsTiming.Record(turn.Speak.Length, (DateTime.UtcNow - synthStart).TotalSeconds);
             return pcm;
         });
+
+        // Unterwegs-Modus (docs/IPHONE.md, v2): no call yet → ring the phone and wait for it
+        // (≤ 45 s) while the synthesis runs; unanswered, the turn plays on the speaker.
+        if (Ring is not null) await Ring(turn.SpokenLabel);
 
         // Wait out the previous turn's background ack so audio never overlaps.
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
@@ -221,17 +302,24 @@ public sealed class TurnPipeline
     // hi-fi restored → ack → resume (never video over the acknowledgment).
     private void StartAck(Groq.Intent intent, bool hasText, Config config)
     {
+        // Taken now, before the turn's own hold ends: the phone never sees `idle` (and listens
+        // for the wake word) in the gap before the ack plays.
+        var hold = PhoneCall.Hold();
         _ackTask = Task.Run(async () =>
         {
-            await Task.Delay(300);
-            await AudioOut.WaitForHiFiOutput();
-            if (hasText)
+            try
             {
-                var clip = Clips.AckClip(intent, config);
-                if (clip is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(clip, config.SpeakingRate));
-                else await AudioOut.PlayChime();
+                await Task.Delay(300);
+                await AudioOut.WaitForHiFiOutput();
+                if (hasText)
+                {
+                    var clip = Clips.AckClip(intent, config);
+                    if (clip is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(clip, config.SpeakingRate));
+                    else await AudioOut.PlayChime();
+                }
+                ScheduleResume();
             }
-            ScheduleResume();
+            finally { hold.Dispose(); }
         });
     }
 
@@ -274,6 +362,8 @@ public sealed class TurnPipeline
 
     private async Task PauseMediaIfPlaying()
     {
+        // In a call the voice goes to the phone — the PC's music/video can keep playing.
+        if (PhoneCall.Active) return;
         var newly = await MediaControl.PausePlaying();
         if (newly.Count == 0) return;
         foreach (var id in newly)

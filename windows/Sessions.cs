@@ -14,6 +14,7 @@ public sealed class SessionRegistry
     private sealed class Entry
     {
         public string Id = "", Label = "", Project = "";   // session_id, spoken label, cwd basename
+        public string Cwd = "";           // its folder, as last reported (routing, POST /dispatch)
         public DateTime FirstSeen;
         public DateTime? PresenceAt;      // last /presence (null = never sent, e.g. Codex)
         public string PresenceState = "idle";   // the mod's last state: working | background | idle
@@ -68,12 +69,13 @@ public sealed class SessionRegistry
     // The mod's heartbeat. Returns a pending resume instruction — exactly once — for the mod
     // to submit as a prompt in its session.
     public string? Presence(string id, string label, string project, string state,
-        PresenceUsage? usage = null, List<BackgroundTask>? tasks = null, string? host = null)
+        PresenceUsage? usage = null, List<BackgroundTask>? tasks = null, string? host = null, string? cwd = null)
     {
         string? delivered = null;
         DateTime? startedAt = null;
         Update(id, label, project, (e, t) =>
         {
+            if (!string.IsNullOrEmpty(cwd)) e.Cwd = cwd;
             e.PresenceAt = t;
             e.PresenceState = state;
             e.Tasks = tasks ?? new List<BackgroundTask>();
@@ -96,9 +98,10 @@ public sealed class SessionRegistry
     }
 
     // A /turn arrived; it waits at the gate until it's this session's turn to speak.
-    public void Queued(string id, string label, string project) =>
+    public void Queued(string id, string label, string project, string? cwd = null) =>
         Update(id, label, project, (e, t) =>
         {
+            if (!string.IsNullOrEmpty(cwd)) e.Cwd = cwd;
             e.HookAt = t;
             e.Queued = true;
             e.WaitUntil = null;
@@ -187,14 +190,29 @@ public sealed class SessionRegistry
     }
 
     // A parked hook polled /wake. `resumed` = it was handed an instruction and goes on working.
-    public void WakePoll(string id, string label, string project, bool resumed) =>
+    public void WakePoll(string id, string label, string project, bool resumed, string? cwd = null) =>
         Update(id, label, project, (e, t) =>
         {
+            if (!string.IsNullOrEmpty(cwd)) e.Cwd = cwd;
             e.HookAt = t;
             e.WakeAt = t;
             e.Parked = !resumed;
             if (resumed) Inject(e, t);
         });
+
+    // An instruction rode back on this session's presence (pending by folder, POST /dispatch or
+    // a routed wake) → it is working on it now.
+    public void MarkInjected(string id) => Update(id, "", "", (e, t) => Inject(e, t));
+
+    // A permission question for this session ended: the voice is free again; its state is its own.
+    public void Released(string id)
+    {
+        lock (_gate)
+        {
+            if (_activeId == id) _activeId = null;
+            Refresh();
+        }
+    }
 
     private static void Inject(Entry e, DateTime t)
     {
@@ -227,6 +245,41 @@ public sealed class SessionRegistry
             return _entries.Values.Where(Resumable)
                 .Select(e => new Server.ParkedInfo(e.Id, e.Label, e.Project))
                 .OrderBy(p => p.Label, StringComparer.Ordinal).ToList();
+        }
+    }
+
+    // A session an instruction can reach right now (docs/IPHONE.md, v2: wake routing and POST
+    // /dispatch): alive, and either parked (its hook polls /wake) or with a live mod (it submits
+    // a pending prompt). A hook-only session that is working has no way to take one.
+    public sealed record RouteTarget(string Id, string Label, string Cwd);
+
+    private static bool Deliverable(Entry e) =>
+        e.State != "stopped" && (e.State == "parked" || e.PresenceAt is not null);
+
+    public List<RouteTarget> RouteTargets()
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.Values.Where(Deliverable)
+                .OrderBy(e => e.Label, StringComparer.OrdinalIgnoreCase)
+                .Select(e => new RouteTarget(e.Id, e.Label, e.Cwd))
+                .ToList();
+        }
+    }
+
+    // The deliverable session working in `cwd` (Windows paths: case-insensitive), most recently
+    // heard from first; null if none.
+    public string? DeliverableIn(string cwd)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.Values
+                .Where(e => Deliverable(e) && CwdPath.Same(e.Cwd, cwd))
+                .OrderByDescending(e => e.PresenceAt ?? e.HookAt)
+                .Select(e => e.Id)
+                .FirstOrDefault();
         }
     }
 

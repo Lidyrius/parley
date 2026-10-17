@@ -74,6 +74,54 @@ public static class Clips
         EnsureRendered("proj-" + slug, config, () => RenderProject(label, slug, config));
     }
 
+    // ---- wake greeting (docs/IPHONE.md, v2) ---------------------------------------------
+    //   greet\greet-<n>.pcm   3 variants of "Ja, Sir, wie kann ich helfen?" — the answer to
+    //                         "Hey Parley" during a phone call; cached like the resume lines.
+    // German only, like the rest of the call flow (routing confirmation, permission questions).
+
+    public static readonly string[] GreetPhrases =
+    {
+        "Ja, Sir, wie kann ich helfen?",
+        "Ja, Sir? Was kann ich für Sie tun?",
+        "Zu Diensten, Sir. Was darf es sein?",
+    };
+
+    private static string GreetFile(int n) => Path.Combine(Root, "greet", $"greet-{n}.pcm");
+
+    // A random cached greeting; if none is rendered yet, one is synthesized live (and cached)
+    // and the rest render in the background. null = no Google TTS.
+    public static async Task<byte[]?> GreetClip(Config config)
+    {
+        var cached = Enumerable.Range(0, GreetPhrases.Length).Select(GreetFile).Where(f => File.Exists(f)).ToList();
+        if (cached.Count > 0)
+        {
+            try { return File.ReadAllBytes(cached[Random.Shared.Next(cached.Count)]); } catch { }
+        }
+        if (!config.UseGoogle) return null;
+        var variant = Random.Shared.Next(GreetPhrases.Length);
+        var pcm = await GoogleTts.Synthesize(GreetPhrases[variant], config);
+        if (pcm is null) return null;
+        await WriteClip(GreetFile(variant), pcm);
+        PrerenderGreet(config);
+        return pcm;
+    }
+
+    // Render the missing greetings in the background (relay start, call start).
+    public static void PrerenderGreet(Config config) => EnsureRendered("greet", config, async () =>
+    {
+        var rendered = 0;
+        for (var n = 0; n < GreetPhrases.Length; n++)
+        {
+            var file = GreetFile(n);
+            if (File.Exists(file)) continue;
+            var pcm = await GoogleTts.Synthesize(GreetPhrases[n], config);
+            if (pcm is null) continue;
+            await WriteClip(file, pcm);
+            rendered++;
+        }
+        if (rendered > 0) Log.Write($"clips: {rendered} wake greeting(s) rendered");
+    });
+
     // {name} = the project's spoken label.
     public static string AnnouncementPhrase(string name, string language) => (language switch
     {

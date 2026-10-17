@@ -1,0 +1,407 @@
+using System.Buffers.Binary;
+using System.Diagnostics;
+
+namespace Parley;
+
+// Calls through the iPhone (docs/IPHONE.md, protocol v2), 1:1 with the macOS host. While the
+// phone's CallKit call is connected, ALL of Parley's audio goes through it: TTS, beep, clips
+// and permission questions out as paced 20 ms frames, listening in from the phone's mic — the
+// PC's speaker and mic stay quiet. The phone learns what the host does from `audio` frames.
+
+// The call audio format, pure: raw PCM 16-bit LE, mono, 16 kHz, one frame per 20 ms (640 bytes).
+public static class PhoneAudio
+{
+    public const int SampleRate = 16000;
+    public const int FrameMs = 20;
+    public const int FrameSamples = SampleRate * FrameMs / 1000;   // 320
+    public const int FrameBytes = FrameSamples * 2;                 // 640
+
+    public static short[] ToSamples(ReadOnlySpan<byte> pcm)
+    {
+        var samples = new short[pcm.Length / 2];
+        for (var i = 0; i < samples.Length; i++)
+            samples[i] = BinaryPrimitives.ReadInt16LittleEndian(pcm.Slice(i * 2, 2));
+        return samples;
+    }
+
+    public static byte[] ToBytes(ReadOnlySpan<short> samples)
+    {
+        var pcm = new byte[samples.Length * 2];
+        for (var i = 0; i < samples.Length; i++)
+            BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(i * 2, 2), samples[i]);
+        return pcm;
+    }
+
+    // Linear interpolation, like the mic path's resampler — fine for speech. The TTS runs at
+    // 24 kHz; 24 → 16 kHz keeps everything below 8 kHz, which is all a call carries anyway.
+    public static short[] Resample(ReadOnlySpan<short> input, int fromRate, int toRate)
+    {
+        if (fromRate == toRate || input.Length == 0 || fromRate <= 0 || toRate <= 0) return input.ToArray();
+        var output = new short[(int)((long)input.Length * toRate / fromRate)];
+        var step = (double)fromRate / toRate;
+        for (var i = 0; i < output.Length; i++)
+        {
+            var pos = i * step;
+            var j = Math.Min((int)pos, input.Length - 1);
+            var a = input[j];
+            var b = j + 1 < input.Length ? input[j + 1] : a;
+            // Between a and b → always inside the short range.
+            output[i] = (short)Math.Round(a + (b - a) * (pos - j));
+        }
+        return output;
+    }
+
+    // Whole 20 ms frames; the last one is zero-padded, so every frame is exactly 640 bytes.
+    public static List<byte[]> Frames(ReadOnlySpan<short> samples)
+    {
+        var frames = new List<byte[]>((samples.Length + FrameSamples - 1) / FrameSamples);
+        for (var start = 0; start < samples.Length; start += FrameSamples)
+        {
+            var frame = new byte[FrameBytes];
+            var count = Math.Min(FrameSamples, samples.Length - start);
+            for (var i = 0; i < count; i++)
+                BinaryPrimitives.WriteInt16LittleEndian(frame.AsSpan(i * 2, 2), samples[start + i]);
+            frames.Add(frame);
+        }
+        return frames;
+    }
+
+    // PCM at `sampleRate` (16-bit LE mono) → the call's 20 ms frames.
+    public static List<byte[]> FramesFor(byte[] pcm, int sampleRate) =>
+        Frames(Resample(ToSamples(pcm), sampleRate, SampleRate));
+
+    // Frames `from`… back into one 16 kHz buffer (what is left when a call drops midway).
+    public static byte[] Join(IReadOnlyList<byte[]> frames, int from)
+    {
+        var start = Math.Clamp(from, 0, frames.Count);
+        var joined = new byte[(frames.Count - start) * FrameBytes];
+        for (var i = start; i < frames.Count; i++)
+            Buffer.BlockCopy(frames[i], 0, joined, (i - start) * FrameBytes, Math.Min(FrameBytes, frames[i].Length));
+        return joined;
+    }
+
+    public static float Rms(ReadOnlySpan<short> samples)
+    {
+        if (samples.Length == 0) return 0;
+        double sum = 0;
+        foreach (var s in samples)
+        {
+            var v = s / 32768.0;
+            sum += v * v;
+        }
+        return (float)Math.Sqrt(sum / samples.Length);
+    }
+
+    // dB → 0…1, the same mapping as the mic and speaker meters.
+    public static float Level(float db) => Math.Clamp((db + 55f) / 45f, 0f, 1f);
+}
+
+// The call itself: connected or not, the phone's audio in, Parley's audio out, the `audio`
+// state frames, and the phone's Unterwegs-Modus + VoIP push token (kept in credentials.json, so
+// ringing works after a restart while the phone sleeps). Static like AudioOut / LiveStatus —
+// there is one phone call at most.
+public static class PhoneCall
+{
+    // No phone audio for this long while "in a call" → the phone is gone (its `call end` was
+    // lost with its link): Parley uses the PC's speaker and mic until frames arrive again. The
+    // phone streams its mic all through a call, so a healthy call never gets near this.
+    public static readonly TimeSpan AudioSilentLimit = TimeSpan.FromSeconds(10);
+    private const int LeadFrames = 5;   // sent 100 ms ahead of real time: absorbs timer + network jitter
+
+    private static readonly object Gate = new();
+    private static readonly SemaphoreSlim StateGate = new(1, 1);   // `audio` frames go out one at a time, latest wins
+    private static RelayClient? _relay;
+    private static bool _call;                 // the phone said `call start` (and not `call end` since)
+    private static DateTime _audioAt;          // last phone frame, or the call start
+    private static Action<byte[]>? _sink;      // the recorder, while it listens on the phone
+    private static int _holds;                 // turns / dialogs / acks in progress (0 = idle)
+    private static string _audio = "idle";     // speaking | listening | idle
+    private static string? _sent;              // the state the phone has (null = unknown → send)
+    private static bool _away;
+    private static string _pushToken = "", _pushEnv = "production";
+
+    // ---- relay seam ------------------------------------------------------------------
+
+    public static void Attach(RelayClient? relay)
+    {
+        lock (Gate)
+        {
+            _relay = relay;
+            _sent = null;
+        }
+    }
+
+    // In a call right now: the phone says so, the relay is up, and its audio is flowing.
+    public static bool Active
+    {
+        get { lock (Gate) return ActiveLocked(DateTime.UtcNow); }
+    }
+
+    private static bool ActiveLocked(DateTime now) =>
+        _call && _relay?.Connected == true && now - _audioAt < AudioSilentLimit;
+
+    public static bool Away
+    {
+        get { lock (Gate) return _away; }
+    }
+
+    public static (string Token, string Env) Push
+    {
+        get { lock (Gate) return (_pushToken, _pushEnv); }
+    }
+
+    // `call` start / end from the phone.
+    // The phone repeats its call state on every (re)connect, so only a change is logged.
+    public static void OnCall(bool started)
+    {
+        bool changed;
+        lock (Gate)
+        {
+            changed = _call != started;
+            _call = started;
+            _audioAt = DateTime.UtcNow;   // grace until its first frame arrives
+            _sent = null;                 // a (re)joined call learns the current state
+        }
+        if (changed) Log.Write(started ? "phone: call started" : "phone: call ended");
+        if (!started) return;
+        if (changed) Clips.PrerenderGreet(Config.Load());   // the first "Hey Parley" answers at once
+        _ = PushState();
+    }
+
+    // A binary frame from the phone: its microphone.
+    public static void OnAudio(byte[] frame)
+    {
+        Action<byte[]>? sink;
+        lock (Gate)
+        {
+            _audioAt = DateTime.UtcNow;
+            sink = _sink;
+        }
+        sink?.Invoke(frame);
+    }
+
+    // The relay (re)connected: the phone gets the current state again.
+    public static void Resync()
+    {
+        lock (Gate) _sent = null;
+        _ = PushState();
+    }
+
+    // ---- what the host is doing with the call audio (`audio` frames) -----------------
+
+    // Held by everything that voices or listens (turns, dialogs, the ack after a reply) from
+    // the moment it queues until it is done: the phone only listens for "Hey Parley" while
+    // nothing holds. The last release reports `idle`.
+    public static IDisposable Hold()
+    {
+        lock (Gate)
+        {
+            if (_holds++ == 0) _audio = "speaking";
+        }
+        _ = PushState();
+        return new Release(ReleaseHold);
+    }
+
+    // A hold only when the call is connected and nothing else holds — atomically, so two
+    // `wake` frames can't both start a greeting.
+    public static IDisposable? HoldIfIdle()
+    {
+        lock (Gate)
+        {
+            if (_holds != 0 || !ActiveLocked(DateTime.UtcNow)) return null;
+            _holds++;
+            _audio = "speaking";
+        }
+        _ = PushState();
+        return new Release(ReleaseHold);
+    }
+
+    private static void ReleaseHold()
+    {
+        lock (Gate)
+        {
+            if (--_holds > 0) return;
+            _holds = 0;
+            _audio = "idle";
+        }
+        _ = PushState();
+    }
+
+    public static void SetAudio(string state)
+    {
+        lock (Gate)
+        {
+            if (_audio == state) return;
+            _audio = state;
+        }
+        _ = PushState();
+    }
+
+    // Sends the CURRENT state if the phone doesn't have it yet. One sender at a time and the
+    // state is read after the gate, so quick changes can't arrive out of order.
+    private static async Task PushState()
+    {
+        await StateGate.WaitAsync();
+        try
+        {
+            string state;
+            RelayClient? relay;
+            lock (Gate)
+            {
+                if (!_call || _relay is null || _audio == _sent) return;
+                state = _audio;
+                relay = _relay;
+            }
+            var ok = await relay.SendTextAsync(RelayFrame.Audio(state));
+            lock (Gate) _sent = ok ? state : null;
+        }
+        catch (Exception e) { Log.Write($"phone: state frame failed: {e.Message}"); }
+        finally { StateGate.Release(); }
+    }
+
+    // ---- audio out / in --------------------------------------------------------------
+
+    // Parley's voice to the phone, in real time (a few frames ahead), so "done" means the
+    // phone has played it and beep → record keeps the speaker's timing. Returns what is left
+    // (16 kHz PCM) when the call drops midway — the caller plays it on the PC's speaker — or
+    // null once everything went out (or the playback was cancelled).
+    public static async Task<byte[]?> PlayAsync(byte[] pcm, int sampleRate, CancellationToken ct = default)
+    {
+        var frames = PhoneAudio.FramesFor(pcm, sampleRate);
+        RelayClient? relay;
+        lock (Gate) relay = _relay;
+        if (relay is null) return PhoneAudio.Join(frames, 0);
+        using var hold = Hold();
+        SetAudio("speaking");
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            for (var i = 0; i < frames.Count; i++)
+            {
+                if (!Active) return PhoneAudio.Join(frames, i);
+                var due = TimeSpan.FromMilliseconds((i - LeadFrames) * PhoneAudio.FrameMs) - clock.Elapsed;
+                if (due > TimeSpan.Zero) await Task.Delay(due, ct);
+                await relay.SendAudioAsync(frames[i]);
+                // Output level for GET /status, as the speaker path meters it.
+                LiveStatus.Push(PhoneAudio.Level(Vad.Db(PhoneAudio.Rms(PhoneAudio.ToSamples(frames[i])))));
+            }
+            var tail = TimeSpan.FromMilliseconds(frames.Count * PhoneAudio.FrameMs) - clock.Elapsed;
+            if (tail > TimeSpan.Zero) await Task.Delay(tail, ct);
+        }
+        catch (OperationCanceledException) { }
+        return null;
+    }
+
+    // Route the phone's microphone frames to `sink` until the returned handle is disposed.
+    public static IDisposable Listen(Action<byte[]> sink)
+    {
+        lock (Gate) _sink = sink;
+        return new Release(() =>
+        {
+            lock (Gate)
+            {
+                if (_sink == sink) _sink = null;
+            }
+        });
+    }
+
+    // ---- ringing (Unterwegs-Modus) ---------------------------------------------------
+
+    // The `ring` frame next to the VoIP push: a phone that is open in the foreground shows
+    // its own incoming call from it. true = handed to the relay.
+    public static async Task<bool> SendRing(string label)
+    {
+        RelayClient? relay;
+        lock (Gate) relay = _relay;
+        return relay is not null && relay.Connected && await relay.SendTextAsync(RelayFrame.Ring(label));
+    }
+
+    // Polls for the call (every 200 ms) until it is connected or `limit` has passed.
+    public static async Task<bool> WaitForCall(TimeSpan limit)
+    {
+        var until = DateTime.UtcNow + limit;
+        while (DateTime.UtcNow < until)
+        {
+            if (Active) return true;
+            await Task.Delay(200);
+        }
+        return Active;
+    }
+
+    // ---- the phone's settings --------------------------------------------------------
+
+    public static void LoadSettings(Config c)
+    {
+        lock (Gate)
+        {
+            _away = c.PhoneAway;
+            _pushToken = c.PhonePushToken;
+            _pushEnv = c.PhonePushEnv;
+        }
+    }
+
+    // `away`: Unterwegs-Modus on / off, kept across restarts.
+    public static void SetAway(bool on)
+    {
+        lock (Gate)
+        {
+            if (_away == on) return;
+            _away = on;
+        }
+        Config.Merge(new Dictionary<string, string> { ["phoneAway"] = on ? "1" : "0" });
+        Log.Write($"phone: Unterwegs-Modus {(on ? "an" : "aus")}");
+    }
+
+    // `push`: the phone's VoIP token (hex) and APNs environment, kept across restarts.
+    public static void SetPush(string token, string env)
+    {
+        token = token.Trim();
+        if (!Apns.ValidToken(token))
+        {
+            Log.Write("phone: ignored a malformed VoIP push token");
+            return;
+        }
+        env = env == "development" ? "development" : "production";
+        lock (Gate)
+        {
+            if (_pushToken == token && _pushEnv == env) return;
+            _pushToken = token;
+            _pushEnv = env;
+        }
+        Config.Merge(new Dictionary<string, string> { ["phonePushToken"] = token, ["phonePushEnv"] = env });
+        Log.Write($"phone: VoIP push token stored ({env})");
+    }
+
+    private sealed class Release : IDisposable
+    {
+        private Action? _action;
+        public Release(Action action) => _action = action;
+        public void Dispose() => Interlocked.Exchange(ref _action, null)?.Invoke();
+    }
+}
+
+// Unterwegs-Modus (docs/IPHONE.md, v2): while `away` is on and no call is connected, a turn
+// that is about to be voiced rings the phone — VoIP push + `ring` frame — and waits up to 45 s
+// for `call start`. Answered → it is voiced over the phone; else on the PC's speaker as before.
+public static class Ringer
+{
+    public static readonly TimeSpan AnswerWait = TimeSpan.FromSeconds(45);
+
+    // true = in a call now.
+    public static async Task<bool> Ring(string label)
+    {
+        if (PhoneCall.Active) return true;
+        if (!PhoneCall.Away) return false;
+        var pushed = await Apns.SendVoip(label);
+        var rang = await PhoneCall.SendRing(label);
+        if (!pushed && !rang)
+        {
+            Log.Write("ring: neither the push nor the relay reached the phone → speaker");
+            return false;
+        }
+        Log.Write($"ring: {label} (push {(pushed ? "sent" : "not sent")}, relay {(rang ? "sent" : "not sent")}) — waiting up to {(int)AnswerWait.TotalSeconds} s");
+        var answered = await PhoneCall.WaitForCall(AnswerWait);
+        Log.Write(answered ? "ring: answered → voiced over the phone" : "ring: no answer → speaker");
+        return answered;
+    }
+}

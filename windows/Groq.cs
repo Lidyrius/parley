@@ -163,6 +163,50 @@ public static class Groq
         catch { return Intent.Other; }
     }
 
+    // "Hey Parley" routing (docs/IPHONE.md, v2): which running session the utterance is for
+    // (labels), else the Zentrale. null = no key / failed / an answer naming something else —
+    // the caller falls back to Routing.Fallback (label substring match).
+    public static async Task<RouteResult?> Route(string text, IReadOnlyList<string> labels, Config config)
+    {
+        if (!config.SttReady || text.Length == 0 || labels.Count == 0) return null;
+        try
+        {
+            var payload = new
+            {
+                model = "llama-3.3-70b-versatile",
+                temperature = 0,
+                max_tokens = 300,
+                response_format = new { type = "json_object" },
+                messages = new object[]
+                {
+                    new { role = "system", content = Routing.SystemPrompt(labels) },
+                    new { role = "user", content = text },
+                },
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post,
+                "https://api.groq.com/openai/v1/chat/completions");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.GroqKey);
+            req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            // The caller is waiting on a call — fail over to the substring match quickly.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var resp = await Http.SendAsync(req, cts.Token);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Log.Write($"route: groq http {(int)resp.StatusCode}");
+                return null;
+            }
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var content = doc.RootElement.GetProperty("choices")[0]
+                .GetProperty("message").GetProperty("content").GetString() ?? "";
+            return Routing.Parse(content, labels, text);
+        }
+        catch (Exception e)
+        {
+            Log.Write($"route: groq failed ({e.Message})");
+            return null;
+        }
+    }
+
     public readonly record struct ControlResult(bool Resume, string Target, string Instruction);
 
     // Detects whether a spoken reply is a Parley CONTROL command (resume a paused project
