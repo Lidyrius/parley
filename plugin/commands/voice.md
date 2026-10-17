@@ -43,6 +43,20 @@ The app extracts the `<speak>` text, speaks it, records the user's voice reply, 
   - a **final / closing** line (you're done and not asking anything), or
   - you've **kicked off background work** (dispatched a research agent, started a long-running background task) and will **report back yourself** when it finishes. Say what you started and that you'll report back, using `<speak-end>` — the user then doesn't need to reply; your next turn (when the work completes) speaks the result with a normal `<speak>`.
 
+**Predicted answers (`<speak>` only):** directly above the final `<speak>` line, add 2–4 lines with the user's most likely answers and what you would say back right away:
+
+```
+<reply on="agrees">Sehr wohl, Sir, ich tagge das Release.</reply>
+<reply on="declines, wants it differently" listen>Verstanden. Was schwebt Ihnen stattdessen vor, Sir?</reply>
+<reply on="will get back later">Sehr wohl, ich warte auf Ihr Zeichen.</reply>
+<speak>Die App ist ausgerollt, Sir. Soll ich das Release taggen?</speak>
+```
+
+- `on` = a short description of that answer. The line = your immediate reaction: one short sentence, configured language, JARVIS, specific to this question — never a generic "I'll take care of it". Promise only what that answer implies.
+- Add `listen` only when the line asks back — Parley then records again and sends both answers.
+- Parley renders these while it speaks and plays the matching one the instant the user stops talking. The reply then arrives with a note like `[Parley hat darauf bereits geantwortet: „…“ – nicht wiederholen.]`: don't repeat or re-confirm that line, just carry on. If you then have nothing new to say, end with an empty `<speak-end></speak-end>` (nothing is spoken).
+- Skip them when the answer is open-ended (no likely answers to predict).
+
 Emit **exactly one** of the two tags per response, always as the very last line. If in doubt, use `<speak>`.
 
 Do not mention the `<speak>` tag in your visible prose; just append it at the very end. Voice mode stays on until the session ends.

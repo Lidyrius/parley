@@ -11,9 +11,19 @@ struct TurnPayload: Codable, Equatable {
     var speak: String
     var label: String?    // spoken project name from .parley.json; nil → use project
     var listen: Bool?     // false = speak-only (no mic/pill); nil/true = speak + listen
+    var replies: [Reply]? // predicted answers (<reply on="…">), each with its spoken reaction
 
     var spokenLabel: String { (label?.isEmpty == false ? label : nil) ?? project }
     var wantsListen: Bool { listen ?? true }
+}
+
+// A predicted answer to a listen turn: `on` describes it, `say` is spoken the moment the
+// user's reply matches it (pre-rendered — no latency); `listen` = `say` asks back, so the
+// mic opens again and both answers go to the session.
+struct Reply: Codable, Equatable {
+    var on: String
+    var say: String
+    var listen: Bool?
 }
 
 // Result of a /turn: the voice reply to inject, and whether the session should PARK

@@ -55,6 +55,39 @@ enum Classifier {
     Output only the integer, nothing else.
     """
 
+    // Which predicted answer the transcript is: the 1-based option number, 0 = none fits.
+    private static let replySystem = """
+    A developer answered a coding assistant by voice. The assistant predicted these kinds of \
+    answer, numbered. Output ONLY the number of the one the answer clearly is, or 0 if none \
+    fits well (e.g. it adds a new request or says something else). Output only the integer.
+    """
+
+    static func replyRequest(text: String, options: [String], apiKey: String) -> URLRequest {
+        let list = options.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        return chat(system: replySystem, user: "\(list)\n\nAnswer: \(text)", maxTokens: 4, apiKey: apiKey)
+    }
+
+    /// The matched option's index, nil when none (or out of range).
+    static func parseReply(_ data: Data, count: Int) -> Int? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let msg = (obj["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any],
+              let n = Int(((msg["content"] as? String) ?? "").filter(\.isNumber)), (1...count).contains(n) else { return nil }
+        return n - 1
+    }
+
+    private static func chat(system: String, user: String, maxTokens: Int, apiKey: String) -> URLRequest {
+        var req = URLRequest(url: URL(string: endpoint)!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "model": model, "temperature": 0, "max_tokens": maxTokens,
+            "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return req
+    }
+
     static func waitRequest(text: String, apiKey: String) -> URLRequest {
         var req = URLRequest(url: URL(string: endpoint)!)
         req.httpMethod = "POST"

@@ -4,6 +4,16 @@ using System.Text.Json.Serialization;
 namespace Parley;
 
 // Wire payloads from the Claude Code plugin hooks — identical to the macOS contract.
+// A predicted answer to a listen turn: `on` describes it, `say` is spoken the moment the
+// user's reply matches it (pre-rendered — no latency); `listen` = `say` asks back, so the
+// mic opens again and both answers go to the session.
+public sealed class Reply
+{
+    [JsonPropertyName("on")] public string On { get; set; } = "";
+    [JsonPropertyName("say")] public string Say { get; set; } = "";
+    [JsonPropertyName("listen")] public bool? Listen { get; set; }
+}
+
 public sealed class TurnPayload
 {
     [JsonPropertyName("event")] public string Event { get; set; } = "";
@@ -14,6 +24,8 @@ public sealed class TurnPayload
     [JsonPropertyName("speak")] public string Speak { get; set; } = "";
     [JsonPropertyName("label")] public string? Label { get; set; }
     [JsonPropertyName("listen")] public bool? Listen { get; set; }
+    // Predicted answers (<reply on="…">), each with its spoken reaction.
+    [JsonPropertyName("replies")] public List<Reply>? Replies { get; set; }
 
     [JsonIgnore] public bool WantsListen => Listen ?? true;
     [JsonIgnore] public string SpokenLabel => string.IsNullOrEmpty(Label) ? Project : Label!;

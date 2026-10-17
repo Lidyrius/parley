@@ -104,12 +104,7 @@ actor ProjectClips {
         try? pcm.write(to: file, options: .atomic)
     }
 
-    private static func synth(_ text: String, config: AppConfig) async -> Data? {
-        let req = GoogleTTS.request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return GoogleTTS.pcm(from: data)
-    }
+    private static func synth(_ text: String, config: AppConfig) async -> Data? { await GoogleTTS.synth(text, config: config) }
 
     // {name} = the project's spoken label.
     static func phrase(name: String, language: String) -> String {

@@ -59,10 +59,24 @@ parsed="$(printf '%s' "$msg" | perl -0777 -ne '
   } elsif ($sppos >= 0) {
     substr($m, $sppos) =~ /<speak>(.*?)(?:<\/speak>|\z)/s; $text = $1; $listen = "true";
   }
-  if (defined $text) { $text =~ s/^\s+|\s+$//g; print "$listen\n$text"; }
+  # Predicted answers: the <reply on="…" [listen]>line</reply> lines directly ABOVE the
+  # final tag (anywhere else they are prose). One per line: listen<TAB>on<TAB>line.
+  my @r;
+  my $pre = substr($m, 0, $listen eq "true" ? $sppos : 0);
+  while (@r < 4 && $pre =~ /\A(.*)<reply\b([^>]*)>((?:(?!<\/?reply\b).)*)<\/reply>\s*\z/s) {
+    my ($a, $say) = ($2, $3); $pre = $1;
+    my ($on) = $a =~ /on="([^"]*)"/; $a =~ s/on="[^"]*"//;
+    my $l = $a =~ /\blisten\b/ ? 1 : 0;
+    s/[\t\n]+/ /g, s/^\s+|\s+$//g for $on, $say;
+    unshift @r, "$l\t$on\t$say" if defined $on && length $say;
+  }
+  if (defined $text) { $text =~ s/^\s+|\s+$//g; print "$listen\n" . scalar(@r) . "\n" . join("", map { "$_\n" } @r) . $text; }
 ')"
 listen="$(printf '%s' "$parsed" | head -1)"
-speak="$(printf '%s' "$parsed" | tail -n +2)"
+nr="$(printf '%s' "$parsed" | sed -n 2p)"; nr="${nr:-0}"
+replies="$(printf '%s\n' "$parsed" | head -n $((2 + nr)) | tail -n +3 | jq -R -s -c \
+  'split("\n") | map(select(length > 0) | split("\t") | {on: .[1], say: .[2], listen: (.[0] == "1")})')"
+speak="$(printf '%s' "$parsed" | tail -n +$((3 + nr)))"
 
 [ -z "$speak" ] && finish
 [ "$listen" = "false" ] || listen=true
@@ -87,7 +101,9 @@ payload="$(jq -n \
   --arg speak "$speak" \
   --arg label "$label" \
   --argjson listen "$listen" \
-  '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label, listen:$listen}')"
+  --argjson replies "${replies:-[]}" \
+  '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label, listen:$listen}
+   + (if ($replies | length) > 0 then {replies:$replies} else {} end)')"
 
 # Blocks while the turn is queued + spoken + recorded + transcribed. With many parallel
 # projects a turn can wait long in the queue before it is its turn to

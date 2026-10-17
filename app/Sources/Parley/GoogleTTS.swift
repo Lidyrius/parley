@@ -25,6 +25,14 @@ enum GoogleTTS {
     }
 
     /// Extract raw 16-bit LE PCM from the JSON response (strips the WAV header if present).
+    /// One line → 24 kHz PCM with the session voice; nil on any failure.
+    static func synth(_ text: String, config: AppConfig) async -> Data? {
+        let req = request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return pcm(from: data)
+    }
+
     static func pcm(from data: Data) -> Data? {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let b64 = obj["audioContent"] as? String,

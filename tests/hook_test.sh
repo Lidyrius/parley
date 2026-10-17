@@ -127,4 +127,21 @@ wait "$srv" 2>/dev/null || true
 [ "$(jq -r '.session_id' < "$bodyfile")" = "codex-1" ] || fail "Codex session_id mismatch"
 echo "PASS: Codex tagged input -> continuation decision"
 
+# --- Test 6: <reply> lines directly above the final tag -> payload.replies; one in prose is not ---
+start_listener
+in6='{"last_assistant_message":"Format: `<reply on=\"x\">nur Prosa</reply>` ist ein Beispiel.\n\n<reply on=\"Zustimmung\">Sehr wohl, ich setze das um.</reply>\n<reply on=\"Ablehnung\" listen>Was schwebt Ihnen vor, Sir?</reply>\n<speak>Soll ich das so bauen?</speak>","cwd":"/tmp/p","session_id":"r1"}'
+printf '%s' "$in6" | PARLEY_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+[ "$(jq -c '.replies' < "$bodyfile")" = '[{"on":"Zustimmung","say":"Sehr wohl, ich setze das um.","listen":false},{"on":"Ablehnung","say":"Was schwebt Ihnen vor, Sir?","listen":true}]' ] \
+  || fail "replies mismatch: $(jq -c '.replies' < "$bodyfile")"
+[ "$(jq -r '.speak' < "$bodyfile")" = "Soll ich das so bauen?" ] || fail "speak with replies: $(jq -r '.speak' < "$bodyfile")"
+echo "PASS: reply options parsed, prose ignored"
+
+# --- Test 7: no reply lines -> no replies key ---
+start_listener
+printf '%s' "$in1" | PARLEY_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+[ "$(jq -r 'has("replies")' < "$bodyfile")" = "false" ] || fail "unexpected replies key"
+echo "PASS: no replies -> no key"
+
 echo "ALL HOOK TESTS PASSED"

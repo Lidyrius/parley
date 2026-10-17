@@ -164,6 +164,11 @@ public sealed class TurnPipeline
             return pcm;
         });
 
+        // Predicted answers (<reply>): render their lines now, in parallel with everything
+        // below — ready long before the user stops talking.
+        var replies = turn.WantsListen ? turn.Replies ?? new List<Reply>() : new List<Reply>();
+        var replyClips = Task.WhenAll(replies.Select(r => GoogleTts.Synthesize(r.Say, config)));
+
         // Unterwegs-Modus (docs/IPHONE.md, v2): no call yet → ring the phone and wait for it
         // (≤ 45 s) while the synthesis runs; unanswered, the turn plays on the speaker.
         if (Ring is not null) await Ring(turn.SpokenLabel);
@@ -251,13 +256,36 @@ public sealed class TurnPipeline
             }
         }
 
+        // In parallel with the intent: which predicted answer (<reply>) it is, if any.
+        var pick = text.Length == 0 ? Task.FromResult<int?>(null) : Groq.PickReply(text, replies.Select(r => r.On).ToList(), config);
         var intent = text.Length == 0 ? Groq.Intent.Other : await Groq.Classify(text, config);
         Log.Write($"classified: {intent}");
 
         var recordSeconds = Math.Max(0, wav.Length - 44) / 2.0 / 16000.0;
         StatsStore.RecordTurn(turn.Speak, text, recordSeconds, intent.ToString().ToUpperInvariant(), turn.Project);
 
-        StartAck(intent, text.Length > 0, config);
+        // A predicted answer matched → its own line instead of the generic ack (pre-rendered,
+        // plays at once). One that asks back opens the mic again; both answers go on.
+        (string say, byte[]? clip)? line = null;
+        if (await pick is int i)
+        {
+            var r = replies[i];
+            var clip = (await replyClips)[i];
+            Log.Write($"reply: {r.On} → \"{r.Say}\" (rendered={clip is not null})");
+            if (r.Listen == true)
+            {
+                await SpeakLine(r.Say, config, clip);
+                var (_, more) = await ListenOnce(config);
+                text += $"\n\n[Parley hat nachgefragt: „{r.Say}“]" + (more.Length == 0 ? "" : "\n" + more);
+                intent = more.Length == 0 ? Groq.Intent.Other : await Groq.Classify(more, config);
+            }
+            else
+            {
+                line = (r.Say, clip);
+                text += $"\n\n[Parley hat darauf bereits geantwortet: „{r.Say}“ – nicht wiederholen.]";
+            }
+        }
+        StartAck(intent, text.Length > 0, config, line);
 
         // "Stop heißt Stop" — reply isn't fed back, but the session PARKS (stays resumable
         // by voice/tray) instead of ending. A silent turn parks too.
@@ -300,7 +328,7 @@ public sealed class TurnPipeline
     // Ack (cached Jarvis line, chime fallback) + media resume in the background — the
     // transcript returns immediately so Claude starts working during the ack. Order:
     // hi-fi restored → ack → resume (never video over the acknowledgment).
-    private void StartAck(Groq.Intent intent, bool hasText, Config config)
+    private void StartAck(Groq.Intent intent, bool hasText, Config config, (string say, byte[]? clip)? line = null)
     {
         // Taken now, before the turn's own hold ends: the phone never sees `idle` (and listens
         // for the wake word) in the gap before the ack plays.
@@ -309,9 +337,12 @@ public sealed class TurnPipeline
         {
             try
             {
+                // A matched <reply> line (rendered live if it wasn't ready in time).
+                var own = line is { } l ? l.clip ?? await GoogleTts.Synthesize(l.say, config) : null;
                 await Task.Delay(300);
                 await AudioOut.WaitForHiFiOutput();
-                if (hasText)
+                if (own is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(own, config.SpeakingRate));
+                else if (hasText)
                 {
                     var clip = Clips.AckClip(intent, config);
                     if (clip is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(clip, config.SpeakingRate));
@@ -331,9 +362,9 @@ public sealed class TurnPipeline
     }
 
     // Speak a short dynamic line (no mic) — used to confirm a resume before re-listening.
-    private static async Task SpeakLine(string text, Config config)
+    private static async Task SpeakLine(string text, Config config, byte[]? prefetched = null)
     {
-        var pcm = await GoogleTts.Synthesize(text, config);
+        var pcm = prefetched ?? await GoogleTts.Synthesize(text, config);
         if (pcm is null) return;
         // Settle after the mic teardown + wait for hi-fi output, else it renders silent.
         await Task.Delay(300);

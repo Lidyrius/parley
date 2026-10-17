@@ -176,6 +176,18 @@ final class AppController: ObservableObject {
             return GoogleTTS.pcm(from: data)
         } : nil
 
+        // Predicted answers (<reply>): render their lines now, in parallel with everything
+        // below — ready long before the user stops talking.
+        let replies = turn.wantsListen ? turn.replies ?? [] : []
+        let replyClips: Task<[Data?], Never>? = replies.isEmpty || !config.useGoogle ? nil : Task {
+            await withTaskGroup(of: (Int, Data?).self) { group in
+                for (i, r) in replies.enumerated() { group.addTask { (i, await GoogleTTS.synth(r.say, config: config)) } }
+                var clips = [Data?](repeating: nil, count: replies.count)
+                for await (i, pcm) in group { clips[i] = pcm }
+                return clips
+            }
+        }
+
         // Unterwegs-Modus: ring the phone (VoIP push + `ring`) and wait ≤ 45 s for the call; the
         // synthesis above keeps running meanwhile. No answer → the Mac's speaker as always.
         if ringing { _ = await ringPhone(label: turn.spokenLabel) }
@@ -274,8 +286,11 @@ final class AppController: ObservableObject {
             }
         }
 
-        // Classify (fast, ~0.3 s) — needed for the ack clip, stats and the STOP decision.
-        let intent = text.isEmpty ? .other : await classify(text, config: config)
+        // Classify (fast, ~0.3 s) — needed for the ack clip, stats and the STOP decision. In
+        // parallel: which predicted answer (<reply>) it is, if the session gave any.
+        let heard = text
+        async let picked = heard.isEmpty ? nil : pickReply(heard, options: replies.map(\.on), config: config)
+        var intent = text.isEmpty ? .other : await classify(text, config: config)
         Log.write("classified: \(intent.rawValue)")
         let recordSeconds = Double(max(0, wav.count - 44)) / 2.0 / 16000.0   // 16 kHz mono 16-bit WAV
         StatsStore.shared.recordTurn(speak: turn.speak, transcript: text,
@@ -288,7 +303,27 @@ final class AppController: ObservableObject {
         // next turn awaits this task before it speaks, so audio never overlaps.
         // ORDER inside the task: hi-fi restored → ack clip → THEN media resume, so the
         // video never plays over the acknowledgment.
-        startAck(intent: intent, hasText: !text.isEmpty, config: config)
+        // A predicted answer matched → its own line instead of the generic ack (pre-rendered,
+        // plays at once). One that asks back opens the mic again; both answers go on.
+        var line: AckLine?
+        if let i = await picked {
+            let r = replies[i], clip = (await replyClips?.value)?[i] ?? nil
+            Log.write("reply: \(r.on) → \"\(r.say)\" (rendered=\(clip != nil))")
+            if r.listen == true {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                await waitForHiFiOutput()
+                await speakAndBeep(r.say, config: config, prefetched: clip, beep: true)
+                setStatus(key, "listening")
+                let more = await transcribe(await record(), config: config)
+                Log.write("reply follow-up chars=\(more.count)")
+                text += "\n\n[Parley hat nachgefragt: „\(r.say)“]" + (more.isEmpty ? "" : "\n\(more)")
+                intent = more.isEmpty ? .other : await classify(more, config: config)
+            } else {
+                line = AckLine(say: r.say, clip: clip)
+                text += "\n\n[Parley hat darauf bereits geantwortet: „\(r.say)“ – nicht wiederholen.]"
+            }
+        }
+        startAck(intent: intent, hasText: !text.isEmpty, line: line, config: config)
 
         // "Stop heißt Stop": a STOP reply is NOT fed back. The STOP ack clip still plays
         // (background) as the sign-off; returning "" makes the hook exit cleanly.
@@ -350,10 +385,10 @@ final class AppController: ObservableObject {
 
     // The acknowledgment in the BACKGROUND, then the media resume (debounced; only once the
     // whole cue is idle). The next queue item awaits it, so audio never overlaps.
-    private func startAck(intent: Intent, hasText: Bool, config: AppConfig) {
+    private func startAck(intent: Intent, hasText: Bool, line: AckLine? = nil, config: AppConfig) {
         beginAudioWork()
         ackTask = Task { [weak self] in
-            await self?.playAck(intent: intent, hasText: hasText, config: config)
+            await self?.playAck(intent: intent, hasText: hasText, line: line, config: config)
             self?.scheduleResume()
             self?.endAudioWork()
         }
@@ -499,6 +534,7 @@ final class AppController: ObservableObject {
     }
 
     private var ackTask: Task<Void, Never>?
+    struct AckLine { var say: String; var clip: Data? }   // a matched <reply>: its line + pre-rendered audio
 
     // Pause anything playing and remember it for the deferred resume; 0.4s beat if we
     // actually paused something. osascript/perl are blocking → off the main actor.
@@ -555,10 +591,14 @@ final class AppController: ObservableObject {
     // Settle after mic teardown, then play the intent's cached Jarvis line (or a chime) —
     // but only once the output is back in hi-fi mode (AirPods HFP→A2DP switch), else the
     // ack clip itself gets swallowed.
-    private func playAck(intent: Intent, hasText: Bool, config: AppConfig) async {
+    private func playAck(intent: Intent, hasText: Bool, line: AckLine?, config: AppConfig) async {
+        var own: Data? = line?.clip
+        if own == nil, let line { own = await GoogleTTS.synth(line.say, config: config) }   // not rendered in time
         try? await Task.sleep(nanoseconds: 300_000_000)
         await waitForHiFiOutput()
-        if hasText, let data = LineClips.randomClipData(for: intent) {
+        if let own {
+            await playClip(own, rate: config.speakingRate)
+        } else if hasText, let data = LineClips.randomClipData(for: intent) {
             await playClip(data, rate: config.speakingRate)
         } else {
             await playChime()
@@ -709,10 +749,7 @@ final class AppController: ObservableObject {
     // after the mic teardown + waits for hi-fi output first (same as playAck), otherwise the
     // line renders into a still-contended device and is silent.
     private func speakLine(_ text: String, config: AppConfig) async {
-        guard config.useGoogle else { return }
-        let req = GoogleTTS.request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200, let pcm = GoogleTTS.pcm(from: data) else { return }
+        guard config.useGoogle, let pcm = await GoogleTTS.synth(text, config: config) else { return }
         try? await Task.sleep(nanoseconds: 300_000_000)
         await waitForHiFiOutput()
         await playClip(pcm, rate: config.speakingRate)
@@ -722,6 +759,14 @@ final class AppController: ObservableObject {
         if seconds % 60 == 0 { let m = seconds / 60; return m == 1 ? "eine Minute" : "\(m) Minuten" }
         if seconds < 60 { return "\(seconds) Sekunden" }
         return "\(seconds / 60) Minuten und \(seconds % 60) Sekunden"
+    }
+
+    // The session's predicted answer the transcript matches (index), nil = none / no Groq.
+    private func pickReply(_ text: String, options: [String], config: AppConfig) async -> Int? {
+        guard !options.isEmpty, !config.groqKey.isEmpty,
+              let (data, resp) = try? await URLSession.shared.data(for: Classifier.replyRequest(text: text, options: options, apiKey: config.groqKey)),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return Classifier.parseReply(data, count: options.count)
     }
 
     private func classify(_ text: String, config: AppConfig) async -> Intent {

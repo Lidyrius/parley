@@ -123,6 +123,45 @@ public static class Groq
         catch { return 0; }
     }
 
+    // Which predicted answer (<reply>) the transcript is: the 1-based option number, 0 = none.
+    private const string ReplySystem =
+        "A developer answered a coding assistant by voice. The assistant predicted these kinds of " +
+        "answer, numbered. Output ONLY the number of the one the answer clearly is, or 0 if none " +
+        "fits well (e.g. it adds a new request or says something else). Output only the integer.";
+
+    /// The matched option's index; null = none / no key / failed.
+    public static async Task<int?> PickReply(string text, IReadOnlyList<string> options, Config config)
+    {
+        if (!config.SttReady || text.Length == 0 || options.Count == 0) return null;
+        try
+        {
+            var list = string.Join("\n", options.Select((o, i) => $"{i + 1}. {o}"));
+            var payload = new
+            {
+                model = "llama-3.3-70b-versatile",
+                temperature = 0,
+                max_tokens = 4,
+                messages = new object[]
+                {
+                    new { role = "system", content = ReplySystem },
+                    new { role = "user", content = $"{list}\n\nAnswer: {text}" },
+                },
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post,
+                "https://api.groq.com/openai/v1/chat/completions");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.GroqKey);
+            req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            using var resp = await Http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return null;
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var content = doc.RootElement.GetProperty("choices")[0]
+                .GetProperty("message").GetProperty("content").GetString() ?? "";
+            return int.TryParse(new string(content.Where(char.IsDigit).ToArray()), out var n) && n >= 1 && n <= options.Count
+                ? n - 1 : null;
+        }
+        catch { return null; }
+    }
+
     public static async Task<Intent> Classify(string text, Config config)
     {
         if (!config.SttReady || text.Length == 0) return Intent.Other;
