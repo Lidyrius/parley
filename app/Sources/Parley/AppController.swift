@@ -305,7 +305,8 @@ final class AppController: ObservableObject {
                 scheduleResume()   // let media play during the pause
                 setStatus(key, "idle")
                 let resume = "[Parley] Die vom Nutzer angeforderte Wartezeit von \(human) ist vorbei. " +
-                    "Fahre jetzt fort: prüfe, ob alles wie erwartet funktioniert hat, und berichte kurz."
+                    "Fahre jetzt fort: prüfe, ob alles wie erwartet funktioniert hat, und berichte kurz." +
+                    "\n\nSeine Antwort davor, vollständig:\n\(text)"   // a long reply that mentions waiting must not get lost
                 return TurnReply(transcript: "", park: false, waitSeconds: wait, resume: resume)
             }
         }

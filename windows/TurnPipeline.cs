@@ -262,7 +262,8 @@ public sealed class TurnPipeline
                 await SpeakLine($"Verstanden, Sir. Ich warte {human} und melde mich dann.", config);
                 ScheduleResume();
                 var resume = $"[Parley] Die vom Nutzer angeforderte Wartezeit von {human} ist vorbei. " +
-                    "Fahre jetzt fort: prüfe, ob alles wie erwartet funktioniert hat, und berichte kurz.";
+                    "Fahre jetzt fort: prüfe, ob alles wie erwartet funktioniert hat, und berichte kurz." +
+                    $"\n\nSeine Antwort davor, vollständig:\n{text}";
                 return ("", false, wait, resume);
             }
         }
