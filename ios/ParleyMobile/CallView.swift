@@ -48,6 +48,9 @@ struct CallView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var zoomed: ZoomedImage?
+    /// A slide swiped to by hand (the pager follows the voice again 10 s later).
+    @State private var picked: String?
+    @State private var pickedAt = Date.distantPast
 
     var body: some View {
         let call = model.call
@@ -66,27 +69,20 @@ struct CallView: View {
                 // A slide (docs/CALL-SLIDES.md) takes the ring's place while Parley talks about it;
                 // the session's name stays on top, small. Slides swipe in from the right.
                 TimelineView(.periodic(from: .now, by: 0.1)) { context in
-                    let slide = call.slide(at: context.date)
+                    let due = call.slide(at: context.date)
                     let name = call.label ?? voiced?.name ?? "Parley"
-                    VStack(spacing: 16) {
-                        if let slide {
+                    VStack(spacing: 14) {
+                        if let due {
                             compactIdentity(call, look: look, name: name)
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                            let order = call.slides.sorted { $0.at < $1.at }
-                            SlideCard(slide: slide, image: model.images[slide.id],
-                                      index: order.firstIndex(of: slide) ?? 0, count: order.count) {
-                                zoomed = ZoomedImage(id: slide.id, image: $0)
-                            }
-                            .id(slide.id)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.94)),
-                                removal: .move(edge: .leading).combined(with: .opacity).combined(with: .scale(scale: 0.94))))
+                                .transition(.opacity)
+                            slidePager(call, due: due, at: context.date)
+                                .transition(.opacity)
                         } else {
                             identity(call, look: look, name: name)
-                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                                .transition(.opacity)
                         }
                     }
-                    .animation(.spring(response: 0.55, dampingFraction: 0.86), value: slide?.id)
+                    .animation(.easeInOut(duration: 0.4), value: due == nil)
                 }
                 Spacer(minLength: 20)
                 Waveform(mood: look.mood, color: look.color, paused: reduceMotion) { call.level(at: $0) }
@@ -156,6 +152,34 @@ struct CallView: View {
             .multilineTextAlignment(.center)
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// The line's slides, swipeable. It follows the voice (the slide due now) unless a slide was
+    /// swiped to by hand in the last 10 s; swiping back to the due one follows again.
+    private func slidePager(_ call: CallController, due: Slide, at date: Date) -> some View {
+        let order = call.slides.sorted { $0.at < $1.at }
+        let shown = Self.shownSlide(order, due: due, picked: picked, pickedAt: pickedAt, now: date)
+        return TabView(selection: Binding(get: { shown }, set: { id in
+            if id == due.id { picked = nil; pickedAt = .distantPast } else { picked = id; pickedAt = .now }
+        })) {
+            ForEach(Array(order.enumerated()), id: \.element.id) { i, s in
+                SlideCard(slide: s, image: model.images[s.id], index: i, count: order.count) {
+                    zoomed = ZoomedImage(id: s.id, image: $0)
+                }
+                .padding(.horizontal, 4)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .tag(s.id)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .frame(height: 330)
+        .animation(.easeInOut(duration: 0.45), value: shown)
+    }
+
+    /// Which slide the pager shows: one swiped to in the last 10 s, else the one due now.
+    nonisolated static func shownSlide(_ order: [Slide], due: Slide, picked: String?, pickedAt: Date, now: Date) -> String {
+        guard let picked, now.timeIntervalSince(pickedAt) < 10, order.contains(where: { $0.id == picked }) else { return due.id }
+        return picked
     }
 
     /// The session's name and state, small — above a slide.

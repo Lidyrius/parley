@@ -230,9 +230,17 @@ final class CallController {
 
     /// Seconds of the caption's line played so far (demo: wall clock).
     func captionTime(at date: Date) -> Double {
-        isDemo ? date.timeIntervalSince(captionAt).truncatingRemainder(dividingBy: (caption?.end ?? 1) + 1.5)
-               : Double(max(0, audio.played - captionBase)) * PCM.frameDuration
+        if let frozen = demoAt { return frozen }
+        return isDemo ? date.timeIntervalSince(captionAt).truncatingRemainder(dividingBy: (caption?.end ?? 1) + 1.5)
+                      : Double(max(0, audio.played - captionBase)) * PCM.frameDuration
     }
+
+    /// `-demoAt <seconds>`: the demo line stands still there (screenshots, swipe checks).
+    @ObservationIgnored private lazy var demoAt: Double? = {
+        guard isDemo, let i = ProcessInfo.processInfo.arguments.firstIndex(of: "-demoAt"),
+              i + 1 < ProcessInfo.processInfo.arguments.count else { return nil }
+        return Double(ProcessInfo.processInfo.arguments[i + 1])
+    }()
 
     /// A binary frame from the host: Parley's voice.
     func play(_ frame: Data) {

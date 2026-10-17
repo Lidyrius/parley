@@ -106,6 +106,7 @@ final class AppModel {
         relay.onEvent = { [weak self] in self?.handle($0) }
         if demo {
             relay.startDemo()
+            images["demo-5"] = Demo.screenshot()
             // `-demoCall speaking|listening|idle|incoming|connecting` opens the call screen.
             if let i = arguments.firstIndex(of: "-demoCall") {
                 let state = i + 1 < arguments.count ? Demo.CallState(rawValue: arguments[i + 1]) : nil

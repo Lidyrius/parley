@@ -219,5 +219,15 @@ struct FrameTests {
         #expect(Slide.current(s, at: 5)?.id == "b")
         #expect(SlideCard.format(24) == "24")
     }
+
+    @Test func pagerFollowsTheVoiceUnlessSwiped() {
+        let s = Demo.slides
+        let now = Date.now
+        #expect(CallView.shownSlide(s, due: s[1], picked: nil, pickedAt: .distantPast, now: now) == s[1].id)
+        #expect(CallView.shownSlide(s, due: s[1], picked: s[3].id, pickedAt: now.addingTimeInterval(-3), now: now) == s[3].id)
+        #expect(CallView.shownSlide(s, due: s[1], picked: s[3].id, pickedAt: now.addingTimeInterval(-11), now: now) == s[1].id)
+        #expect(CallView.shownSlide(s, due: s[1], picked: "gone", pickedAt: now, now: now) == s[1].id)
+        #expect(s.count == 6 && s.map(\.at) == s.map(\.at).sorted())
+    }
 }
 

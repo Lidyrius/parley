@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// `-demo`: a built-in `sessions` frame (every state, a countdown, a background agent) for
 /// screenshots and UI work without a relay. It goes through the real decoder.
@@ -66,22 +67,28 @@ extension Demo {
 }
 
 extension Demo {
-    /// A spoken line with word times, for the call screen's captions.
-    static let caption: Caption = {
-        let words = "Der Export ist eingebaut, Sir. Soll ich auch PDF anbieten, oder lieber erst testen?".split(separator: " ").map(String.init)
-        let starts = [0.2, 0.45, 0.85, 1.05, 1.9, 2.6, 2.85, 3.0, 3.25, 3.6, 4.25, 4.5, 4.8, 5.1]
-        return Caption(words: words, starts: starts, end: 5.6)
-    }()
-}
-
-extension Demo {
-    /// Slides on the demo line's clock: a chart, then a big number.
+    /// The showcase line from 2026-10-17 (real numbers of the day), with plausible word times.
+    static let caption = Caption(words: ["Gern,", "Sir,", "der", "Tagesbericht", "als", "Folien.", "Zuerst,", "was", "heute", "dazugekommen", "ist.", "Gut", "neuntausend", "neue", "Zeilen,", "das", "meiste", "auf", "dem", "iPhone.", "Siebenunddreißig", "Commits,", "davon", "sechzehn", "Features.", "So", "oft", "haben", "wir", "heute", "gesprochen.", "Alle", "Tests", "sind", "grün.", "Und", "zum", "Schluss", "ein", "Blick", "auf", "den", "Anrufbildschirm.", "Gefällt", "Ihnen", "das?"],
+                                 starts: [0.25, 1.04, 1.77, 2.09, 2.95, 3.27, 4.18, 5.09, 5.41, 5.85, 6.71, 7.44, 7.76, 8.56, 8.94, 9.85, 10.17, 10.67, 10.99, 11.31, 12.22, 13.32, 14.29, 14.73, 15.35, 16.38, 16.64, 16.96, 17.4, 17.72, 18.16, 19.31, 19.69, 20.13, 20.51, 21.3, 21.62, 21.94, 22.5, 22.82, 23.26, 23.58, 23.9, 25.35, 25.91, 26.35], end: 27.08)
     static let slides: [Slide] = [
-        Slide(id: "demo-chart", at: 0.4, kind: "chart", title: "Exporte pro Tag", chart: "bar",
-              labels: ["Mo", "Di", "Mi", "Do", "Fr"], values: [12, 18, 9, 24, 31]),
-        Slide(id: "demo-metric", at: 2.6, kind: "metric", title: "Tests", metric: "24 / 24", note: "alle grün, 3,1 s"),
-        Slide(id: "demo-text", at: 4.25, kind: "text", title: "Gebaut",
-              text: "**CSV-Export** in der Rechnungsliste, Beträge mit Komma, Spalten wie in der Ansicht."),
+        Slide(id: "demo-0", at: 4.18, kind: "text", title: "Heute gebaut", text: "**Session-Ansicht** wie in Claude, **Untertitel** und **Folien** im Anruf, **Stumm-Modus**, **Antwort-Vorhersagen**, frühere Sessions **fortsetzen**."),
+        Slide(id: "demo-1", at: 7.44, kind: "chart", title: "Neue Zeilen nach Bereich", chart: "pie", labels: ["iPhone", "Mac", "Windows", "Plugin", "Relay"], values: [3515.0, 2858.0, 2732.0, 178.0, 32.0]),
+        Slide(id: "demo-2", at: 12.22, kind: "chart", title: "37 Commits heute", chart: "bar", labels: ["Feature", "Fix", "Build", "Doku"], values: [16.0, 11.0, 9.0, 1.0]),
+        Slide(id: "demo-3", at: 16.38, kind: "chart", title: "Sprachrunden pro Stunde", chart: "line", labels: ["11 Uhr", "12 Uhr", "13 Uhr", "14 Uhr", "15 Uhr", "16 Uhr"], values: [9.0, 24.0, 21.0, 12.0, 12.0, 6.0]),
+        Slide(id: "demo-4", at: 19.31, kind: "metric", title: "Tests Mac und iPhone", metric: "234", note: "Tests grün, keine Fehler"),
+        Slide(id: "demo-5", at: 21.3, kind: "image", title: "So sieht ein Anruf jetzt aus"),
     ]
-}
 
+    /// Stand-in for the session's last screenshot (the image slide) in the demo.
+    @MainActor static func screenshot() -> UIImage? {
+        let view = VStack(spacing: 14) {
+            Circle().stroke(Theme.claude, lineWidth: 10).frame(width: 90, height: 90)
+                .overlay(Circle().fill(Theme.claude).frame(width: 46, height: 46))
+            Text("Parley").font(.system(size: 34, weight: .bold)).foregroundStyle(.white)
+            Text("spricht · 2:48").font(.headline).foregroundStyle(Theme.claude)
+        }
+        .frame(width: 390, height: 300)
+        .background(LinearGradient(colors: [Color(hex: 0x3A2A24), Color(hex: 0x1C1C1B)], startPoint: .top, endPoint: .bottom))
+        return ImageRenderer(content: view).uiImage
+    }
+}

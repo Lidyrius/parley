@@ -2,8 +2,8 @@ import Charts
 import SwiftUI
 
 /// One slide in the call screen (docs/CALL-SLIDES.md): a screenshot, a chart, a big number or a
-/// short card — shown while Parley talks about it. Each kind animates in: bars grow, the pie
-/// turns open, numbers count up, an image sharpens, text rises.
+/// short card — shown while Parley talks about it. Each kind comes in calmly: bars and lines
+/// grow, the pie fades in, numbers count up, images and text fade in.
 struct SlideCard: View {
     let slide: Slide
     let image: UIImage?
@@ -31,7 +31,7 @@ struct SlideCard: View {
         }
         .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Theme.stroke))
         .onAppear {
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.82).delay(0.12)) { shown = true }
+            withAnimation(.easeOut(duration: 0.55).delay(0.05)) { shown = true }
         }
         .accessibilityElement(children: .combine)
     }
@@ -84,27 +84,24 @@ struct SlideCard: View {
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.stroke))
-                    .frame(maxHeight: 320)
+                    .frame(maxHeight: 250)
                     .frame(maxWidth: .infinity)
-                    .scaleEffect(shown ? 1 : 1.06)
-                    .blur(radius: shown ? 0 : 14)
                     .opacity(shown ? 1 : 0)
                     .onTapGesture { onZoom(image) }
                     .accessibilityAddTraits(.isButton)
             } else {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Theme.userBubble)
-                    .frame(height: 180)
+                    .frame(height: 170)
                     .overlay { ProgressView() }
             }
         case "chart":
-            chart.frame(height: 210)
+            chart.frame(height: slide.chart == "pie" ? 170 : 190)
         case "metric":
             MetricText(metric: slide.metric ?? "", shown: shown)
             if let note = slide.note {
                 Text(note).font(.title3).foregroundStyle(.secondary)
                     .opacity(shown ? 1 : 0)
-                    .offset(y: shown ? 0 : 8)
             }
         default:
             Text(Markdown.inline(slide.text ?? ""))
@@ -112,7 +109,7 @@ struct SlideCard: View {
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .opacity(shown ? 1 : 0)
-                .offset(y: shown ? 0 : 14)
+                .offset(y: shown ? 0 : 4)
         }
     }
 
@@ -131,18 +128,29 @@ struct SlideCard: View {
         let grow = shown ? 1.0 : 0.0
         switch slide.chart {
         case "pie":
-            Chart(points) { p in
-                SectorMark(angle: .value("Wert", p.value), innerRadius: .ratio(0.58), angularInset: 2)
-                    .foregroundStyle(by: .value("Name", p.label))
-                    .cornerRadius(5)
-                    .annotation(position: .overlay) {
-                        Text(Self.format(p.value)).font(.caption.bold()).foregroundStyle(.white).opacity(grow)
+            // Fixed colours per slice and our own legend (name, value, share) — the chart's own
+            // labels can't be trusted on small slices.
+            let total = max(1, points.map(\.value).reduce(0, +))
+            HStack(alignment: .center, spacing: 18) {
+                Chart(points) { p in
+                    SectorMark(angle: .value("Wert", p.value), innerRadius: .ratio(0.6), angularInset: 1.5)
+                        .foregroundStyle(Self.palette[p.id % Self.palette.count])
+                        .cornerRadius(4)
+                }
+                .chartLegend(.hidden)
+                .frame(width: 150, height: 150)
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(points) { p in
+                        HStack(spacing: 8) {
+                            Circle().fill(Self.palette[p.id % Self.palette.count]).frame(width: 9, height: 9)
+                            Text(p.label).lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(Self.share(p.value / total)).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        .font(.subheadline)
                     }
+                }
             }
-            .chartForegroundStyleScale(range: Self.palette)
-            .chartLegend(position: .trailing, alignment: .center)
-            .scaleEffect(0.55 + 0.45 * grow)
-            .rotationEffect(.degrees(-120 * (1 - grow)))
             .opacity(grow)
         case "line":
             Chart(points) { p in
@@ -175,6 +183,12 @@ struct SlideCard: View {
 
     private static let palette: [Color] = [Color(hex: 0xD97757), Color(hex: 0x5B8DEF), Color(hex: 0x4EBA65),
                                            Color(hex: 0xD9A43B), Color(hex: 0x9B87F5), Color(hex: 0x8B8A85)]
+
+    /// "38 %", "<1 %".
+    static func share(_ f: Double) -> String {
+        let p = f * 100
+        return p < 1 ? "<1 %" : "\(Int(p.rounded())) %"
+    }
 
     static func format(_ v: Double) -> String {
         v.rounded() == v ? String(Int(v)) : v.formatted(.number.precision(.fractionLength(0...2)))
