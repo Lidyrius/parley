@@ -89,7 +89,7 @@ public static class Captions
 
     // {"t":"caption","words":[…],"at":[…],"end":…,"last":…} — sent just before the line's first
     // frame. `last`: nothing follows on this call (a speak-end line, no other turn waiting) — a
-    // phone that hangs up after the talk starts leaving before the line ends.
+    // phone that hangs up after the talk does so the moment the line has played.
     public static string Frame(Timed t, bool last = false) => JsonSerializer.Serialize(new
     {
         t = "caption",

@@ -85,7 +85,7 @@ enum Captions {
 
     /// `{"t":"caption","words":[…],"at":[…],"end":…,"last":…}` — sent just before the line's first
     /// frame. `last`: nothing follows on this call (a speak-end line, no other turn waiting) — a
-    /// phone that hangs up after the talk starts leaving before the line ends.
+    /// phone that hangs up after the talk does so the moment the line has played.
     static func frame(_ t: Timed, last: Bool = false) -> String {
         struct Wire: Encodable { let t = "caption"; let words: [String]; let at: [Double]; let end: Double; let last: Bool }
         func r(_ x: Double) -> Double { (x * 100).rounded() / 100 }

@@ -275,8 +275,7 @@ final class CallController {
     static let autoHangUpKey = "autoHangUp"
     static var autoHangUp: Bool { UserDefaults.standard.bool(forKey: autoHangUpKey) }
     @ObservationIgnored private var autoHangUpTask: Task<Void, Never>?
-    @ObservationIgnored private var leaveEarly: Task<Void, Never>?
-    @ObservationIgnored private var leftEarly = false   // leaveEarly hid the screen
+    @ObservationIgnored private var hangUpAtEnd: Task<Void, Never>?
 
     static let speakerKey = "speakerByDefault"
     static var speakerByDefault: Bool { UserDefaults.standard.object(forKey: speakerKey) as? Bool ?? true }
@@ -294,15 +293,19 @@ final class CallController {
         captionBase = audio.received
         captionAt = .now
         followSubtitles(c)
-        leaveEarly?.cancel()
+        hangUpAtEnd?.cancel()
         if c.last, Self.autoHangUp, phase.isActive, !isTest {
-            // The talk's last line: the screen slides away half a second before it ends (the
-            // voice plays on), the call itself ends once it is played out (`audio idle`).
-            leaveEarly = Task { [weak self] in
+            // The talk's last line: the call ends the moment its last word has played — not
+            // before, and without waiting for the host's `audio idle` (that stays the fallback).
+            hangUpAtEnd = Task { [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(50))
+                    try? await Task.sleep(for: .milliseconds(30))
                     guard let self, phase.isActive else { return }
-                    if captionTime(at: .now) >= c.end - 0.5 { leftEarly = true; showsScreen = false; return }
+                    if captionTime(at: .now) >= c.end - 0.1, audio.played >= audio.received {
+                        showsScreen = false
+                        hangUp()
+                        return
+                    }
                 }
             }
         }
@@ -358,10 +361,9 @@ final class CallController {
             self.label = label
             if let uuid { provider?.reportCall(with: uuid, updated: Self.update(label: label)) }
         }
-        if state != .idle {   // something goes on after all: stay on, screen back
+        if state != .idle {   // something goes on after all: stay on
             autoHangUpTask?.cancel()
-            leaveEarly?.cancel()
-            if leftEarly { leftEarly = false; showsScreen = true }
+            hangUpAtEnd?.cancel()
         }
         guard state != hostAudio else { return }
         if state == .idle, hostAudio != .idle, Self.autoHangUp, phase.isActive, !isTest {
@@ -508,8 +510,7 @@ final class CallController {
     private func reset() {
         subtitleTask?.cancel()
         onSubtitle(nil)
-        leaveEarly?.cancel()
-        leftEarly = false
+        hangUpAtEnd?.cancel()
         autoHangUpTask?.cancel()
         connectTimeout?.cancel()
         lossTimeout?.cancel()
