@@ -20,7 +20,7 @@ enum OrbStyle: String, CaseIterable, Identifiable, Sendable {
 
     var note: String {
         switch self {
-        case .jarvis: "Eine Kugel aus Lichtpunkten mit Bahnen, die Stimme lässt sie beben und Funken sprühen"
+        case .jarvis: "Mehrere Schalen aus Lichtpunkten, die sich gemeinsam drehen und mit der Stimme beben"
         case .nebula: "Eine weiche Wolke, die mit der Stimme aufleuchtet und sich weitet"
         case .wave: "Ein Punktgitter, über das die Stimme in Wellen läuft"
         case .orbit: "Ringe aus Teilchen kreisen um einen hellen Kern, schneller beim Sprechen"
@@ -78,7 +78,7 @@ struct ParticleOrb: View {
     nonisolated static func draw(_ style: OrbStyle, in ctx: inout GraphicsContext, size: CGSize, orb: CGFloat, t: Double,
                                  energy e: Double, color: Color, dense: Bool, glows: Bool) {
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        let R = orb * 0.36 * (1 + 0.06 * e)
+        let R = orb * 0.4 * (1 + 0.06 * e)
         let unit = orb / 168
 
         // The glow behind: brighter while speaking.
@@ -101,28 +101,27 @@ struct ParticleOrb: View {
 
         switch style {
         case .jarvis:
-            // A lattice globe that quivers with the voice; a few particles leave it as sparks;
-            // three bright great circles give it JARVIS's structure.
-            let n = dense ? 820 : 260
+            // Nested shells of light points turning as one, like JARVIS's globe: each inner shell a
+            // little smaller and dimmer, its lattice turned a little against the others. The voice
+            // makes every shell quiver the same way; a few points lift off, but stay close.
+            let shells: [(radius: Double, count: Int, alpha: Double, twist: Double)] = dense
+                ? [(1.0, 560, 1.0, 0), (0.76, 360, 0.85, 0.9), (0.52, 220, 0.75, 1.7)]
+                : [(1.0, 200, 1.0, 0), (0.7, 100, 0.8, 0.9)]
             let yaw = t * 0.32, tilt = 0.38
-            for i in 0..<n {
-                var p = sphere(i, of: n)
-                let lat = asin(p.y), lon = atan2(p.z, p.x)
-                var r = 1 + 0.025 * sin(t * 1.3 + Double(i)) + e * 0.13 * sin(3 * lat + 2 * lon + t * 5)
-                if i % 17 == 0 {   // sparks
-                    r += e * 0.55 * ((t * 0.6 + rand(i, 1)).truncatingRemainder(dividingBy: 1))
-                }
-                p *= r
-                dot(rotate(p, yaw: yaw, tilt: tilt), size: 1.25 + rand(i, 2) * 0.7, alpha: 0.75 + 0.35 * e)
-            }
-            for ring in 0..<3 {
-                let m = dense ? 90 : 36
-                let tiltRing = Double(ring) * 1.05 + 0.3
-                for j in 0..<m {
-                    let a = Double(j) / Double(m) * 2 * .pi + t * (0.5 + 0.25 * Double(ring)) * (1 + e)
-                    let p = SIMD3(cos(a) * 1.12, 0, sin(a) * 1.12)
-                    dot(rotate(rotate(p, yaw: 0, tilt: tiltRing), yaw: yaw + Double(ring), tilt: tilt),
-                        size: 1.5, alpha: 0.7 + 0.3 * e)
+            for shell in shells {
+                for i in 0..<shell.count {
+                    let p = rotate(sphere(i, of: shell.count), yaw: shell.twist, tilt: shell.twist * 0.5)
+                    let lat = asin(p.y), lon = atan2(p.z, p.x)
+                    var r = 1 + 0.02 * sin(t * 1.3 + Double(i)) + e * 0.12 * sin(3 * lat + 2 * lon + t * 5)
+                    if i % 23 == 0 {
+                        r += e * 0.12 * (t * 0.6 + rand(i, 1)).truncatingRemainder(dividingBy: 1)
+                    }
+                    // Rim-lit like a hologram: points near a shell's outline glow most, so each
+                    // shell reads as its own ring of light.
+                    let q = rotate(p, yaw: yaw, tilt: tilt)
+                    let rim = 1 - abs(q.z)
+                    dot(q * (r * shell.radius), size: 1.3 + rand(i, 2) * 0.6,
+                        alpha: shell.alpha * (0.2 + 1.1 * rim * rim) * (0.85 + 0.35 * e))
                 }
             }
         case .nebula:

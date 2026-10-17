@@ -142,8 +142,8 @@ struct CallView: View {
         VStack(spacing: 18) {
             // Ringing: the picked motion around the ring; answered, it draws back in (the morph).
             RingingStage(style: Appearance.shared.ringStyle, color: look.color, active: call.phase == .ringing,
-                         ring: 112, paused: reduceMotion) {
-                ParticleOrb(style: Appearance.shared.orbStyle, color: look.color, size: 168, paused: reduceMotion) {
+                         ring: 140, paused: reduceMotion) {
+                ParticleOrb(style: Appearance.shared.orbStyle, color: look.color, size: 210, paused: reduceMotion) {
                     Double(call.level(at: $0))
                 }
             }
