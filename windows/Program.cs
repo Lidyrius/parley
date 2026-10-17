@@ -48,6 +48,7 @@ internal sealed class TrayApp : ApplicationContext
         // iPhone (docs/IPHONE.md, v2): Unterwegs-Modus rings before a turn; a wake utterance is
         // routed to a session or the Zentrale. The phone's settings survive restarts.
         _pipeline.Ring = label => Ringer.Ring(label);
+        _pipeline.SetCallback = (id, at) => _server.Sessions.SetCallback(id, at);
         _pipeline.Route = (text, config) => _server.Delivery.Route(text, config);
         PhoneCall.LoadSettings(Config.Load());
 
@@ -158,6 +159,7 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneWake _: _server.StartWake(); break;
             case PhonePush p: PhoneCall.SetPush(p.Token, p.Env); break;
             case PhoneAway a: PhoneCall.SetAway(a.On); break;
+            case PhoneLater l: PhoneCall.SetLater(l.After); break;
             case PhoneSilent s: PhoneCall.SetSilent(s.On); break;
             case PhoneAlert a: PhoneCall.SetAlert(a.Token, a.Env); break;
             // v3: the phone's session view — history from Claude Code's transcript, its images,

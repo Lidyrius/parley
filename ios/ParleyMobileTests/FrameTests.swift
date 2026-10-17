@@ -220,6 +220,15 @@ struct FrameTests {
         #expect(SlideCard.format(24) == "24")
     }
 
+    @Test func notNowAndCallBack() throws {
+        #expect(Outgoing.later(after: 60).contains(#""after":60"#) && Outgoing.later(after: 60).contains(#""t":"later""#))
+        #expect(!Outgoing.later(after: nil).contains("after"))
+        let s = try JSONDecoder().decode(Session.self, from: Data(#"{"id":"a","state":"speaking","callback":0}"#.utf8))
+        #expect(s.callback == 0)
+        let none = try JSONDecoder().decode(Session.self, from: Data(#"{"id":"b"}"#.utf8))
+        #expect(none.callback == nil)
+    }
+
     @Test func customPalettesKeepAndWarn() throws {
         var p = Palette.claude
         p.id = "custom-test"

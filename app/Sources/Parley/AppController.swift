@@ -48,6 +48,7 @@ final class AppController: ObservableObject {
     private let apns = APNsClient()
     private var audioWork = 0  // queue items + ack clips in flight; 0 → the phone hears `audio idle`
     static let ringTimeout: TimeInterval = 45
+    static let callBackWait: TimeInterval = 30 * 60   // "Ich rufe zurück": how long the line waits for Sir's call
 
     func start() {
         guard !started else { return }   // idempotent: launch + menu .task may both call
@@ -213,8 +214,36 @@ final class AppController: ObservableObject {
 
         // Unterwegs-Modus: ring the phone (VoIP push + `ring`) and wait ≤ 45 s for the call; the
         // synthesis above keeps running meanwhile. No answer → the Mac's speaker as always.
-        if ringing { _ = await ringPhone(label: turn.spokenLabel) }
+        // "Not now" on the phone puts the line off: ring again in a minute or five, or wait for
+        // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
+        var calledBack = false
+        if ringing {
+            var outcome = await ringPhone(label: turn.spokenLabel)
+            let session = ControlServer.sessionKey(turn)
+            while case .later(let after) = outcome {
+                setStatus(key, "waiting")
+                if let after {
+                    let at = Date().addingTimeInterval(after)
+                    server.setCallback(session, at: at)
+                    while Date() < at, !phone.callActive, !Task.isCancelled { try? await Task.sleep(nanoseconds: 250_000_000) }
+                    server.setCallback(session, at: nil)
+                    outcome = phone.callActive ? .answered : await ringPhone(label: turn.spokenLabel)
+                } else {
+                    server.setCallback(session, at: .distantFuture)
+                    calledBack = await phone.waitForCall(timeout: Self.callBackWait)
+                    server.setCallback(session, at: nil)
+                    Log.write(calledBack ? "phone: Sir called back" : "phone: no call back in 30 min")
+                    outcome = calledBack ? .answered : .missed
+                }
+                // Put off and still not reached: the line waits as a notification, not on the Mac's speaker.
+                if outcome == .missed { prefetch?.cancel(); return silentTurn(turn, key: key) }
+            }
+        }
         if effectivelyMuted && !phone.callActive { prefetch?.cancel(); return mutedTurn() }
+        if calledBack {
+            let de = config.language.lowercased().hasPrefix("de")
+            await speakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config: config)
+        }
 
         // Wait out the previous turn's background ack clip so this turn's audio never
         // overlaps it (only ever blocks if Claude replied faster than the ack played).
@@ -449,17 +478,28 @@ final class AppController: ObservableObject {
         return TurnReply(transcript: "", park: turn.wantsListen)
     }
 
-    // VoIP push + `ring`, then wait ≤ 45 s for `call start`. true = the call is connected.
-    private func ringPhone(label: String) async -> Bool {
+    enum RingOutcome: Equatable { case answered, missed, later(TimeInterval?) }
+
+    // VoIP push + `ring`, then wait ≤ 45 s for `call start` — or the phone's "not now".
+    private func ringPhone(label: String) async -> RingOutcome {
         Log.write("phone: ringing for \(label) (Unterwegs-Modus)")
+        _ = phone.takeLater()   // an old "not now" is not this ring's
         phone.ring(label: label)
         if let target = phone.pushTarget, apns.configured {
             let apns = self.apns
             Task.detached { await apns.push(token: target.token, env: target.env, label: label) }
         }
-        let answered = await phone.waitForCall(timeout: Self.ringTimeout)
-        Log.write(answered ? "phone: call answered — voicing through the phone" : "phone: no answer in 45 s → the Mac's speaker")
-        return answered
+        let deadline = Date().addingTimeInterval(Self.ringTimeout)
+        while !phone.callActive {
+            if let later = phone.takeLater() { return .later(later) }
+            guard Date() < deadline, !Task.isCancelled else {
+                Log.write("phone: no answer in 45 s → the Mac's speaker")
+                return .missed
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        Log.write("phone: call answered — voicing through the phone")
+        return .answered
     }
 
     // "Hey Parley" during a call: greeting → listen → route the utterance to a running session

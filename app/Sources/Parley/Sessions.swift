@@ -22,6 +22,7 @@ final class SessionRegistry {
         var hookAt: Date               // last /turn, /wake or turn reply
         var queued = false             // a /turn (or resume dialog) waits in the queue
         var waitUntil: Date?           // "Warte X Minuten": the hook sleeps until then
+        var callbackAt: Date?          // its call was put off: rings again then (distantFuture = Sir calls back)
         var parked = false             // answered with park; its hook polls /wake
         var wakeAt: Date?              // last /wake poll
         var injectedAt: Date?          // a reply was fed back → the agent is working on it
@@ -188,6 +189,10 @@ final class SessionRegistry {
 
     // Parked, or idle with a live mod (it can submit the instruction). A Codex session
     // (no presence) is only resumable while parked; a `background` one wakes on its own.
+    func setCallback(_ id: String, at: Date?) {
+        entries[id]?.callbackAt = at
+    }
+
     func canResume(_ id: String) -> Bool {
         refresh()
         return entries[id].map(Self.resumable) ?? false
@@ -270,7 +275,8 @@ final class SessionRegistry {
             return c != .orderedSame ? c == .orderedAscending : $0.id < $1.id
         }.map { e in
             Row(id: e.id, label: e.label, project: e.project, state: e.state, since: Self.ms(e.since),
-                until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil, voice: e.id == activeId,
+                until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil,
+                callback: e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) }, voice: e.id == activeId,
                 resumable: Self.resumable(e), tasks: e.tasks, host: DesktopSessions.resolve(cli: e.id, reported: e.host),
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
@@ -289,16 +295,18 @@ final class SessionRegistry {
         let id, label, project, state: String
         let since: Int64
         let until: Int64?
+        let callback: Int64?           // put-off call: rings again at (ms), 0 = waits for Sir's call back
         let voice, resumable: Bool
         let tasks: [BackgroundTask]
         let host: String?
         let stats: RowStats
-        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, voice, resumable, tasks, host, stats }
+        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats }
         func encode(to encoder: Encoder) throws {   // explicit: `until` must be null, not omitted
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(label, forKey: .label)
             try c.encode(project, forKey: .project); try c.encode(state, forKey: .state)
             try c.encode(since, forKey: .since); try c.encode(until, forKey: .until)
+            try c.encodeIfPresent(callback, forKey: .callback)
             try c.encode(voice, forKey: .voice); try c.encode(resumable, forKey: .resumable)
             try c.encode(tasks, forKey: .tasks); try c.encode(host, forKey: .host)
             try c.encode(stats, forKey: .stats)

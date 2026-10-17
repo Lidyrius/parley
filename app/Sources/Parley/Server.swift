@@ -379,6 +379,12 @@ final class ControlServer: @unchecked Sendable {
         queue.sync { sessions.resumableList() }
     }
 
+    /// The phone's tile for this session: Parley rings again at `at`, or (distantFuture) waits for
+    /// Sir's call back; nil clears it.
+    func setCallback(_ id: String, at: Date?) {
+        queue.sync { sessions.setCallback(id, at: at) }
+    }
+
     // True if any session besides `id` is alive (any state but stopped) → announce the turn.
     func othersAlive(except id: String) -> Bool {
         queue.sync { sessions.othersAlive(except: id) }

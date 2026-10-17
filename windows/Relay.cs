@@ -144,6 +144,9 @@ public static class RelayFrame
                     return Str("id") is { Length: > 0 } iid && Str("key") is { Length: > 0 } key ? new PhoneImage(iid, key) : null;
                 case "say":
                     return Str("id") is { Length: > 0 } sid && Str("text")?.Trim() is { Length: > 0 and <= 8000 } said ? new PhoneSay(sid, said) : null;
+                case "later":
+                    var after = root.TryGetProperty("after", out var af) && af.ValueKind == JsonValueKind.Number ? af.GetDouble() : 0;
+                    return new PhoneLater(after > 0 ? Math.Clamp(after, 10, 3600) : null);
                 case "away":
                     return root.TryGetProperty("on", out var flag) && (flag.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         ? new PhoneAway(flag.ValueKind == JsonValueKind.True) : null;
@@ -177,6 +180,7 @@ public sealed record PhoneAlert(string Token, string Env) : PhoneMessage;
 public sealed record PhoneHistory(string Id, string? Before) : PhoneMessage;   // newest page, or the one before an item
 public sealed record PhoneImage(string Id, string Key) : PhoneMessage;
 public sealed record PhoneSay(string Id, string Text) : PhoneMessage;
+public sealed record PhoneLater(double? After) : PhoneMessage;    // not now: ring again in n s, or null = Sir calls back
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never
 // counts), else at least every 10 s. A new connection starts with a fresh one → sent at once.

@@ -166,6 +166,14 @@ final class CallController {
     private(set) var isTest = false
     @ObservationIgnored private var testEnd: Task<Void, Never>?
 
+    /// "Not now" on the ringing screen: Parley rings again in `after` s, or (nil) waits until you
+    /// call back — the session's tile then offers "Rückrufen".
+    func later(_ after: Int?) {
+        guard phase == .ringing else { return }
+        if !isTest { relay.send(Outgoing.later(after: after)) }
+        hangUp()
+    }
+
     func startTest() {
         guard phase == .none else { return }
         isTest = true

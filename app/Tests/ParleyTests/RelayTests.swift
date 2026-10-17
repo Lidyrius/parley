@@ -27,6 +27,12 @@ final class RelayLinkTests: XCTestCase {
         XCTAssertEqual(RelayLink.encode("aZ09-._~ /?#&=+%:"), "aZ09-._~%20%2F%3F%23%26%3D%2B%25%3A")
     }
 
+    func testNotNowPutsTheCallOff() {
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"later","after":60}"#), .later(60))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"later","after":3}"#), .later(10))      // clamped
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"later"}"#), .later(nil))               // Sir calls back
+    }
+
     func testNormalize() {
         XCTAssertEqual(RelayLink.normalize("  https://r.example.dev//\n"), "https://r.example.dev")
         XCTAssertEqual(RelayLink.normalize("r.example.dev"), "https://r.example.dev")

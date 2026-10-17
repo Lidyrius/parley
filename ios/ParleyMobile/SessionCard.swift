@@ -11,6 +11,8 @@ struct SessionCard: View {
     @Binding var isExpanded: Bool
     let onResume: () -> Void
     var onOpen: () -> Void = {}
+    /// Its call was put off: "Rückrufen" / "Jetzt anrufen" calls Parley.
+    var onCallBack: () -> Void = {}
     @State private var resumeTaps = 0
     @ScaledMetric(relativeTo: .headline) private var ringSize: CGFloat = 40
 
@@ -21,7 +23,11 @@ struct SessionCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 header(at)
                 if isExpanded { details(at).transition(.opacity.combined(with: .move(edge: .top))) }
-                if session.canResume { resumeButton }
+                if let cb = session.callback {
+                    callBack(cb, at: at)
+                } else if session.canResume {
+                    resumeButton
+                }
             }
         }
         .padding(14)
@@ -111,6 +117,24 @@ struct SessionCard: View {
             }
         }
         .font(.footnote)
+    }
+
+    /// A put-off call: waiting for your call back (0), or Parley rings again soon.
+    private func callBack(_ cb: Double, at: Double) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(cb == 0 ? "wartet auf deinen Rückruf" : "ruft dich in \(Fmt.clock(max(0, cb - at))) an")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(SessionState.speaking.ink)
+                .monospacedDigit()
+            Button(action: onCallBack) {
+                Label(cb == 0 ? "Rückrufen" : "Jetzt anrufen", systemImage: "phone.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.onAccent)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.claude)
+        }
     }
 
     private var resumeButton: some View {

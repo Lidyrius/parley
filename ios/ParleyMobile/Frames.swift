@@ -30,6 +30,7 @@ struct Session: Identifiable, Equatable, Sendable {
     var state: SessionState = .idle
     var since: Double = 0
     var until: Double?              // waiting: when the pause runs out
+    var callback: Double?           // its call was put off: Parley rings at (ms), 0 = waits for your call back
     var voice = false               // holds Parley's voice right now
     var resumable: Bool?
     var tasks: [BackgroundTask] = []
@@ -230,6 +231,10 @@ enum Outgoing {
     }
     static func image(id: String, key: String) -> String { encode(["t": .s("image"), "id": .s(id), "key": .s(key)]) }
     static func say(id: String, text: String) -> String { encode(["t": .s("say"), "id": .s(id), "text": .s(text)]) }
+    /// Can't talk now (on the ringing screen): ring again in `after` s, or nil = I'll call back.
+    static func later(after: Int?) -> String {
+        after.map { encode(["t": .s("later"), "after": .i($0)]) } ?? encode(["t": .s("later")])
+    }
 
     private enum Value: Encodable {
         case s(String), b(Bool), i(Int)
@@ -292,7 +297,7 @@ extension Stats: Decodable {
 }
 
 extension Session: Decodable {
-    private enum K: String, CodingKey { case id, label, project, state, since, until, voice, resumable, tasks, host, stats }
+    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)  // the one field a tile cannot do without
@@ -301,6 +306,7 @@ extension Session: Decodable {
         state = (c.lenient(.state) as String?).flatMap(SessionState.init(rawValue:)) ?? .idle
         since = c.lenient(.since) ?? 0
         until = c.lenient(.until)
+        callback = c.lenient(.callback)
         voice = c.lenient(.voice) ?? false
         resumable = c.lenient(.resumable)
         tasks = (c.lenient(.tasks) as Lossy<BackgroundTask>?)?.items ?? []

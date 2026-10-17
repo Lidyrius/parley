@@ -13,7 +13,10 @@ public sealed class TurnPipeline
     public volatile bool Muted;
     // Set once at startup. Ring: Unterwegs-Modus — ring the phone for this label and wait for
     // the call (true = connected). Route: a wake utterance → delivered; returns the line to confirm with.
-    public Func<string, Task<bool>>? Ring;
+    public Func<string, Task<RingOutcome>>? Ring;
+    // The phone's tile for a session whose call was put off (see Sessions.SetCallback).
+    public Action<string, DateTime?>? SetCallback;
+    private static readonly TimeSpan CallBackWait = TimeSpan.FromMinutes(30);   // "Ich rufe zurück"
     public Func<string, Config, Task<string>>? Route;
     private readonly MicCapture _mic = new();
     private readonly Func<int> _queuedTurns;
@@ -181,7 +184,45 @@ public sealed class TurnPipeline
 
         // Unterwegs-Modus (docs/IPHONE.md, v2): no call yet → ring the phone and wait for it
         // (≤ 45 s) while the synthesis runs; unanswered, the turn plays on the speaker.
-        if (Ring is not null) await Ring(turn.SpokenLabel);
+        // "Not now" on the phone puts the line off: ring again in a minute or five, or wait for
+        // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
+        var calledBack = false;
+        if (Ring is not null)
+        {
+            var outcome = await Ring(turn.SpokenLabel);
+            var session = Server.SessionKey(turn);
+            while (outcome.Kind == RingKind.Later)
+            {
+                if (outcome.After is double after)
+                {
+                    var at = DateTime.UtcNow.AddSeconds(after);
+                    SetCallback?.Invoke(session, at);
+                    while (DateTime.UtcNow < at && !PhoneCall.Active) await Task.Delay(250);
+                    SetCallback?.Invoke(session, null);
+                    outcome = PhoneCall.Active ? new RingOutcome(RingKind.Answered) : await Ring(turn.SpokenLabel);
+                }
+                else
+                {
+                    SetCallback?.Invoke(session, DateTime.MaxValue);
+                    calledBack = await PhoneCall.WaitForCall(CallBackWait);
+                    SetCallback?.Invoke(session, null);
+                    Log.Write(calledBack ? "phone: Sir called back" : "phone: no call back in 30 min");
+                    outcome = new RingOutcome(calledBack ? RingKind.Answered : RingKind.Missed);
+                }
+                // Put off and still not reached: the line waits as a notification, not on the speaker.
+                if (outcome.Kind == RingKind.Missed)
+                {
+                    Log.Write($"put off, not reached → notification for {turn.SpokenLabel}");
+                    _ = Apns.SendAlert($"Parley · {turn.SpokenLabel}", turn.Speak, session);
+                    return ("", turn.WantsListen, 0, "");
+                }
+            }
+        }
+        if (calledBack)
+        {
+            var de = config.Language.StartsWith("de", StringComparison.OrdinalIgnoreCase);
+            await SpeakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config);
+        }
 
         // Wait out the previous turn's background ack so audio never overlaps.
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }

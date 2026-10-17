@@ -358,6 +358,26 @@ public static class PhoneCall
         return relay is not null && relay.Connected && await relay.SendTextAsync(RelayFrame.Ring(label));
     }
 
+    // The ringing phone's "not now": ring again in n s, or (null) Sir calls back himself.
+    private static (bool Set, double? After) _later;
+
+    public static void SetLater(double? after)
+    {
+        lock (Gate) _later = (true, after);
+        Log.Write(after is double s ? $"phone: not now — ring again in {(int)s} s" : "phone: not now — Sir calls back");
+    }
+
+    /// Takes the "not now", once.
+    public static bool TakeLater(out double? after)
+    {
+        lock (Gate)
+        {
+            (var set, after) = _later;
+            _later = (false, null);
+            return set;
+        }
+    }
+
     // Polls for the call (every 200 ms) until it is connected or `limit` has passed.
     public static async Task<bool> WaitForCall(TimeSpan limit)
     {
@@ -458,21 +478,36 @@ public static class Ringer
 {
     public static readonly TimeSpan AnswerWait = TimeSpan.FromSeconds(45);
 
-    // true = in a call now.
-    public static async Task<bool> Ring(string label)
+    // Answered = in a call now; Later = the phone's "not now" (After: ring again in n s, null = Sir calls back).
+    public static async Task<RingOutcome> Ring(string label)
     {
-        if (PhoneCall.Active) return true;
-        if (!PhoneCall.Away || PhoneCall.Silent) return false;   // Stumm: the turn sends a notification instead
+        if (PhoneCall.Active) return new RingOutcome(RingKind.Answered);
+        if (!PhoneCall.Away || PhoneCall.Silent) return new RingOutcome(RingKind.Missed);   // Stumm: the turn sends a notification instead
+        PhoneCall.TakeLater(out _);   // an old "not now" is not this ring's
         var pushed = await Apns.SendVoip(label);
         var rang = await PhoneCall.SendRing(label);
         if (!pushed && !rang)
         {
             Log.Write("ring: neither the push nor the relay reached the phone → speaker");
-            return false;
+            return new RingOutcome(RingKind.Missed);
         }
         Log.Write($"ring: {label} (push {(pushed ? "sent" : "not sent")}, relay {(rang ? "sent" : "not sent")}) — waiting up to {(int)AnswerWait.TotalSeconds} s");
-        var answered = await PhoneCall.WaitForCall(AnswerWait);
-        Log.Write(answered ? "ring: answered → voiced over the phone" : "ring: no answer → speaker");
-        return answered;
+        var until = DateTime.UtcNow + AnswerWait;
+        while (!PhoneCall.Active)
+        {
+            if (PhoneCall.TakeLater(out var after)) return new RingOutcome(RingKind.Later, after);
+            if (DateTime.UtcNow >= until)
+            {
+                Log.Write("ring: no answer → speaker");
+                return new RingOutcome(RingKind.Missed);
+            }
+            await Task.Delay(100);
+        }
+        Log.Write("ring: answered → voiced over the phone");
+        return new RingOutcome(RingKind.Answered);
     }
 }
+
+public enum RingKind { Answered, Missed, Later }
+
+public sealed record RingOutcome(RingKind Kind, double? After = null);

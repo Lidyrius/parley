@@ -23,6 +23,7 @@ public sealed class SessionRegistry
         public DateTime HookAt;           // last /turn, /wake or turn reply
         public bool Queued;               // a /turn (or resume dialog) waits at the gate
         public DateTime? WaitUntil;       // "Warte X Minuten": the hook sleeps until then
+        public DateTime? CallbackAt;      // its call was put off: rings again then (MaxValue = Sir calls back)
         public bool Parked;               // answered with park; its hook polls /wake
         public DateTime? WakeAt;          // last /wake poll
         public DateTime? InjectedAt;      // a reply was fed back → the agent is working on it
@@ -301,6 +302,13 @@ public sealed class SessionRegistry
     }
 
     // Any session besides `id` that isn't stopped → the turn gets announced.
+    /// The phone's tile for this session: Parley rings again at `at`, or (MaxValue) waits for Sir's
+    /// call back; null clears it.
+    public void SetCallback(string id, DateTime? at)
+    {
+        lock (_gate) if (_entries.TryGetValue(id, out var e)) e.CallbackAt = at;
+    }
+
     public bool OthersAlive(string id)
     {
         lock (_gate)
@@ -337,6 +345,7 @@ public sealed class SessionRegistry
                     state = e.State,
                     since = Ms(e.Since),
                     until = e.State == "waiting" && e.WaitUntil is { } u ? Ms(u) : (long?)null,
+                    callback = e.CallbackAt is { } cb ? (cb == DateTime.MaxValue ? 0 : Ms(cb)) : (long?)null,
                     voice = e.Id == active,
                     resumable = Resumable(e),
                     tasks = e.Tasks,

@@ -106,6 +106,16 @@ struct CallView: View {
                 .frame(minHeight: 72, alignment: .top)
                 .padding(.top, 18)
                 Spacer(minLength: 20)
+                if call.phase == .ringing {
+                    // Can't talk now: put it off a little, or call back later yourself.
+                    HStack(spacing: 8) {
+                        laterButton("In 1 Min.", after: 60, call)
+                        laterButton("In 5 Min.", after: 300, call)
+                        laterButton("Ich rufe zurück", after: nil, call)
+                    }
+                    .padding(.bottom, 22)
+                    .transition(.opacity)
+                }
                 controls(call)
             }
             .padding(.horizontal, 24)
@@ -278,6 +288,20 @@ struct CallView: View {
     }
 
     @ViewBuilder
+    private func laterButton(_ title: String, after: Int?, _ call: CallController) -> some View {
+        Button { call.later(after) } label: {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Capsule().fill(Theme.card))
+                .overlay(Capsule().strokeBorder(Theme.stroke))
+        }
+        .tint(.primary)
+    }
+
     /// Answering morphs the buttons, as on the system call screen: "Annehmen" becomes "Auflegen",
     /// "Ablehnen" becomes "Stumm", and "Lautsprecher" grows in between.
     private func controls(_ call: CallController) -> some View {

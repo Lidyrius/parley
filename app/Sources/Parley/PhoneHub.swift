@@ -33,6 +33,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     private var active = false
     private var generation = 0
     private var desired: PhoneAudioState = .idle
+    private var later: TimeInterval?? = nil       // the ringing phone's "not now" (see takeLater)
     private var sentState: PhoneAudioState?
     private var rate = PhoneAudioFormat.sampleRate   // the call's down rate
     private var speaker: String?   // the session Parley voices now — sent with every `audio` frame
@@ -126,6 +127,9 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             store.set(token, .phoneAlertToken)
             store.set(env, .phonePushEnv)
             log("phone: notification push token stored (\(env))")
+        case .later(let after):
+            lock.withLock { later = .some(after) }
+            log(after.map { "phone: not now — ring again in \(Int($0)) s" } ?? "phone: not now — Sir calls back")
         case .history, .image, .say:
             onChat?(event)
         case .resume:
@@ -143,6 +147,12 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     func ring(label: String) {
         let send = lock.withLock { sendText }
         send?(RelayFrame.ring(label: label))
+    }
+
+    /// The ringing phone's "not now", once: .some(seconds) = ring again then, .some(nil) = Sir
+    /// calls back himself, nil = nothing said.
+    func takeLater() -> TimeInterval?? {
+        lock.withLock { defer { later = nil }; return later }
     }
 
     // Waits up to `timeout` for a call to connect; true as soon as one is.

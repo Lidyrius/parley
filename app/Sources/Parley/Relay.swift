@@ -143,6 +143,9 @@ enum RelayFrame {
         case "image":
             guard let id = f["id"] as? String, let key = f["key"] as? String, !id.isEmpty, !key.isEmpty else { return nil }
             return .image(id: id, key: key)
+        case "later":
+            let after = (f["after"] as? NSNumber)?.doubleValue ?? 0
+            return .later(after > 0 ? min(3600, max(10, after)) : nil)
         case "say":
             guard let id = f["id"] as? String, let text = f["text"] as? String, !id.isEmpty,
                   case let t = text.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, t.count <= 8000 else { return nil }
@@ -189,6 +192,7 @@ enum PhoneEvent: Equatable, Sendable {
     case history(id: String, before: String?) // send that session's newest history, or the page before an item
     case image(id: String, key: String)       // send one image of it
     case say(id: String, text: String)        // a typed message for that session
+    case later(TimeInterval?)                 // can't talk now: ring again in n s, or nil = Sir calls back
 }
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never

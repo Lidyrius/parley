@@ -98,7 +98,7 @@ struct OverviewView: View {
                             ForEach(row.items) { s in
                                 SessionCard(session: s, skew: skew, canResume: canSend, fillsRow: !opened,
                                             isExpanded: binding(s.id), onResume: { resume(s.id) },
-                                            onOpen: { model.open(session: s.id) })
+                                            onOpen: { model.open(session: s.id) }, onCallBack: { model.callParley() })
                             }
                             ForEach(row.items.count..<columns, id: \.self) { _ in
                                 Color.clear.gridCellUnsizedAxes(.vertical)
