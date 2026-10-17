@@ -263,6 +263,8 @@ final class AppModel {
             // A typed message shows as sent once the session has it (typed or as a reply).
             let seen = Set(items.filter { $0.kind == .user || $0.kind == .voice }.compactMap(\.text))
             pending[id]?.removeAll { seen.contains($0) }
+        case .frame(.caption(let c)):
+            call.captionReceived(c)
         case .frame(.image(let key, let data)):
             if let data, let image = UIImage(data: data) { images[key] = image }
         case .frame(.ring(let label)):

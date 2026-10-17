@@ -64,3 +64,13 @@ extension Demo {
         ChatItem(id: "d12", kind: .assistant, text: "PDF kommt dazu, über `PDFKit`, ohne neue Abhängigkeit."),
     ]
 }
+
+extension Demo {
+    /// A spoken line with word times, for the call screen's captions.
+    static let caption: Caption = {
+        let words = "Der Export ist eingebaut, Sir. Soll ich auch PDF anbieten, oder lieber erst testen?".split(separator: " ").map(String.init)
+        let starts = [0.2, 0.45, 0.85, 1.05, 1.9, 2.6, 2.85, 3.0, 3.25, 3.6, 4.25, 4.5, 4.8, 5.1]
+        return Caption(words: words, starts: starts, end: 5.6)
+    }()
+}
+

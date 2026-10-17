@@ -68,8 +68,14 @@ struct CallView: View {
                     .frame(height: 96)
                     .padding(.horizontal, 8)
                     .accessibilityHidden(true)
-                caption(call, look: look, line: voiced?.stats?.lastLine)
-                    .frame(minHeight: 72, alignment: .top)
+                Group {
+                    if look.mood == .speaking, let c = call.caption, !call.muted {
+                        LiveCaption(call: call, caption: c)
+                    } else {
+                        caption(call, look: look, line: voiced?.stats?.lastLine)
+                    }
+                }
+                .frame(minHeight: 72, alignment: .top)
                     .padding(.top, 18)
                 Spacer(minLength: 20)
                 controls(call)
@@ -308,3 +314,38 @@ struct Waveform: View {
     let model = AppModel(arguments: ["-demo", "-demoCall", "idle"])
     return CallView().environment(model)
 }
+
+/// Live captions: the sentence being spoken, its words lighting up as they are said — timed
+/// against the frames the phone actually played (CallController.captionTime).
+private struct LiveCaption: View {
+    let call: CallController
+    let caption: Caption
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+            let spoken = caption.index(at: call.captionTime(at: context.date))
+            let chunk = caption.chunks.first { $0.contains(max(spoken, 0)) } ?? 0..<0
+            Text(Self.line(caption, chunk: chunk, spoken: spoken))
+                .font(.title3.weight(.medium))
+                .multilineTextAlignment(.center)
+                .lineLimit(4)
+                .frame(maxWidth: 360)
+                .id(chunk.lowerBound)
+                .transition(.opacity)
+                .animation(.easeOut(duration: 0.25), value: chunk.lowerBound)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(caption.words.joined(separator: " "))
+    }
+
+    static func line(_ c: Caption, chunk: Range<Int>, spoken: Int) -> AttributedString {
+        var out = AttributedString()
+        for k in chunk {
+            var w = AttributedString((k == chunk.lowerBound ? "" : " ") + c.words[k])
+            w.foregroundColor = k <= spoken ? Color.primary : Color.secondary.opacity(0.45)
+            out += w
+        }
+        return out
+    }
+}
+

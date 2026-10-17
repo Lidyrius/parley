@@ -17,6 +17,9 @@ final class CallAudio {
     private var generation = 0
     private var flushTimer: Task<Void, Never>?
     private(set) var isRunning = false
+    /// The call's frame clock for captions: frames received and frames played (20 ms each).
+    private(set) var received = 0
+    private(set) var played = 0
     /// False where voice processing is unavailable (e.g. the simulator): plain I/O, no AEC.
     private(set) var echoCancellation = false
     private(set) var hasMicrophone = false
@@ -102,6 +105,7 @@ final class CallAudio {
     /// One received wire frame (20 ms: 960 bytes at 24 kHz, or 640 at 16 kHz).
     func play(_ frame: Data) {
         guard isRunning else { return }
+        received += 1
         for f in jitter.push(frame) { schedule(f) }
         if !jitter.waiting.isEmpty, !jitter.isPlaying, flushTimer == nil {
             // A short burst below the prebuffer still has to come out.
@@ -130,6 +134,7 @@ final class CallAudio {
 
     private func didPlay(generation: Int, level: Float) {
         guard generation == self.generation else { return }
+        played += 1
         jitter.played()
         meter.out = level
     }

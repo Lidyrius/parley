@@ -30,6 +30,10 @@ final class CallController {
     private(set) var label: String?
     private(set) var muted = false
     private(set) var speaker = false
+    /// Live captions of the line being spoken (v3), timed against the frames actually played.
+    private(set) var caption: Caption?
+    @ObservationIgnored private var captionBase = 0
+    @ObservationIgnored private var captionAt = Date.now
     /// "Hey Parley" was heard and sent; cleared when the host leaves idle.
     private(set) var wakeSent = false
     /// The call screen is up (it can be minimised to the overview during a call).
@@ -206,6 +210,19 @@ final class CallController {
         speaker = on
         guard !isDemo else { return }
         try? AVAudioSession.sharedInstance().overrideOutputAudioPort(on ? .speaker : .none)
+    }
+
+    /// A `caption` frame: it arrives just before its line's first audio frame.
+    func captionReceived(_ c: Caption) {
+        caption = c
+        captionBase = audio.received
+        captionAt = .now
+    }
+
+    /// Seconds of the caption's line played so far (demo: wall clock).
+    func captionTime(at date: Date) -> Double {
+        isDemo ? date.timeIntervalSince(captionAt).truncatingRemainder(dividingBy: (caption?.end ?? 1) + 1.5)
+               : Double(max(0, audio.played - captionBase)) * PCM.frameDuration
     }
 
     /// A binary frame from the host: Parley's voice.
@@ -399,6 +416,7 @@ final class CallController {
             phase = .active(since: .now.addingTimeInterval(-167))
             hostAudio = HostAudio(rawValue: state.rawValue) ?? .idle
             wakeSent = state == .listening
+            if state == .speaking { captionReceived(Demo.caption) }
         }
         showsScreen = true
     }

@@ -198,4 +198,16 @@ struct FrameTests {
         #expect(AppModel.merge(loaded, page: items("c", "d", "e"), before: nil).map(\.id) == ["a", "b", "c", "d", "e"])   // newest: tail replaced
         #expect(AppModel.merge(loaded, page: items("q", "r"), before: nil).map(\.id) == ["q", "r"])                       // no overlap
     }
+
+    @Test func captionFrameAndSubtitleLines() throws {
+        let f = Frame.decode(#"{"t":"caption","words":["Hallo","Sir.","Alles","fertig."],"at":[0.1,0.5,1.2,1.5],"end":2.0}"#)
+        guard case .caption(let c) = f else { Issue.record("no caption"); return }
+        #expect(c.index(at: 0) == -1 && c.index(at: 0.6) == 1 && c.index(at: 9) == 3)
+        #expect(c.chunks == [0..<2, 2..<4])
+        #expect(Frame.decode(#"{"t":"caption","words":["a"],"at":[],"end":1}"#) == .other("caption"))
+        let long = Caption(words: (1...15).map { "w\($0)" }, starts: (0..<15).map(Double.init), end: 15)
+        #expect(long.chunks == [0..<12, 12..<15])
+        #expect(Demo.caption.words.count == Demo.caption.starts.count)
+    }
 }
+

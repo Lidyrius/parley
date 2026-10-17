@@ -56,14 +56,17 @@ public static class AudioOut
     }
 
     /// Play raw 16-bit LE mono PCM at `sampleRate`, blocking until done.
+    /// `caption`: the line's text — in a call the phone shows it as live captions (v3).
     public static async Task PlayPcm(byte[] pcm, int sampleRate = GoogleTts.SampleRate,
-                                     CancellationToken cancellationToken = default)
+                                     CancellationToken cancellationToken = default, string? caption = null)
     {
         if (pcm.Length < 2) return;
         // In an iPhone call (docs/IPHONE.md, v2) all of Parley's audio goes to the phone; if the
         // call drops midway, the rest plays here.
         if (PhoneCall.Active)
         {
+            if (caption is not null && Captions.Timings(caption, pcm, sampleRate) is { } timed)
+                await PhoneCall.Reply(Captions.Frame(timed));   // just before the line's first frame
             var rest = await PhoneCall.PlayAsync(pcm, sampleRate, cancellationToken);
             if (rest is null || rest.Length < 2) return;
             Log.Write("phone: call gone mid-playback → the rest on the speaker");

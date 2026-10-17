@@ -654,7 +654,16 @@ final class AppController: ObservableObject {
     private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil, beep: Bool = true) async {
         if phone.callActive {
             let voice = PhoneVoice(link: phone, rate: config.speakingRate)
-            await synthesize(text, config: config, prefetched: prefetched) { voice.enqueue($0) }
+            var captioned = false
+            await synthesize(text, config: config, prefetched: prefetched) { pcm in
+                // Live captions: word times from the (whole, Google) line, just before its first frame.
+                if !captioned, config.useGoogle,
+                   let t = Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate) {
+                    phone.reply(Captions.frame(t))
+                }
+                captioned = true
+                voice.enqueue(pcm)
+            }
             guard let rest = await voice.finish(beep: beep) else { return }
             Log.write("phone: call ended while speaking → the rest on the Mac's speaker")
             await speakLocal(text, config: config, prefetched: rest, beep: beep)
@@ -792,6 +801,9 @@ final class AppController: ObservableObject {
         guard config.useGoogle, let pcm = await GoogleTTS.synth(text, config: config) else { return }
         try? await Task.sleep(nanoseconds: 300_000_000)
         await waitForHiFiOutput()
+        if phone.callActive, let t = Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate) {
+            phone.reply(Captions.frame(t))
+        }
         await playClip(pcm, rate: config.speakingRate)
     }
 

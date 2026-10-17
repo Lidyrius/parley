@@ -158,6 +158,7 @@ the call with a notification; the session then waits for a typed reply.
 | `say`     | phone → host   | `{"id":"<session>","text":"…"}` delivered like a routed instruction: at once to a session that waits (parked / mod), else at its next turn. |
 | `silent`  | phone → host   | `{"on":true|false}` **Stumm**. With `away` on, a turn sends a notification push instead of ringing and parks the session (listen turns) until a `say` arrives. |
 | `call`    | phone → host   | `{"state":"start","down":24000}` asks for Parley's voice at 24 kHz (the TTS's own rate): the host then sends 960-byte frames (20 ms) instead of 640-byte 16 kHz ones. Without `down`, 16 kHz as before; the phone plays either (by frame size). The mic stays 16 kHz. Host lead ~0.25 s, phone prebuffer 100 ms. |
+| `caption` | host → phone   | `{"words":[…],"at":[<s>…],"end":<s>}` live captions for the line whose audio follows: word start times read off the synthesized audio (pauses ≥ 120 ms matched to the punctuation, words between by length; speaking rate applied). Sent just before the line's first frame; the phone times the words against the frames it actually played. |
 | `push`    | phone → host   | `{"token","env","kind":"alert"}` the notification push token (topic `de.developaway.parley.mobile`); without `kind` it is the VoIP token as before. |
 
 Notification push payload: `{"aps":{"alert":{"title":"Parley · <label>","body":"<spoken line>"},"sound":"default","thread-id":"<session>"},"session":"<session>"}` — tapping it opens that session.

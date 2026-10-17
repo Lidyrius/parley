@@ -71,6 +71,33 @@ struct ChatItem: Identifiable, Equatable, Sendable {
     var del: Int?                   //       and removed
 }
 
+/// Live captions for one spoken line (`caption` frame, v3): its words and when each starts,
+/// in seconds from the line's first audio frame.
+struct Caption: Equatable, Sendable {
+    var words: [String]
+    var starts: [Double]
+    var end: Double
+
+    /// The word being spoken `t` seconds in (-1 before the first).
+    func index(at t: Double) -> Int { (starts.lastIndex { $0 <= t }) ?? -1 }
+
+    /// Subtitle lines: up to a sentence end, or a comma once there are 7 words, at most 12.
+    var chunks: [Range<Int>] {
+        var out: [Range<Int>] = []
+        var from = 0
+        for (i, w) in words.enumerated() {
+            let n = i + 1 - from
+            let last = w.last
+            if last.map({ ".!?…".contains($0) }) == true || (n >= 7 && last.map({ ",;:–—".contains($0) }) == true) || n >= 12 {
+                out.append(from..<(i + 1))
+                from = i + 1
+            }
+        }
+        if from < words.count { out.append(from..<words.count) }
+        return out
+    }
+}
+
 /// What the host is doing with the call audio (`audio` frame, v2).
 enum HostAudio: String, Sendable, CaseIterable {
     case speaking, listening, idle
@@ -89,6 +116,8 @@ enum Frame: Equatable, Sendable {
     case history(id: String, items: [ChatItem], before: String?, more: Bool)
     /// v3: one image of a history (JPEG); nil = the host could not find it.
     case image(key: String, data: Data?)
+    /// v3: live captions for the line about to play.
+    case caption(Caption)
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
 
     /// nil for anything that is not a JSON message with a `t` (e.g. the relay's `pong`).
@@ -106,6 +135,10 @@ enum Frame: Equatable, Sendable {
         case "history":
             guard let h = try? decoder.decode(HistoryWire.self, from: data) else { return .other(head.t) }
             return .history(id: h.id, items: h.items.items, before: h.before, more: h.more ?? false)
+        case "caption":
+            guard let w = try? decoder.decode(CaptionWire.self, from: data), w.words.count == w.at.count, !w.words.isEmpty
+            else { return .other(head.t) }
+            return .caption(Caption(words: w.words, starts: w.at, end: w.end))
         case "image":
             guard let w = try? decoder.decode(ImageWire.self, from: data) else { return .other(head.t) }
             return .image(key: w.key, data: w.data.flatMap { Data(base64Encoded: $0) })
@@ -121,6 +154,7 @@ enum Frame: Equatable, Sendable {
 
     private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
+    private struct CaptionWire: Decodable { let words: [String]; let at: [Double]; let end: Double }
 
     private struct Head: Decodable {
         let t: String

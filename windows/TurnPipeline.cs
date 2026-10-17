@@ -134,7 +134,7 @@ public sealed class TurnPipeline
             return ("", false, 0, "");
         }
         await PauseMediaIfPlaying();
-        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate));
+        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak);
         var (_, text) = await ListenOnce(config);
         ScheduleResume();
         Log.Write($"permission answer chars={text.Length}");
@@ -212,7 +212,7 @@ public sealed class TurnPipeline
         if (pcm is not null)
         {
             Log.Write($"speak start ({pcm.Length} bytes, rate {config.SpeakingRate:0.00})");
-            await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate));
+            await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak);
         }
         else Log.Write("no TTS audio (missing key or synth failed)");
 
@@ -381,7 +381,7 @@ public sealed class TurnPipeline
         // Settle after the mic teardown + wait for hi-fi output, else it renders silent.
         await Task.Delay(300);
         await AudioOut.WaitForHiFiOutput();
-        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate));
+        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: text);
     }
 
     // Fuzzy-match a spoken project name to a parked session (either contains the other).
