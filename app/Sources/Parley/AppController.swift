@@ -26,6 +26,15 @@ final class AppController: ObservableObject {
     @Published var relayConnected: Bool?   // iPhone relay: nil = not configured, else reachable
     @Published var phoneCall = false       // the iPhone's call is connected: all audio goes through it
     @Published var phoneAway = false       // Unterwegs-Modus: updates ring the phone
+    // The Mac locked for a minute counts as Unterwegs (menu: "Unterwegs, wenn der Mac gesperrt ist").
+    @Published var autoAwayOnLock = Keychain.get(.autoAwayOnLock) == "1" {
+        didSet {
+            Keychain.set(autoAwayOnLock ? "1" : "", for: .autoAwayOnLock)
+            phone.setLockedAway(autoAwayOnLock && macLocked)
+        }
+    }
+    private var macLocked = false
+    private var lockTimer: Task<Void, Never>?
     @Published var pushKeyId: String?      // APNs key chosen ("Push-Schlüssel wählen…")
 
     // Muted when the user toggled it OR the Mac is in a Focus / Do-Not-Disturb mode.
@@ -144,6 +153,24 @@ final class AppController: ObservableObject {
         }
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickWatchdog() }
+        }
+        let center = DistributedNotificationCenter.default()
+        for (name, locked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
+            center.addObserver(forName: .init(name), object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.screenLocked(locked) }
+            }
+        }
+    }
+
+    // Locked → after a minute (not for a quick lock) updates ring the phone; unlocked → back at once.
+    private func screenLocked(_ locked: Bool) {
+        macLocked = locked
+        lockTimer?.cancel()
+        guard locked else { phone.setLockedAway(false); return }
+        lockTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard let self, !Task.isCancelled, macLocked else { return }
+            phone.setLockedAway(autoAwayOnLock)
         }
     }
 

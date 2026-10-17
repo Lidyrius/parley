@@ -63,7 +63,21 @@ final class PhoneHub: CallLink, @unchecked Sendable {
 
     var callActive: Bool { lock.withLock { active } }
     var downRate: Int { lock.withLock { rate } }
-    var away: Bool { store.get(.phoneAway) == "1" }
+    // Unterwegs: chosen on the phone, or the Mac locked for a minute (with that setting on).
+    var away: Bool { chosenAway || lock.withLock { lockedAway } }
+    var chosenAway: Bool { store.get(.phoneAway) == "1" }
+    private var lockedAway = false
+
+    func setLockedAway(_ on: Bool) {
+        let changed = lock.withLock { () -> Bool in
+            guard lockedAway != on else { return false }
+            lockedAway = on
+            return true
+        }
+        guard changed else { return }
+        log(on ? "Mac gesperrt → Unterwegs" : "Mac entsperrt → zurück am Mac")
+        onChange?()
+    }
     var silent: Bool { store.get(.phoneSilent) == "1" }
 
     // Where a notification push goes; nil until the phone sent its alert token.
@@ -124,7 +138,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             store.set(env, .phonePushEnv)
             log("phone: VoIP push token stored (\(env))")
         case .away(let on):
-            guard away != on else { return }
+            guard chosenAway != on else { return }
             store.set(on ? "1" : "0", .phoneAway)
             log("phone: Unterwegs-Modus \(on ? "an" : "aus")")
             onChange?()

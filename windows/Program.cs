@@ -77,6 +77,19 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.Add(_relayStatus);
         menu.Items.Add(_callStatus);
         menu.Items.Add(_awayStatus);
+        // The PC locked for a minute counts as Unterwegs (off by default: nothing rings at night unasked).
+        var lockAway = new ToolStripMenuItem("Unterwegs, wenn der PC gesperrt ist") { CheckOnClick = true, Checked = Config.Load().AutoAwayOnLock };
+        lockAway.CheckedChanged += (_, _) =>
+        {
+            Config.Merge(new Dictionary<string, string> { ["autoAwayOnLock"] = lockAway.Checked ? "1" : "0" });
+            PhoneCall.SetLockedAway(lockAway.Checked && _pcLocked);
+        };
+        menu.Items.Add(lockAway);
+        Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) =>
+        {
+            if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionLock) ScreenLocked(true);
+            else if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionUnlock) ScreenLocked(false);
+        };
         // The APNs key that lets Parley ring the phone (Unterwegs-Modus).
         var pushKey = new ToolStripMenuItem("Push-Schlüssel wählen…");
         pushKey.Click += (_, _) => ChoosePushKey();
@@ -133,6 +146,24 @@ internal sealed class TrayApp : ApplicationContext
         StartRelay();
         _activityTimer = new System.Threading.Timer(_ => TickLiveActivity(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
         _watchdogTimer = new System.Threading.Timer(_ => TickWatchdog(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    // ---- Unterwegs when the PC is locked ------------------------------------------------
+
+    private bool _pcLocked;
+    private CancellationTokenSource? _lockWait;
+
+    // Locked → after a minute (not for a quick lock) updates ring the phone; unlocked → back at once.
+    private void ScreenLocked(bool locked)
+    {
+        _pcLocked = locked;
+        _lockWait?.Cancel();
+        if (!locked) { PhoneCall.SetLockedAway(false); return; }
+        var cts = _lockWait = new CancellationTokenSource();
+        _ = Task.Delay(TimeSpan.FromMinutes(1), cts.Token).ContinueWith(t =>
+        {
+            if (!t.IsCanceled && _pcLocked) PhoneCall.SetLockedAway(Config.Load().AutoAwayOnLock);
+        }, TaskScheduler.Default);
     }
 
     // ---- the Wachhund (Watchdog.cs) ---------------------------------------------------

@@ -144,9 +144,22 @@ public static class PhoneCall
     private static bool ActiveLocked(DateTime now) =>
         _call && _relay?.Connected == true && now - _audioAt < AudioSilentLimit;
 
+    // Unterwegs: chosen on the phone, or the PC locked for a minute (with that setting on).
     public static bool Away
     {
-        get { lock (Gate) return _away; }
+        get { lock (Gate) return _away || _lockedAway; }
+    }
+
+    private static bool _lockedAway;
+
+    public static void SetLockedAway(bool on)
+    {
+        lock (Gate)
+        {
+            if (_lockedAway == on) return;
+            _lockedAway = on;
+        }
+        Log.Write(on ? "PC gesperrt → Unterwegs" : "PC entsperrt → zurück am PC");
     }
 
     public static int DownRate

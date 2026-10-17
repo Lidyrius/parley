@@ -71,6 +71,7 @@ struct MenuBarView: View {
                     Label("Unterwegs-Modus an", systemImage: "car.fill")
                         .font(.caption).foregroundStyle(.orange)
                 }
+                Toggle("Unterwegs, wenn der Mac gesperrt ist", isOn: $controller.autoAwayOnLock)
                 Button("Push-Schlüssel wählen…") { controller.choosePushKey() }
                 if let key = controller.pushKeyId {
                     Text("Push-Schlüssel: \(key)").font(.caption2).foregroundStyle(.secondary)

@@ -230,4 +230,18 @@ final class WakeRouterTests: XCTestCase {
         XCTAssertTrue(messages[0]["content"]!.contains("\"Zentrale\""))
         XCTAssertEqual(messages[1]["content"], "hallo")
     }
+
+    // The Mac locked (with the setting on) counts as Unterwegs; the phone's own choice stays its own.
+    func testALockedMacCountsAsAway() {
+        let hub = PhoneHub(store: .memory(), log: { _ in })
+        XCTAssertFalse(hub.away)
+        hub.setLockedAway(true)
+        XCTAssertTrue(hub.away)
+        XCTAssertFalse(hub.chosenAway)
+        hub.handle(.away(true))                 // chosen on the phone while locked: kept
+        hub.setLockedAway(false)
+        XCTAssertTrue(hub.away)
+        hub.handle(.away(false))
+        XCTAssertFalse(hub.away)
+    }
 }
