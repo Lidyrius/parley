@@ -129,6 +129,80 @@ enum Transcript {
         }
     }
 
+    // MARK: - past sessions (POST /past — the Zentrale looks one up to resume it)
+
+    struct Past: Codable, Equatable {
+        var id: String
+        var title: String        // the session's title, else its last prompt
+        var cwd: String
+        var lastPrompt: String?
+        var lastAt: Double       // epoch ms (file modified)
+    }
+
+    /// The newest sessions (up to `limit`) whose title, folder or last prompt contains `query`
+    /// (all of them for an empty query). Scans the `scan` most recently written transcripts.
+    static func past(query: String?, limit: Int = 10, root: URL = projects, scan: Int = 400) -> [Past] {
+        let fm = FileManager.default
+        var files: [(url: URL, at: Date)] = []
+        for dir in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+            let list = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            for f in list where f.pathExtension == "jsonl" {
+                files.append((f, (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast))
+            }
+        }
+        files.sort { $0.at > $1.at }
+        let q = query?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        var out: [Past] = []
+        for f in files.prefix(scan) {
+            guard let p = summary(f.url, at: f.at) else { continue }
+            if q.isEmpty || [p.title, p.cwd, p.lastPrompt ?? ""].contains(where: { $0.lowercased().contains(q) }) { out.append(p) }
+            if out.count >= limit { break }
+        }
+        return out
+    }
+
+    /// Title, folder and last prompt of one transcript; nil when it has no folder (not a session).
+    static func summary(_ url: URL, at: Date) -> Past? {
+        var cwd = ""
+        for line in headLines(url, bytes: 64 << 10) {
+            if let c = (json(line)?["cwd"] as? String), !c.isEmpty { cwd = c; break }
+        }
+        guard !cwd.isEmpty else { return nil }
+        var title: String?, prompt: String?
+        for line in tailLines(url, bytes: 256 << 10).reversed() where title == nil || prompt == nil {
+            guard let e = json(line) else { continue }
+            if title == nil, let t = (e["customTitle"] as? String) ?? (e["summary"] as? String), !t.isEmpty { title = t }
+            if prompt == nil, let p = e["lastPrompt"] as? String, !p.isEmpty { prompt = clip120(p) }
+        }
+        return Past(id: url.deletingPathExtension().lastPathComponent, title: title ?? prompt ?? (cwd as NSString).lastPathComponent,
+                    cwd: cwd, lastPrompt: prompt, lastAt: (at.timeIntervalSince1970 * 1000).rounded())
+    }
+
+    static func pastJSON(_ list: [Past]) -> String {
+        String(decoding: (try? JSONEncoder().encode(["sessions": list])) ?? Data("{}".utf8), as: UTF8.self)
+    }
+
+    /// The first `bytes` of the file as whole JSON lines (the last, partial one dropped).
+    static func headLines(_ url: URL, bytes: Int) -> [Data] {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? h.close() }
+        let data = (try? h.read(upToCount: bytes)) ?? Data()
+        var lines = data.split(separator: UInt8(ascii: "\n"))
+        if data.count == bytes, !lines.isEmpty { lines.removeLast() }
+        return lines.map { Data($0) }
+    }
+
+    /// A Claude Code session id, safe to put on a command line.
+    static func isSessionID(_ s: String) -> Bool {
+        (8...64).contains(s.count) && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+    }
+
+    private static func json(_ line: Data) -> [String: Any]? { (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] }
+    private static func clip120(_ s: String) -> String {
+        let one = s.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return one.count > 120 ? one.prefix(120) + "…" : one
+    }
+
     // MARK: - images
 
     /// The image `key` ("<uuid>#<n>", as in the items) as a JPEG that fits a relay frame.

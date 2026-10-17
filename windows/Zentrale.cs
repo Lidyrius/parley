@@ -223,13 +223,17 @@ public static class Zentrale
 // on a command line at all — it waits pending-by-cwd.
 public static class SessionStarter
 {
-    public static bool Start(string dir)
+    // `resume`: a past session (checked by Transcript.IsSessionId) continued with its history.
+    public static string[] ClaudeArgs(string? resume) =>
+        resume is null ? new[] { "claude", Zentrale.FirstPrompt } : new[] { "claude", "--resume", resume, Zentrale.FirstPrompt };
+
+    public static bool Start(string dir, string? resume = null)
     {
         try
         {
             var wt = new ProcessStartInfo("wt.exe") { UseShellExecute = false };
             // Through cmd /k: an npm install is claude.cmd, which Windows Terminal cannot start directly.
-            foreach (var a in new[] { "-d", dir, "cmd", "/k", "claude", Zentrale.FirstPrompt }) wt.ArgumentList.Add(a);
+            foreach (var a in new[] { "-d", dir, "cmd", "/k" }.Concat(ClaudeArgs(resume))) wt.ArgumentList.Add(a);
             Process.Start(wt)?.Dispose();
             Log.Write($"session: starting one in {dir} (Windows Terminal)");
             return true;
@@ -240,7 +244,7 @@ public static class SessionStarter
             // cmd /c start "" /D <dir> cmd /k claude /parley:voice — `start` opens the new window;
             // the empty argument is its window title.
             var cmd = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true };
-            foreach (var a in new[] { "/c", "start", "", "/D", dir, "cmd", "/k", "claude", Zentrale.FirstPrompt }) cmd.ArgumentList.Add(a);
+            foreach (var a in new[] { "/c", "start", "", "/D", dir, "cmd", "/k" }.Concat(ClaudeArgs(resume))) cmd.ArgumentList.Add(a);
             Process.Start(cmd)?.Dispose();
             Log.Write($"session: starting one in {dir} (cmd)");
             return true;
@@ -266,15 +270,15 @@ public sealed class Delivery
 
     private readonly SessionRegistry _sessions;
     private readonly Action<string, string> _deliver;   // (session id, instruction)
-    private readonly Func<string, bool> _start;          // folder → started
+    private readonly Func<string, string?, bool> _start; // folder, resume id → started
     private readonly PendingByCwd _pending = new();
     private readonly Dictionary<string, DateTime> _started = new(StringComparer.OrdinalIgnoreCase);
 
-    public Delivery(SessionRegistry sessions, Action<string, string> deliver, Func<string, bool>? start = null)
+    public Delivery(SessionRegistry sessions, Action<string, string> deliver, Func<string, string?, bool>? start = null)
     {
         _sessions = sessions;
         _deliver = deliver;
-        _start = start ?? (dir => SessionStarter.Start(dir));
+        _start = start ?? ((dir, resume) => SessionStarter.Start(dir, resume));
     }
 
     // /presence: an instruction waiting for this folder, or null.
@@ -282,10 +286,14 @@ public sealed class Delivery
 
     // POST /dispatch: a live session in `cwd` gets the instruction now; else it waits for the
     // folder's first presence and (start) a session is started there — once per 2 min.
-    public DispatchResult Dispatch(string cwd, string instruction, bool start)
+    // `resume`: that past session is the one to reach — started with --resume unless it runs.
+    // ponytail: the instruction still waits by folder; another idle session in the same folder
+    // could take it first. Key it by session id if that ever bites.
+    public DispatchResult Dispatch(string cwd, string instruction, bool start, string? resume = null)
     {
         var dir = CwdPath.Normalize(cwd);
-        var id = _sessions.DeliverableIn(dir);
+        var (alive, deliverable) = resume is null ? (false, false) : _sessions.Running(resume);
+        var id = resume is null ? _sessions.DeliverableIn(dir) : deliverable ? resume : null;
         if (id is not null)
         {
             if (instruction.Length > 0) _deliver(id, instruction);
@@ -293,6 +301,7 @@ public sealed class Delivery
             return DispatchResult.Delivered;
         }
         _pending.Add(dir, instruction);
+        if (alive) start = false;   // it runs, just can't take it yet: its next turn does
         if (!start)
         {
             Log.Write($"dispatch: {dir} → pending (no session started)");
@@ -307,7 +316,11 @@ public sealed class Delivery
             }
             _started[dir] = DateTime.UtcNow;
         }
-        if (_start(dir)) return DispatchResult.Started;
+        if (_start(dir, resume))
+        {
+            if (resume is not null) Log.Write($"dispatch: {dir} → session {resume} resumed");
+            return DispatchResult.Started;
+        }
         lock (_started) _started.Remove(dir);
         return DispatchResult.Failed;
     }

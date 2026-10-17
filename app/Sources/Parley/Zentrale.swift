@@ -87,17 +87,21 @@ enum SessionStarter {
 
     static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: #"'\''"#) + "'" }
 
-    static func command(folder: String) -> String { "cd \(shellQuote(folder)) && claude \(shellQuote(firstPrompt))" }
-
-    static func osascriptArguments(folder: String) -> [String] {
-        ["-e", "on run argv", "-e", #"tell application "Terminal" to do script (item 1 of argv)"#, "-e", "end run",
-         command(folder: folder)]
+    // `resume`: a past session (checked by Transcript.isSessionID) continued with its history.
+    static func command(folder: String, resume: String? = nil) -> String {
+        let r = resume.map { " --resume \(shellQuote($0))" } ?? ""
+        return "cd \(shellQuote(folder)) && claude\(r) \(shellQuote(firstPrompt))"
     }
 
-    static func start(folder: String) {
+    static func osascriptArguments(folder: String, resume: String? = nil) -> [String] {
+        ["-e", "on run argv", "-e", #"tell application "Terminal" to do script (item 1 of argv)"#, "-e", "end run",
+         command(folder: folder, resume: resume)]
+    }
+
+    static func start(folder: String, resume: String? = nil) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        p.arguments = osascriptArguments(folder: folder)
+        p.arguments = osascriptArguments(folder: folder, resume: resume)
         p.standardOutput = Pipe()
         let err = Pipe()
         p.standardError = err

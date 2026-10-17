@@ -246,6 +246,13 @@ final class SessionRegistry {
         return here.first.map { ($0.id, false) }
     }
 
+    // Session `id` if it runs (not stopped) — the same shape as session(inFolder:).
+    func alive(_ id: String) -> (id: String, reachable: Bool)? {
+        refresh()
+        guard let e = entries[id], e.state != "stopped" else { return nil }
+        return (id, parkedHookAlive(id) || e.presenceAt != nil)
+    }
+
     // Any session besides `id` that isn't stopped → the turn gets announced.
     func othersAlive(except id: String) -> Bool {
         refresh()

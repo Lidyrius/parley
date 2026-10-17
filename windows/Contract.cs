@@ -110,6 +110,8 @@ public sealed class DispatchPayload
     [JsonPropertyName("cwd")] public string? Cwd { get; set; }
     [JsonPropertyName("instruction")] public string? Instruction { get; set; }
     [JsonPropertyName("start")] public bool? Start { get; set; }
+    // A past session's id: started as `claude --resume <id>` (cwd then defaults to its folder).
+    [JsonPropertyName("resume")] public string? Resume { get; set; }
 
     public static DispatchPayload? Decode(string body)
     {

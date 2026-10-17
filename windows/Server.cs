@@ -211,6 +211,22 @@ public sealed class Server
                 return;
             }
 
+            // /past — the Zentrale looks up a past session (title, folder, last prompt) to resume it.
+            if (req.HttpMethod == "POST" && path == "/past")
+            {
+                string? q = null;
+                var limit = 10;
+                try
+                {
+                    using var doc = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
+                    if (doc.RootElement.TryGetProperty("q", out var qv) && qv.ValueKind == JsonValueKind.String) q = qv.GetString();
+                    if (doc.RootElement.TryGetProperty("limit", out var lv) && lv.TryGetInt32(out var l)) limit = Math.Clamp(l, 1, 50);
+                }
+                catch (JsonException) { }
+                await Respond(ctx, 200, Transcript.PastJson(Transcript.FindPast(q, limit)));
+                return;
+            }
+
             // /dispatch — the Zentrale (docs/IPHONE.md, v2): deliver an instruction to the session
             // in a folder, starting one there when none runs. Same answers as macOS:
             // {"ok":true,"delivered":"session"|"pending","started":bool}; 400 for a relative or
@@ -218,14 +234,22 @@ public sealed class Server
             if (req.HttpMethod == "POST" && path == "/dispatch")
             {
                 var d = DispatchPayload.Decode(body);
-                var cwd = d is null || string.IsNullOrWhiteSpace(d.Cwd) || !Path.IsPathRooted(d.Cwd)
-                    ? null : CwdPath.Resolve(d.Cwd, Config.Load().ProjectsDir);
+                string? past = null;
+                if (d?.Resume is { } rid && (!Transcript.IsSessionId(rid) || (past = Transcript.File(rid)) is null))
+                {
+                    await Respond(ctx, 404, "{\"ok\":false,\"error\":\"no past session with that id\"}");
+                    return;
+                }
+                // With `resume` the folder defaults to the session's own.
+                var raw = d?.Cwd ?? (past is null ? null : Transcript.Summary(past)?.Cwd);
+                var cwd = d is null || string.IsNullOrWhiteSpace(raw) || !Path.IsPathRooted(raw)
+                    ? null : CwdPath.Resolve(raw, Config.Load().ProjectsDir);
                 if (d is null || cwd is null || !Directory.Exists(cwd))
                 {
                     await Respond(ctx, 400, "{\"ok\":false,\"error\":\"cwd must be an existing absolute folder\"}");
                     return;
                 }
-                var result = Delivery.Dispatch(cwd, (d.Instruction ?? "").Trim(), d.Start ?? true);
+                var result = Delivery.Dispatch(cwd, (d.Instruction ?? "").Trim(), d.Start ?? true, d.Resume);
                 if (result == DispatchResult.Failed)
                 {
                     await Respond(ctx, 500, "{\"ok\":false,\"error\":\"could not start a session\"}");

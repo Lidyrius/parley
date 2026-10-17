@@ -112,6 +112,33 @@ jq -n --arg cwd "$dir" --arg task "$auftrag" '{cwd: $cwd, instruction: $task, st
 - Antwort prüfen: Fehler oder keine Verbindung → ehrlich sagen, nicht so tun, als sei es
   übergeben. Erfolg kurz bestätigen („Erledigt, Sir — Tippfrei kümmert sich darum.“).
 
+## Frühere Session fortsetzen
+
+Sir will an einer **früheren, beendeten** Session weitermachen („mach mit der Export-Session
+von gestern weiter“): erst suchen, dann mit `resume` fortsetzen — sie startet dann mit ihrem
+ganzen alten Verlauf (`claude --resume`) und automatisch im Sprachmodus.
+
+```bash
+jq -n --arg q "<Stichwort>" '{q: $q, limit: 8}' \
+  | curl -sS -X POST "http://127.0.0.1:${PARLEY_PORT:-8787}/past" \
+      -H 'Content-Type: application/json' --data-binary @- \
+  | jq -r '.sessions[] | [.id, .title, .cwd, (.lastPrompt // ""), (.lastAt/1000 | todate)] | @tsv'
+```
+
+- Sucht in Titel, Ordner und letztem Prompt (ohne Groß/klein), neueste zuerst; `q` leer = die
+  letzten Sessions. Nichts gefunden → mit einem anderen Stichwort (Projektname, Thema) erneut.
+- Mehrere passen → Sir die zwei, drei besten kurz nennen (Titel + wann) und fragen.
+- Fortsetzen (der Ordner ist automatisch der der Session):
+
+```bash
+jq -n --arg id "<id>" --arg task "<Auftrag oder leer>" '{resume: $id, instruction: $task, start: true}' \
+  | curl -sS -X POST "http://127.0.0.1:${PARLEY_PORT:-8787}/dispatch" \
+      -H 'Content-Type: application/json' --data-binary @-
+```
+
+- Ohne Auftrag ein kurzes „Setze die Arbeit fort und fasse Sir zusammen, wo ihr standet.“
+  mitgeben. Läuft die Session noch, bekommt sie den Auftrag direkt (kein zweiter Start).
+
 ## Laufende Sessions
 
 ```bash

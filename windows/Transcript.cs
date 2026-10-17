@@ -167,6 +167,91 @@ public static class Transcript
         }
     }
 
+    // ---- past sessions (POST /past — the Zentrale looks one up to resume it) -------------
+
+    public sealed record Past(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("cwd")] string Cwd,
+        [property: JsonPropertyName("lastPrompt")] string? LastPrompt,
+        [property: JsonPropertyName("lastAt")] double LastAt);
+
+    // The newest sessions (up to `limit`) whose title, folder or last prompt contains `query`
+    // (all of them for an empty query). Scans the `scan` most recently written transcripts.
+    public static List<Past> FindPast(string? query, int limit = 10, string? root = null, int scan = 400)
+    {
+        root ??= Projects;
+        if (!Directory.Exists(root)) return new List<Past>();
+        var files = Directory.EnumerateDirectories(root)
+            .SelectMany(d => Directory.EnumerateFiles(d, "*.jsonl"))
+            .Select(f => new FileInfo(f))
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .Take(scan);
+        var q = (query ?? "").Trim();
+        var output = new List<Past>();
+        foreach (var f in files)
+        {
+            if (Summary(f.FullName) is not { } p) continue;
+            if (q.Length == 0 || new[] { p.Title, p.Cwd, p.LastPrompt ?? "" }.Any(s => s.Contains(q, StringComparison.OrdinalIgnoreCase)))
+                output.Add(p);
+            if (output.Count >= limit) break;
+        }
+        return output;
+    }
+
+    // Title, folder and last prompt of one transcript; null when it has no folder (not a session).
+    public static Past? Summary(string path)
+    {
+        string cwd = "";
+        foreach (var line in HeadLines(path, 64 << 10))
+            if (Field(line, "cwd") is { Length: > 0 } c) { cwd = c; break; }
+        if (cwd.Length == 0) return null;
+        string? title = null, prompt = null;
+        var tail = TailLines(path, 256 << 10);
+        for (var i = tail.Count - 1; i >= 0 && (title is null || prompt is null); i--)
+        {
+            title ??= Field(tail[i], "customTitle") ?? Field(tail[i], "summary");
+            if (prompt is null && Field(tail[i], "lastPrompt") is { Length: > 0 } p)
+            {
+                var one = string.Join(" ", p.Split('\n', '\r'));
+                prompt = one.Length > 120 ? one[..120] + "…" : one;
+            }
+        }
+        var info = new FileInfo(path);
+        return new Past(Path.GetFileNameWithoutExtension(path), title ?? prompt ?? Path.GetFileName(cwd.TrimEnd('/', '\\')),
+            cwd, prompt, Math.Round(new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds() * 1.0));
+    }
+
+    public static string PastJson(List<Past> list) => JsonSerializer.Serialize(new { sessions = list }, Json);
+
+    // The first `bytes` of the file as whole JSON lines (the last, partial one dropped).
+    public static List<string> HeadLines(string path, int bytes)
+    {
+        try
+        {
+            using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var buffer = new byte[bytes];
+            var n = f.Read(buffer, 0, bytes);
+            var lines = Encoding.UTF8.GetString(buffer, 0, n).Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
+            if (n == bytes && lines.Count > 0) lines.RemoveAt(lines.Count - 1);
+            return lines;
+        }
+        catch { return new List<string>(); }
+    }
+
+    // A Claude Code session id, safe to put on a command line.
+    public static bool IsSessionId(string s) => s.Length is >= 8 and <= 64 && s.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+
+    private static string? Field(string line, string key)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            return doc.RootElement.ValueKind == JsonValueKind.Object && Str(doc.RootElement, key) is { Length: > 0 } v ? v : null;
+        }
+        catch { return null; }
+    }
+
     // ---- images ----------------------------------------------------------------------
 
     // The image `key` ("<uuid>#<n>", as in the items) as a JPEG that fits a relay frame.

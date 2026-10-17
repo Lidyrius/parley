@@ -270,6 +270,16 @@ public sealed class SessionRegistry
 
     // The deliverable session working in `cwd` (Windows paths: case-insensitive), most recently
     // heard from first; null if none.
+    // Session `id`: running at all (not stopped), and able to take an instruction now.
+    public (bool Alive, bool Deliverable) Running(string id)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.TryGetValue(id, out var e) && e.State != "stopped" ? (true, Deliverable(e)) : (false, false);
+        }
+    }
+
     public string? DeliverableIn(string cwd)
     {
         lock (_gate)

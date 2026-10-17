@@ -8,6 +8,7 @@ final class DispatchTests: XCTestCase {
     private var reg: SessionRegistry!
     private var server: ControlServer!
     private var starts: [String] = []
+    private var resumed: [String?] = []
     private var dir = ""
 
     override func setUpWithError() throws {
@@ -16,7 +17,8 @@ final class DispatchTests: XCTestCase {
         reg = SessionRegistry(now: { c.t }, phase: { "idle" }, daily: DailyStats(now: { c.t }))
         server = ControlServer(sessions: reg, now: { c.t })
         starts = []
-        server.starter = { [unowned self] in self.starts.append($0) }
+        resumed = []
+        server.starter = { [unowned self] folder, resume in self.starts.append(folder); self.resumed.append(resume) }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("parley-dispatch-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         dir = Zentrale.normalize(url.path)
@@ -140,6 +142,57 @@ final class DispatchTests: XCTestCase {
         XCTAssertEqual(post("/dispatch", #"{"cwd":"\#(dir)/"}"#).1, #"{"ok":true,"delivered":"none","started":true}"#)   // start defaults on
         XCTAssertEqual(starts, [dir])                                                      // normalized
     }
+
+    // MARK: - past sessions: /past + /dispatch resume
+
+    private func pastSession(_ id: String, title: String) throws -> URL {
+        let root = URL(fileURLWithPath: dir).appendingPathComponent("transcripts")
+        let folder = root.appendingPathComponent("-proj")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let lines = [#"{"type":"user","cwd":"\#(dir)","sessionId":"\#(id)","message":{"content":"Hallo"}}"#,
+                     #"{"type":"custom-title","customTitle":"\#(title)"}"#,
+                     #"{"type":"last-prompt","lastPrompt":"Bau den Export"}"#]
+        try lines.joined(separator: "\n").write(to: folder.appendingPathComponent("\(id).jsonl"), atomically: true, encoding: .utf8)
+        server.transcripts = root
+        return root
+    }
+
+    func testPastFindsBySearchTerm() throws {
+        _ = try pastSession("aaaa-1111", title: "Rechnungen Export")
+        let hit = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(post("/past", #"{"q":"rechnung"}"#).1.utf8)) as? [String: Any])
+        let list = try XCTUnwrap(hit["sessions"] as? [[String: Any]])
+        XCTAssertEqual(list.first?["id"] as? String, "aaaa-1111")
+        XCTAssertEqual(list.first?["title"] as? String, "Rechnungen Export")
+        XCTAssertEqual(list.first?["lastPrompt"] as? String, "Bau den Export")
+        XCTAssertEqual(list.first?["cwd"] as? String, dir)
+        XCTAssertEqual(post("/past", #"{"q":"nichts davon"}"#).1, #"{"sessions":[]}"#)
+    }
+
+    func testResumeStartsThePastSessionInItsFolderWithItsInstruction() throws {
+        _ = try pastSession("aaaa-1111", title: "Rechnungen")
+        XCTAssertEqual(post("/dispatch", #"{"resume":"aaaa-1111","instruction":"Weiter mit PDF"}"#).1,
+                       #"{"ok":true,"delivered":"pending","started":true}"#)
+        XCTAssertEqual(starts, [dir])
+        XCTAssertEqual(resumed, ["aaaa-1111"])
+        // It shows up (same id) → the instruction rides back with its presence.
+        clock.t += 5
+        XCTAssertTrue(presence("aaaa-1111", "idle").contains("Weiter mit PDF"))
+    }
+
+    func testResumeOfARunningSessionDeliversInsteadOfStarting() throws {
+        _ = try pastSession("aaaa-1111", title: "Rechnungen")
+        presence("aaaa-1111", "working")
+        XCTAssertEqual(post("/dispatch", #"{"resume":"aaaa-1111","instruction":"Noch was"}"#).1,
+                       #"{"ok":true,"delivered":"session","started":false}"#)
+        XCTAssertEqual(starts, [])
+    }
+
+    func testResumeRejectsUnknownOrUnsafeIds() throws {
+        _ = try pastSession("aaaa-1111", title: "Rechnungen")
+        XCTAssertEqual(post("/dispatch", #"{"resume":"bbbb-2222"}"#).0, 404)
+        XCTAssertEqual(post("/dispatch", #"{"resume":"x'; rm -rf ~ #"}"#).0, 404)
+        XCTAssertEqual(starts, [])
+    }
 }
 
 final class SessionStarterTests: XCTestCase {
@@ -147,6 +200,7 @@ final class SessionStarterTests: XCTestCase {
         XCTAssertEqual(SessionStarter.command(folder: "/Users/x/it's here"),
                        #"cd '/Users/x/it'\''s here' && claude '/parley:voice'"#)
         XCTAssertEqual(SessionStarter.command(folder: "/tmp/$(rm -rf ~)"), #"cd '/tmp/$(rm -rf ~)' && claude '/parley:voice'"#)
+        XCTAssertEqual(SessionStarter.command(folder: "/p", resume: "abc-123"), #"cd '/p' && claude --resume 'abc-123' '/parley:voice'"#)
     }
 
     func testOsascriptGetsTheCommandAsArgvNotAsScript() {
@@ -216,4 +270,5 @@ final class ZentraleTests: XCTestCase {
         p.add("y", cwd: "/c", at: t)
         XCTAssertEqual(p.take(cwd: "/c", now: t), "x\n\ny")
     }
+
 }

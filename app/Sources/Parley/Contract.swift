@@ -105,9 +105,10 @@ struct ResumePayload: Codable, Equatable { var id: String }
 // POST /dispatch — hand a task to the session in a folder (the Zentrale starts projects this way).
 // start: launch a session there when none is alive (default true).
 struct DispatchPayload: Codable, Equatable {
-    var cwd: String
+    var cwd: String?          // optional with `resume` (then the session's own folder)
     var instruction: String?
     var start: Bool?
+    var resume: String?       // a past session's id: started as `claude --resume <id>`
 }
 
 struct ReadyPayload: Codable, Equatable {

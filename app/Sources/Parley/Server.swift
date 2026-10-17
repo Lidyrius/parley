@@ -42,7 +42,8 @@ final class ControlServer: @unchecked Sendable {
     static let restartGuard: TimeInterval = 120   // no second session start in a folder within this
 
     // Starts a session in a folder (Terminal + `claude '/parley:voice'`); a stub in tests.
-    var starter: (String) -> Void = { SessionStarter.start(folder: $0) }
+    var starter: (String, String?) -> Void = { SessionStarter.start(folder: $0, resume: $1) }   // folder, resume id
+    var transcripts = Transcript.projects   // Claude Code's transcripts (/past, /dispatch resume)
 
     // POST /permission holds the hook at most this long, then answers "ask".
     var permissionHold: TimeInterval = 110
@@ -247,11 +248,14 @@ final class ControlServer: @unchecked Sendable {
         queue.sync { dispatchOnQueue(cwd: cwd, instruction: instruction, start: start) }
     }
 
-    private func dispatchOnQueue(cwd raw: String, instruction: String, start: Bool) -> DispatchResult {
+    // `resume`: that past session is the one to reach — started with `--resume` unless it runs.
+    // ponytail: the instruction still waits by folder; another idle session in the same folder
+    // could take it first. Key it by session id if that ever bites.
+    private func dispatchOnQueue(cwd raw: String, instruction: String, start: Bool, resume: String? = nil) -> DispatchResult {
         let cwd = Zentrale.normalize(raw)
         prunePending()
         let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        let here = sessions.session(inFolder: cwd)
+        let here = resume.map { sessions.alive($0) } ?? sessions.session(inFolder: cwd)
         var result = DispatchResult(delivered: "none", started: false)
         if !text.isEmpty {
             if let s = here, s.reachable {
@@ -264,10 +268,10 @@ final class ControlServer: @unchecked Sendable {
         }
         if start, here == nil, startedAt[cwd].map({ now().timeIntervalSince($0) >= Self.restartGuard }) ?? true {
             startedAt[cwd] = now()
-            starter(cwd)
+            starter(cwd, resume)
             result.started = true
         }
-        Log.write("dispatch: \(cwd) → \(result.delivered)\(result.started ? ", session started" : "")")
+        Log.write("dispatch: \(cwd) → \(result.delivered)\(result.started ? (resume == nil ? ", session started" : ", session \(resume!) resumed") : "")")
         return result
     }
 
@@ -504,17 +508,28 @@ final class ControlServer: @unchecked Sendable {
             guard let d = Contract.decodeDispatch(req.body) else {
                 return (400, #"{"ok":false,"error":"bad dispatch payload"}"#)
             }
-            let cwd = Zentrale.normalize(d.cwd)
+            if let id = d.resume, !Transcript.isSessionID(id) || Transcript.file(for: id, root: transcripts) == nil {
+                return (404, #"{"ok":false,"error":"no past session with that id"}"#)
+            }
+            // With `resume` the folder defaults to the session's own.
+            let raw = d.cwd ?? d.resume.flatMap { Transcript.file(for: $0, root: transcripts) }.flatMap { Transcript.summary($0, at: Date())?.cwd } ?? ""
+            let cwd = Zentrale.normalize(raw)
             let instruction = d.instruction ?? ""
             let start = d.start ?? true
-            guard d.cwd.hasPrefix("/") || d.cwd.hasPrefix("~"), Zentrale.isDirectory(cwd) else {
+            guard raw.hasPrefix("/") || raw.hasPrefix("~"), Zentrale.isDirectory(cwd) else {
                 return (400, #"{"ok":false,"error":"cwd must be an existing absolute folder"}"#)
             }
             guard !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || start else {
                 return (400, #"{"ok":false,"error":"nothing to do"}"#)
             }
-            let r = dispatchOnQueue(cwd: cwd, instruction: instruction, start: start)
+            let r = dispatchOnQueue(cwd: cwd, instruction: instruction, start: start, resume: d.resume)
             return (200, #"{"ok":true,"delivered":"\#(r.delivered)","started":\#(r.started)}"#)
+        case ("POST", "/past"):
+            // The Zentrale looks up a past session (title, folder, last prompt) to resume it.
+            struct Query: Decodable { var q: String?; var limit: Int? }
+            let query = try? JSONDecoder().decode(Query.self, from: req.body)
+            let list = Transcript.past(query: query?.q, limit: min(50, max(1, query?.limit ?? 10)), root: transcripts)
+            return (200, Transcript.pastJSON(list))
         case ("POST", "/resume"):
             // The mod's resume button: answer at once, then run the short voice dialog for
             // that session through the turn queue. Only parked / idle-with-mod sessions.

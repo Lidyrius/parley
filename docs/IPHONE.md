@@ -161,3 +161,14 @@ the call with a notification; the session then waits for a typed reply.
 | `push`    | phone → host   | `{"token","env","kind":"alert"}` the notification push token (topic `de.developaway.parley.mobile`); without `kind` it is the VoIP token as before. |
 
 Notification push payload: `{"aps":{"alert":{"title":"Parley · <label>","body":"<spoken line>"},"sound":"default","thread-id":"<session>"},"session":"<session>"}` — tapping it opens that session.
+
+### Resuming a past session (Zentrale)
+
+`POST /past {"q":"<term>","limit":10}` → `{"sessions":[{"id","title","cwd","lastPrompt","lastAt"}]}`:
+the newest of the 400 most recently written transcripts whose title (`custom-title` /
+`summary`), folder or last prompt contains the term. `POST /dispatch {"resume":"<id>",
+"instruction":…}` starts that session in its own folder as `claude --resume <id> '/parley:voice'`
+(Terminal on macOS, Windows Terminal / cmd on Windows) — its whole history, voice mode on — and
+the instruction waits for it like any dispatch; a session that still runs gets it directly.
+Unknown or unsafe ids → 404.
+
