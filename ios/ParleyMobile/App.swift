@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import UserNotifications
+import WidgetKit
 
 @main
 struct ParleyMobileApp: App {
@@ -62,8 +63,10 @@ final class AppModel {
     var away: Bool {
         didSet {
             guard away != oldValue else { return }
-            UserDefaults.standard.set(away, forKey: Self.awayKey)
+            SharedState.away = away
             relay.send(Outgoing.away(away))
+            reloadControls()
+            if !away { Task { await activity.endAll() } }   // the host ends it too; this is at once
             // Calls will come in: ask for the mic (and speech) now, not on the lock screen — and
             // for notifications, which a declined call leaves to put it off.
             if away, !demo {
@@ -80,8 +83,9 @@ final class AppModel {
     var silent: Bool {
         didSet {
             guard silent != oldValue else { return }
-            UserDefaults.standard.set(silent, forKey: Self.silentKey)
+            SharedState.silent = silent
             relay.send(Outgoing.silent(silent))
+            reloadControls()
             if silent, !demo {
                 Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) }
             }
@@ -104,14 +108,19 @@ final class AppModel {
     @ObservationIgnored private var push: PushRegistry?
     @ObservationIgnored private var isForeground = false
     @ObservationIgnored private let pushEnvironment = PushEnvironment.current()
-    private static let awayKey = "awayMode"
-    private static let silentKey = "silentMode"
+    @ObservationIgnored let activity = ActivityLink()
 
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         demo = arguments.contains("-demo")
         call = CallController(relay: relay, demo: demo)
-        away = !demo && UserDefaults.standard.bool(forKey: Self.awayKey)
-        silent = !demo && UserDefaults.standard.bool(forKey: Self.silentKey)
+        // The switches live in the App Group (the controls read and set them); older builds kept
+        // them in the app's own defaults.
+        for key in ["awayMode", "silentMode"] where SharedState.defaults.object(forKey: key) == nil {
+            SharedState.defaults.set(UserDefaults.standard.bool(forKey: key), forKey: key)
+        }
+        away = !demo && SharedState.away
+        silent = !demo && SharedState.silent
+        Appearance.shared.publishColors()
         call.ensureRelay = { [weak self] in self?.dialIfIdle() }
         call.onEnded = { [weak self] in self?.callEnded() }
         call.onDeclined = { [weak self] label in self?.offerLater(label) }
@@ -130,6 +139,13 @@ final class AppModel {
             pairing = saved
             relay.use(saved)  // dialled once the scene is active (or a call needs it)
         }
+        // A push-to-start token or a new activity's update token: to the host now — the app may
+        // have been woken in the background just for that.
+        activity.onChange = { [weak self] in
+            guard let self else { return }
+            Task { await self.withRelay { self.sendActivityTokens() } }
+        }
+        activity.start()
         let push = PushRegistry()
         push.onToken = { [weak self] _ in self?.sendPushToken() }
         push.onIncoming = { [weak self] label, reported in
@@ -174,15 +190,43 @@ final class AppModel {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "parley.later", content: content, trigger: nil))
     }
 
-    /// A choice from that notification, maybe with the app in the background: dial the relay if
-    /// needed and send it once connected (up to 20 s).
+    /// A choice from that notification, maybe with the app in the background.
     func deliverLater(_ after: Int?) async {
-        let task = UIApplication.shared.beginBackgroundTask(withName: "parley.later")
+        await withRelay { relay.send(Outgoing.later(after: after)) }
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["parley.later"])
+    }
+
+    /// A switch flipped outside the app (a control, Siri): to the host now.
+    func syncSwitches() async {
+        await withRelay {
+            relay.send(Outgoing.away(away))
+            relay.send(Outgoing.silent(silent))
+        }
+    }
+
+    /// Runs `send` once the relay is connected — dialling it if idle, up to 20 s, as a background
+    /// task (the app may be in the background for a control, a notification, a push). A socket
+    /// dialled just for this closes again afterwards there.
+    func withRelay(_ send: () -> Void) async {
+        guard !demo else { return }
+        let task = UIApplication.shared.beginBackgroundTask(withName: "parley.relay")
         defer { UIApplication.shared.endBackgroundTask(task) }
         dialIfIdle()
         for _ in 0..<200 where !relay.canSend { try? await Task.sleep(for: .milliseconds(100)) }
-        relay.send(Outgoing.later(after: after))
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["parley.later"])
+        send()
+        try? await Task.sleep(for: .milliseconds(500))   // let it leave
+        if !isForeground, !call.isBusy { relay.disconnect() }
+    }
+
+    private func sendActivityTokens() {
+        if let t = activity.startToken { relay.send(Outgoing.activityStart(token: t, env: pushEnvironment)) }
+        relay.send(Outgoing.activity(token: activity.updateToken, env: pushEnvironment))
+    }
+
+    private func reloadControls() {
+        guard #available(iOS 18, *) else { return }
+        ControlCenter.shared.reloadControls(ofKind: SharedState.awayKind)
+        ControlCenter.shared.reloadControls(ofKind: SharedState.silentKind)
     }
 
     func pair(_ link: String) throws(PairingError) {
@@ -206,6 +250,12 @@ final class AppModel {
         switch phase {
         case .active:
             isForeground = true
+            // `-demoActivity`: the Live Activity with demo content (Island, Lock Screen) — it can
+            // only start in the foreground.
+            if demo, ProcessInfo.processInfo.arguments.contains("-demoActivity") { Task { await activity.startDemo() } }
+            // A control may have flipped a switch while the app was away.
+            if !demo, away != SharedState.away { away = SharedState.away }
+            if !demo, silent != SharedState.silent { silent = SharedState.silent }
             dialIfIdle()
         case .background:
             isForeground = false
@@ -284,6 +334,7 @@ final class AppModel {
             relay.send(Outgoing.silent(silent))
             sendPushToken()
             sendAlertToken()
+            sendActivityTokens()
             if call.phase.isActive { relay.send(Outgoing.call(started: true)) }
             call.relayChanged()
         case .closed:
@@ -338,6 +389,13 @@ struct RootView: View {
         }
         // The system camera opens the QR's parley:// link here.
         .onOpenURL { url in
+            // The Island / Lock Screen: parley://session?id=<id> opens that session.
+            if url.host == "session" {
+                if let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value {
+                    model.open(session: id)
+                }
+                return
+            }
             do { try model.pair(url.absoluteString) } catch { linkError = error.localizedDescription }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in

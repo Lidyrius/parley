@@ -147,6 +147,13 @@ public static class RelayFrame
                 case "later":
                     var after = root.TryGetProperty("after", out var af) && af.ValueKind == JsonValueKind.Number ? af.GetDouble() : 0;
                     return new PhoneLater(after > 0 ? Math.Clamp(after, 10, 3600) : null);
+                case "activity":
+                    // v4 (docs/LIVE-ACTIVITIES.md): the Live Activity's push tokens; "" = none runs.
+                    static bool Hex(string s) => s.Length <= 200 && s.All(Uri.IsHexDigit);
+                    var aenv = Str("env") == "development" ? "development" : "production";
+                    if (Str("start") is { Length: > 0 } st && Hex(st)) return new PhoneActivityStart(st.ToLowerInvariant(), aenv);
+                    if (Str("token") is { } tk && Hex(tk)) return new PhoneActivity(tk.ToLowerInvariant(), aenv);
+                    return null;
                 case "away":
                     return root.TryGetProperty("on", out var flag) && (flag.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         ? new PhoneAway(flag.ValueKind == JsonValueKind.True) : null;
@@ -180,6 +187,9 @@ public sealed record PhoneAlert(string Token, string Env) : PhoneMessage;
 public sealed record PhoneHistory(string Id, string? Before) : PhoneMessage;   // newest page, or the one before an item
 public sealed record PhoneImage(string Id, string Key) : PhoneMessage;
 public sealed record PhoneSay(string Id, string Text) : PhoneMessage;
+// v4: the Live Activity's push-to-start token, and the running one's update token ("" = none).
+public sealed record PhoneActivityStart(string Token, string Env) : PhoneMessage;
+public sealed record PhoneActivity(string Token, string Env) : PhoneMessage;
 public sealed record PhoneLater(double? After) : PhoneMessage;    // not now: ring again in n s, or null = Sir calls back
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never

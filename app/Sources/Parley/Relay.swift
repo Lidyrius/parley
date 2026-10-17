@@ -131,6 +131,15 @@ enum RelayFrame {
                   !token.isEmpty, token.count <= 200, token.allSatisfy(\.isHexDigit) else { return nil }
             let env = f["env"] as? String == "development" ? "development" : "production"
             return f["kind"] as? String == "alert" ? .alert(token: token.lowercased(), env: env) : .push(token: token.lowercased(), env: env)
+        case "activity":
+            let env = f["env"] as? String == "development" ? "development" : "production"
+            func hex(_ v: Any?) -> String? {
+                guard let s = v as? String, s.count <= 200, s.allSatisfy(\.isHexDigit) else { return nil }
+                return s.lowercased()
+            }
+            if let start = hex(f["start"]), !start.isEmpty { return .activityStart(token: start, env: env) }
+            if let token = hex(f["token"]) { return .activity(token: token, env: env) }
+            return nil
         case "away":
             guard let on = f["on"] as? Bool else { return nil }
             return .away(on)
@@ -193,6 +202,9 @@ enum PhoneEvent: Equatable, Sendable {
     case image(id: String, key: String)       // send one image of it
     case say(id: String, text: String)        // a typed message for that session
     case later(TimeInterval?)                 // can't talk now: ring again in n s, or nil = Sir calls back
+    // v4 (docs/LIVE-ACTIVITIES.md): the Live Activity's push tokens.
+    case activityStart(token: String, env: String)   // push-to-start: the host starts it
+    case activity(token: String, env: String)        // the running one's update token; "" = none runs
 }
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never

@@ -42,6 +42,7 @@ final class Appearance {
         didSet {
             UserDefaults.standard.set(paletteID, forKey: Self.key)
             applyScheme()
+            publishColors()
         }
     }
 
@@ -50,7 +51,18 @@ final class Appearance {
     /// Palettes built in the developer mode's editor, remembered.
     var customPalettes: [Palette] = (try? JSONDecoder().decode([Palette].self,
                                                                from: UserDefaults.standard.data(forKey: "customPalettes") ?? Data())) ?? [] {
-        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(customPalettes), forKey: "customPalettes") }
+        didSet {
+            UserDefaults.standard.set(try? JSONEncoder().encode(customPalettes), forKey: "customPalettes")
+            publishColors()
+        }
+    }
+
+    /// The palette's state colours for the Island, the Lock Screen and the controls (App Group).
+    func publishColors() {
+        let p = palette
+        func pair(_ s: Shade) -> [UInt32] { [s.light, s.dark] }
+        SharedState.colors = StateColors(accent: pair(p.accent), waiting: pair(p.waiting), working: pair(p.working),
+                                         purple: pair(p.purple), idle: pair(p.idle), stopped: pair(p.stopped))
     }
 
     /// Adds or replaces a custom palette and picks it.

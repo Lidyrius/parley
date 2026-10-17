@@ -193,3 +193,31 @@ process group, then closes its Terminal window if it was the only tab; Windows: 
 is ignored. The transcript stays, so `/past` + `/dispatch` resume continue it. Desktop-app
 sessions (no terminal) are refused: the Claude app closes those.
 
+## Protocol v4 — the Live Activity (Dynamic Island, Lock Screen, Watch, CarPlay)
+
+Phone → host: `{"t":"activity","start":"<hex>","env":…}` (its push-to-start token) and
+`{"t":"activity","token":"<hex>"|"","env":…}` (the running activity's update token; `""` = none
+runs any more). Both are kept in the host's credentials, like the push tokens.
+
+The host owns the activity (macOS `LiveActivity.swift`, Windows `LiveActivity.cs`): every 2 s it
+turns `GET /sessions` into the `content-state` — `sessions` (at most 4, most urgent first: owed
+call back, ring to come, talking, wanting to talk, paused, working, background, parked, ready;
+`id`, `label`, `state`, `since`, `until`, `callback` in epoch **seconds**), `alive`, `line` / `from`
+(the most urgent session's last spoken line) — and pushes `apns-push-type: liveactivity` to
+`de.developaway.parley.mobile.push-type.liveactivity`:
+
+- **start** (push-to-start, priority 10, with an alert "Parley unterwegs"): Unterwegs on and a
+  session runs, no activity yet; retried at most once a minute.
+- **update** on every change, at least 1 s apart and every 10 min as a heartbeat (`stale-date` =
+  now + 15 min, so a silent Mac shows as stale); priority 5 (not budgeted), 10 when a session
+  newly wants Sir.
+- **end** when Unterwegs goes off or nothing has run for 2 min; before 8 h it ends and starts a
+  new one (iOS's limit). An end the host did not push is Sir's swipe: no new start until
+  Unterwegs goes off and on again. 410 / BadDeviceToken drops that token.
+
+The phone (`ActivityLink`) only hands over tokens, keeps one activity (a newer one ends the
+older) and ends it at once when Unterwegs goes off. Its controls (Control Center, Lock Screen,
+Action Button: "Parley anrufen", "Unterwegs", "Stumm") and the activity's call button are
+`LiveActivityIntent`s — they run in the app's process, which dials the relay in the background
+to tell the host. The switches live in the App Group `group.de.developaway.parley`.
+

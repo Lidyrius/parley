@@ -33,6 +33,8 @@ public sealed class Config
     public bool PhoneAway { get; init; }
     public bool PhoneSilent { get; init; }          // Unterwegs + Stumm: a notification instead of a call
     public string PhoneAlertToken { get; init; } = "";   // notification push token (hex)
+    public string PhoneActivityStart { get; init; } = "";   // Live Activity push-to-start token (hex)
+    public string PhoneActivityToken { get; init; } = "";   // the running Live Activity's update token; "" = none
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
@@ -101,6 +103,8 @@ public sealed class Config
                 PhoneAway = S("phoneAway") == "1",
                 PhoneSilent = S("phoneSilent") == "1",
                 PhoneAlertToken = S("phoneAlertToken").Trim(),
+                PhoneActivityStart = S("phoneActivityStart").Trim(),
+                PhoneActivityToken = S("phoneActivityToken").Trim(),
             };
         }
         catch

@@ -326,5 +326,22 @@ struct FrameTests {
         #expect(CallView.shownSlide(s, due: s[1], picked: "gone", pickedAt: now, now: now) == s[1].id)
         #expect(s.count == 6 && s.map(\.at) == s.map(\.at).sorted())
     }
+
+    /// The host's `content-state` (app/Sources/Parley/LiveActivity.swift) decodes as the
+    /// activity's — ActivityKit uses the default JSON decoder; times are epoch seconds.
+    @Test func liveActivityContentFromTheHost() throws {
+        let json = #"{"sessions":[{"id":"c","label":"Website","state":"idle","since":2000,"callback":0},{"id":"p","label":"Angebote","state":"waiting","since":1500,"until":1800},{"id":"w","label":"Shirts","state":"working","since":1000}],"alive":5,"line":"Soll ich deployen?","from":"Website"}"#
+        let c = try JSONDecoder().decode(ParleyAttributes.ContentState.self, from: Data(json.utf8))
+        #expect(c.alive == 5 && c.line == "Soll ich deployen?" && c.from == "Website")
+        #expect(c.top?.kind == .callBack)
+        #expect(c.sessions[1].kind == .paused(Date(timeIntervalSince1970: 1800)))
+        #expect(c.sessions[2].kind == .working(Date(timeIntervalSince1970: 1000)))
+        #expect(c.sessions.map(\.role) == [.accent, .waiting, .working])
+        #expect(c.top?.wantsSir == true && c.sessions[2].wantsSir == false)
+        let none = try JSONDecoder().decode(ParleyAttributes.ContentState.self, from: Data(#"{"sessions":[],"alive":0}"#.utf8))
+        #expect(none.top == nil && none.line == nil)
+        #expect(Outgoing.activityStart(token: "ab", env: .production) == #"{"env":"production","start":"ab","t":"activity"}"#)
+        #expect(Outgoing.activity(token: nil, env: .development) == #"{"env":"development","t":"activity","token":""}"#)
+    }
 }
 

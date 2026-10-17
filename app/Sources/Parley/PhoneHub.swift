@@ -72,6 +72,16 @@ final class PhoneHub: CallLink, @unchecked Sendable {
         return (t, store.get(.phonePushEnv) ?? "production")
     }
 
+    // The Live Activity: its push-to-start token, and the running one's update token (nil = none).
+    var activityStartTarget: (token: String, env: String)? {
+        guard let t = store.get(.phoneActivityStart), !t.isEmpty else { return nil }
+        return (t, store.get(.phonePushEnv) ?? "production")
+    }
+    var activityTarget: (token: String, env: String)? {
+        guard let t = store.get(.phoneActivityToken), !t.isEmpty else { return nil }
+        return (t, store.get(.phonePushEnv) ?? "production")
+    }
+
     // Where a VoIP push goes; nil until the phone sent `push`.
     var pushTarget: (token: String, env: String)? {
         guard let t = store.get(.phonePushToken), !t.isEmpty else { return nil }
@@ -128,6 +138,18 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             store.set(token, .phoneAlertToken)
             store.set(env, .phonePushEnv)
             log("phone: notification push token stored (\(env))")
+        case .activityStart(let token, let env):
+            guard store.get(.phoneActivityStart) != token else { return }
+            store.set(token, .phoneActivityStart)
+            store.set(env, .phonePushEnv)
+            log(token.isEmpty ? "phone: Live Activity push-to-start token dropped" : "phone: Live Activity push-to-start token stored (\(env))")
+            onChange?()
+        case .activity(let token, let env):
+            guard (store.get(.phoneActivityToken) ?? "") != token else { return }
+            store.set(token, .phoneActivityToken)
+            if !token.isEmpty { store.set(env, .phonePushEnv) }
+            log(token.isEmpty ? "phone: Live Activity ended" : "phone: Live Activity update token stored (\(env))")
+            onChange?()
         case .later(let after):
             lock.withLock { later = .some(after) }
             log(after.map { "phone: not now — ring again in \(Int($0)) s" } ?? "phone: not now — Sir calls back")

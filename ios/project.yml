@@ -16,7 +16,9 @@ targets:
   ParleyMobile:
     type: application
     platform: iOS
-    sources: [ParleyMobile]
+    sources: [ParleyMobile, Shared]
+    dependencies:
+      - target: ParleyWidgets
     info:
       path: ParleyMobile/Info.plist
       properties:
@@ -47,6 +49,9 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         ITSAppUsesNonExemptEncryption: false
+        # The Parley Live Activity (docs/LIVE-ACTIVITIES.md): started and updated by the host's pushes.
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.developaway.parley.mobile
@@ -60,6 +65,27 @@ targets:
           CODE_SIGN_ENTITLEMENTS: ParleyMobile/ParleyMobile-Debug.entitlements
         Release:
           CODE_SIGN_ENTITLEMENTS: ParleyMobile/ParleyMobile-Release.entitlements
+  # Live Activity (Dynamic Island, Lock Screen, Watch, CarPlay) and the controls (Control Center,
+  # Lock Screen, Action Button). Shares the App Group with the app.
+  ParleyWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources: [ParleyWidgets, Shared]
+    info:
+      path: ParleyWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Parley
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.developaway.parley.mobile.widgets
+        CODE_SIGN_ENTITLEMENTS: ParleyWidgets/ParleyWidgets.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
   ParleyMobileTests:
     type: bundle.unit-test
     platform: iOS

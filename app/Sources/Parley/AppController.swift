@@ -118,6 +118,44 @@ final class AppController: ObservableObject {
         Task { await ProjectClips.shared.prerenderGreetings(config: AppConfig.load()) }
         server.start()
         startRelay()
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickLiveActivity() }
+        }
+    }
+
+    // MARK: - the iPhone's Live Activity (docs/LIVE-ACTIVITIES.md)
+
+    private var activityFeed = LiveActivityFeed()
+    private var activityTimer: Timer?
+    private var seenActivityToken: String?
+
+    // Every 2 s: the sessions as the activity shows them → start / update / end by push.
+    private func tickLiveActivity() {
+        let now = Date()
+        let update = phone.activityTarget
+        if update?.token != seenActivityToken {
+            seenActivityToken = update?.token
+            activityFeed.phoneReports(running: update != nil, at: now)
+        }
+        guard apns.configured else { return }
+        let start = phone.activityStartTarget
+        let content = LiveActivity.content(fromSessions: server.sessionsJSON())
+        guard let action = activityFeed.step(content, away: phone.away, canStart: start != nil,
+                                             canUpdate: update != nil, now: now) else { return }
+        let (target, body, priority, what): ((token: String, env: String)?, Data, Int, String) = switch action {
+        case .start(let c): (start, LiveActivity.payload(.start, c, now: now), 10, "start")
+        case .update(let c, let p): (update, LiveActivity.payload(.update, c, now: now), p, "update")
+        case .end(let c): (update, LiveActivity.payload(.end, c, now: now), 10, "end")
+        }
+        guard let target else { return }
+        let apns = self.apns, phone = self.phone
+        Task.detached {
+            let r = await apns.liveActivity(token: target.token, env: target.env, body: body, priority: priority)
+            Log.write("live activity: \(what) → \(r.status)\(r.reason.map { " \($0)" } ?? "")")
+            // A token APNs no longer knows: that activity (or the phone's start token) is gone.
+            guard r.status == 410 || r.reason == "BadDeviceToken" else { return }
+            phone.handle(what == "start" ? .activityStart(token: "", env: target.env) : .activity(token: "", env: target.env))
+        }
     }
 
     private func syncPhone() {

@@ -123,6 +123,53 @@ internal sealed class TrayApp : ApplicationContext
             MessageBox.Show($"Parley konnte Port 8787 nicht öffnen: {e.Message}", "Parley");
         }
         StartRelay();
+        _activityTimer = new System.Threading.Timer(_ => TickLiveActivity(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    // ---- the iPhone's Live Activity (docs/LIVE-ACTIVITIES.md) --------------------------
+
+    private readonly LiveActivityFeed _activityFeed = new();
+    private System.Threading.Timer? _activityTimer;
+    private string? _seenActivityToken;
+    private int _activityTicking;
+
+    // Every 2 s: the sessions as the activity shows them → start / update / end by push.
+    private void TickLiveActivity()
+    {
+        if (Interlocked.Exchange(ref _activityTicking, 1) == 1) return;   // a slow push: skip, never overlap
+        try
+        {
+            var now = DateTime.UtcNow;
+            var update = PhoneCall.Activity;
+            if (update.Token != _seenActivityToken)
+            {
+                _seenActivityToken = update.Token;
+                _activityFeed.PhoneReports(update.Token.Length > 0, now);
+            }
+            var c = Config.Load();
+            if (c.ApnsKeyId.Length == 0 || c.ApnsKeyP8.Length == 0) return;
+            var start = PhoneCall.ActivityStart;
+            var content = LiveActivity.FromSessions(_server.Sessions.Json());
+            var action = _activityFeed.Step(content, PhoneCall.Away, start.Token.Length > 0, update.Token.Length > 0, now);
+            if (action is null) return;
+            var (target, ev, priority) = action switch
+            {
+                LiveActivityFeed.Start => (start, LiveActivity.Event.Start, 10),
+                LiveActivityFeed.Update u => (update, LiveActivity.Event.Update, u.Priority),
+                _ => (update, LiveActivity.Event.End, 10),
+            };
+            var body = LiveActivity.Payload(ev, action.Content, DateTimeOffset.UtcNow);
+            var (status, reply) = Apns.SendActivity(target.Token, target.Env, body, priority).GetAwaiter().GetResult();
+            Log.Write($"live activity: {ev.ToString().ToLowerInvariant()} → {status}");
+            // A token APNs no longer knows: that activity (or the phone's start token) is gone.
+            if (status == 410 || reply.Contains("BadDeviceToken"))
+            {
+                if (ev == LiveActivity.Event.Start) PhoneCall.SetActivityStart("", target.Env);
+                else PhoneCall.SetActivity("", target.Env);
+            }
+        }
+        catch (Exception e) { Log.Write($"live activity: {e.Message}"); }
+        finally { Volatile.Write(ref _activityTicking, 0); }
     }
 
     // "iPhone verbinden…": with a relay configured, make sure room + secret exist, connect, and
@@ -162,6 +209,8 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneLater l: PhoneCall.SetLater(l.After); break;
             case PhoneSilent s: PhoneCall.SetSilent(s.On); break;
             case PhoneAlert a: PhoneCall.SetAlert(a.Token, a.Env); break;
+            case PhoneActivityStart s: PhoneCall.SetActivityStart(s.Token, s.Env); break;
+            case PhoneActivity a: PhoneCall.SetActivity(a.Token, a.Env); break;
             // v3: the phone's session view — history from Claude Code's transcript, its images,
             // and typed messages (delivered like a resume instruction).
             // ponytail: re-reads the 3 MB tail per poll (~3 s while open); cache by mtime if it shows.

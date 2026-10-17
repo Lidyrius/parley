@@ -59,6 +59,10 @@
 	<string>Parley nutzt das Mikrofon während eines Anrufs, damit du mit Parley auf deinem Mac sprechen kannst.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Parley erkennt während eines Anrufs „Hey Parley“ – die Spracherkennung läuft dafür nach Möglichkeit direkt auf dem iPhone.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

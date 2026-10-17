@@ -35,6 +35,8 @@ enum Keychain {
         case phoneAway      // "1" = Unterwegs-Modus on (the phone's `away` frame): updates ring the phone
         case phoneSilent    // "1" = Unterwegs + Stumm (`silent` frame): a notification instead of a call
         case phoneAlertToken // the iPhone's notification push token (hex), `push` frame with kind "alert"
+        case phoneActivityStart // the Live Activity's push-to-start token (hex), `activity` frame
+        case phoneActivityToken // the running Live Activity's update token (hex); empty = none runs
         case apnsKeyId      // APNs auth key id (from AuthKey_<KEYID>.p8)
         case apnsTeamId     // Apple team id; empty = 384887N3UL
         case apnsKeyP8      // the .p8 PEM text

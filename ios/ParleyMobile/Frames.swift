@@ -233,6 +233,14 @@ enum Outgoing {
     }
     static func image(id: String, key: String) -> String { encode(["t": .s("image"), "id": .s(id), "key": .s(key)]) }
     static func say(id: String, text: String) -> String { encode(["t": .s("say"), "id": .s(id), "text": .s(text)]) }
+    /// v4: the Live Activity's push tokens (hex). `start`: its push-to-start token (the host starts
+    /// it); `token`: the running activity's update token, "" = none runs (any more).
+    static func activityStart(token: String, env: PushEnvironment) -> String {
+        encode(["t": .s("activity"), "start": .s(token), "env": .s(env.rawValue)])
+    }
+    static func activity(token: String?, env: PushEnvironment) -> String {
+        encode(["t": .s("activity"), "token": .s(token ?? ""), "env": .s(env.rawValue)])
+    }
     /// Can't talk now (on the ringing screen): ring again in `after` s, or nil = I'll call back.
     static func later(after: Int?) -> String {
         after.map { encode(["t": .s("later"), "after": .i($0)]) } ?? encode(["t": .s("later")])

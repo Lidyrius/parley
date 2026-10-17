@@ -92,6 +92,23 @@ enum APNs {
         return req
     }
 
+    // The Parley Live Activity (docs/LIVE-ACTIVITIES.md): push-to-start, update, end. `body` is the
+    // whole JSON payload (LiveActivity.payload); priority 5 is not budgeted, 10 is.
+    static let activityTopic = "de.developaway.parley.mobile.push-type.liveactivity"
+
+    static func activityRequest(token: String, env: String, jwt: String, body: Data, priority: Int) -> URLRequest {
+        var req = URLRequest(url: URL(string: "https://\(host(env: env))/3/device/\(token)")!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("bearer \(jwt)", forHTTPHeaderField: "authorization")
+        req.setValue(activityTopic, forHTTPHeaderField: "apns-topic")
+        req.setValue("liveactivity", forHTTPHeaderField: "apns-push-type")
+        req.setValue(String(priority), forHTTPHeaderField: "apns-priority")
+        req.setValue("application/json", forHTTPHeaderField: "content-type")
+        req.httpBody = body
+        return req
+    }
+
     /// APNs' error body: {"reason":"BadDeviceToken"}.
     static func reason(_ data: Data) -> String? {
         ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["reason"] as? String
@@ -147,6 +164,12 @@ final class APNsClient: @unchecked Sendable {
     @discardableResult
     func notify(token: String, env: String, title: String, body: String, session: String) async -> (status: Int, reason: String?) {
         await send(env: env) { APNs.alertRequest(token: token, env: env, jwt: $0, title: title, body: body, session: session) }
+    }
+
+    /// One Live Activity push (start / update / end).
+    @discardableResult
+    func liveActivity(token: String, env: String, body: Data, priority: Int) async -> (status: Int, reason: String?) {
+        await send(env: env) { APNs.activityRequest(token: token, env: env, jwt: $0, body: body, priority: priority) }
     }
 
     private func send(env: String, _ build: (String) -> URLRequest) async -> (status: Int, reason: String?) {

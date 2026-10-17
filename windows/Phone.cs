@@ -122,6 +122,7 @@ public static class PhoneCall
     private static int _downRate = PhoneAudio.SampleRate;   // the call's voice rate: 16 or 24 kHz
     private static string _alertToken = "";
     private static string _pushToken = "", _pushEnv = "production";
+    private static string _activityStart = "", _activityToken = "";
 
     // ---- relay seam ------------------------------------------------------------------
 
@@ -175,6 +176,17 @@ public static class PhoneCall
     public static (string Token, string Env) Push
     {
         get { lock (Gate) return (_pushToken, _pushEnv); }
+    }
+
+    // The Live Activity: its push-to-start token, and the running one's update token ("" = none).
+    public static (string Token, string Env) ActivityStart
+    {
+        get { lock (Gate) return (_activityStart, _pushEnv); }
+    }
+
+    public static (string Token, string Env) Activity
+    {
+        get { lock (Gate) return (_activityToken, _pushEnv); }
     }
 
     // `call` start / end from the phone.
@@ -414,7 +426,41 @@ public static class PhoneCall
             _alertToken = c.PhoneAlertToken;
             _pushToken = c.PhonePushToken;
             _pushEnv = c.PhonePushEnv;
+            _activityStart = c.PhoneActivityStart;
+            _activityToken = c.PhoneActivityToken;
         }
+    }
+
+    // `activity` with `start`: the push-to-start token ("" drops it — APNs no longer knows it).
+    public static void SetActivityStart(string token, string env)
+    {
+        env = env == "development" ? "development" : "production";
+        lock (Gate)
+        {
+            if (_activityStart == token) return;
+            _activityStart = token;
+            if (token.Length > 0) _pushEnv = env;
+        }
+        Config.Merge(token.Length > 0
+            ? new Dictionary<string, string> { ["phoneActivityStart"] = token, ["phonePushEnv"] = env }
+            : new Dictionary<string, string> { ["phoneActivityStart"] = "" });
+        Log.Write(token.Length > 0 ? $"phone: Live Activity push-to-start token stored ({env})" : "phone: Live Activity push-to-start token dropped");
+    }
+
+    // `activity` with `token`: the running Live Activity's update token; "" = it ended.
+    public static void SetActivity(string token, string env)
+    {
+        env = env == "development" ? "development" : "production";
+        lock (Gate)
+        {
+            if (_activityToken == token) return;
+            _activityToken = token;
+            if (token.Length > 0) _pushEnv = env;
+        }
+        Config.Merge(token.Length > 0
+            ? new Dictionary<string, string> { ["phoneActivityToken"] = token, ["phonePushEnv"] = env }
+            : new Dictionary<string, string> { ["phoneActivityToken"] = "" });
+        Log.Write(token.Length > 0 ? $"phone: Live Activity update token stored ({env})" : "phone: Live Activity ended");
     }
 
     // `away`: Unterwegs-Modus on / off, kept across restarts.

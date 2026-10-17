@@ -134,20 +134,33 @@ public static class Apns
         return await Send(token, env, Topic, "voip", JsonSerializer.Serialize(new { label }), expiration: "0");
     }
 
-    private static async Task<bool> Send(string token, string env, string topic, string pushType, string json, string? expiration)
+    // The Parley Live Activity (docs/LIVE-ACTIVITIES.md): push-to-start, update, end. `json` is the
+    // whole payload (LiveActivity.Payload); priority 5 is not budgeted, 10 is. The status and
+    // APNs' reason come back: 410 / BadDeviceToken = that activity or token is gone.
+    public const string ActivityTopic = "de.developaway.parley.mobile.push-type.liveactivity";
+
+    public static Task<(int Status, string Body)> SendActivity(string token, string env, string json, int priority) =>
+        Post(token, env, ActivityTopic, "liveactivity", json, expiration: null, priority);
+
+    private static async Task<bool> Send(string token, string env, string topic, string pushType, string json, string? expiration) =>
+        (await Post(token, env, topic, pushType, json, expiration, 10)).Status is >= 200 and < 300;
+
+    // Every outcome is logged; nothing throws. Status -1 = not sent.
+    private static async Task<(int Status, string Body)> Post(string token, string env, string topic, string pushType, string json,
+                                                               string? expiration, int priority)
     {
         var c = Config.Load();
         if (c.ApnsKeyId.Length == 0 || c.ApnsKeyP8.Length == 0)
         {
             Log.Write("apns: no push key — choose one via the tray (Push-Schlüssel wählen…)");
-            return false;
+            return (-1, "");
         }
         string jwt;
         try { jwt = ProviderToken(c.ApnsKeyId, c.ApnsTeamId, c.ApnsKeyP8); }
         catch (Exception e)
         {
             Log.Write($"apns: push key unusable ({e.Message})");
-            return false;
+            return (-1, "");
         }
         using var req = new HttpRequestMessage(HttpMethod.Post, $"https://{Host(env)}/3/device/{token}")
         {
@@ -159,21 +172,21 @@ public static class Apns
         req.Headers.Authorization = new AuthenticationHeaderValue("bearer", jwt);
         req.Headers.TryAddWithoutValidation("apns-topic", topic);
         req.Headers.TryAddWithoutValidation("apns-push-type", pushType);
-        req.Headers.TryAddWithoutValidation("apns-priority", "10");
+        req.Headers.TryAddWithoutValidation("apns-priority", priority.ToString(System.Globalization.CultureInfo.InvariantCulture));
         if (expiration is not null) req.Headers.TryAddWithoutValidation("apns-expiration", expiration);
         try
         {
             using var resp = await Http.SendAsync(req);
             var body = await resp.Content.ReadAsStringAsync();
             var id = resp.Headers.TryGetValues("apns-id", out var ids) ? ids.FirstOrDefault() : null;
-            Log.Write($"apns: HTTP {(int)resp.StatusCode} ({env}) apns-id={id ?? "-"} {body}".TrimEnd());
+            Log.Write($"apns: {pushType} HTTP {(int)resp.StatusCode} ({env}) apns-id={id ?? "-"} {body}".TrimEnd());
             if (resp.StatusCode == HttpStatusCode.Forbidden && body.Contains("ExpiredProviderToken")) ResetToken();
-            return resp.IsSuccessStatusCode;
+            return ((int)resp.StatusCode, body);
         }
         catch (Exception e)
         {
             Log.Write($"apns: send failed ({e.Message})");
-            return false;
+            return (-1, "");
         }
     }
 }
