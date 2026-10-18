@@ -44,7 +44,8 @@ enum Demo {
             #"{"id":"demo-doku","label":"Doku","project":"docs","state":"stopped","since":\#(ago(180)),"until":null,"voice":false,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(61, 48, 0.94, 6, 2, "Fertig, die Doku ist aktualisiert."))}"#,
         ]
         let today = #"{"costUsd":13.61,"turns":65,"spokenSeconds":754,"rateLimits":[{"kind":"five_hour","percentUsed":42,"resetsAt":null},{"kind":"seven_day","percentUsed":18,"resetsAt":null}]}"#
-        return #"{"t":"sessions","at":\#(t),"sessions":[\#(sessions.joined(separator: ","))],"today":\#(today)}"#
+        let reminders = #"[{"id":"r1","text":"Lass die Tests laufen und berichte, was rot ist.","to":"Shirts","at":\#(t + 14 * 3_600_000)},{"id":"r2","text":"Deploye auf Staging.","to":"Zentrale","after":"Shirts"}]"#
+        return #"{"t":"sessions","at":\#(t),"sessions":[\#(sessions.joined(separator: ","))],"today":\#(today),"reminders":\#(reminders)}"#
     }
 }
 

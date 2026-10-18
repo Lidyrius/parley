@@ -52,10 +52,21 @@ struct Today: Equatable, Sendable {
     var rateLimits: [RateLimit] = []
 }
 
+/// A Wiedervorlage on the host (docs/IPHONE.md): for whom, what, and when — a time (host ms) or
+/// once another session is done.
+struct ReminderRow: Identifiable, Equatable, Sendable {
+    var id: String
+    var text = ""
+    var to = ""                     // a session's name, or "Sir"
+    var at: Double?
+    var after: String?
+}
+
 /// A `sessions` frame: the host's `/sessions` JSON plus `at`, the host clock when it was sent.
 struct Snapshot: Equatable, Sendable {
     var sessions: [Session] = []
     var today: Today?
+    var reminders: [ReminderRow] = []
     var at: Double?
 }
 
@@ -400,12 +411,25 @@ extension Today: Decodable {
     }
 }
 
+extension ReminderRow: Decodable {
+    private enum K: String, CodingKey { case id, text, to, at, after }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        id = try c.decode(String.self, forKey: .id)
+        text = c.lenient(.text) ?? ""
+        to = c.lenient(.to) ?? ""
+        at = c.lenient(.at)
+        after = c.lenient(.after)
+    }
+}
+
 extension Snapshot: Decodable {
-    private enum K: String, CodingKey { case sessions, today, at }
+    private enum K: String, CodingKey { case sessions, today, reminders, at }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         sessions = (c.lenient(.sessions) as Lossy<Session>?)?.items ?? []
         today = c.lenient(.today)
+        reminders = (c.lenient(.reminders) as Lossy<ReminderRow>?)?.items ?? []
         at = c.lenient(.at)
     }
 }

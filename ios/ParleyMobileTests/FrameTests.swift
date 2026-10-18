@@ -52,6 +52,14 @@ struct FrameTests {
         #expect(snap.sessions[0].canResume == false)
     }
 
+    @Test func decodesTheWiedervorlagen() throws {
+        let json = #"{"t":"sessions","sessions":[],"reminders":[{"id":"r1","text":"Tests","to":"Shirts","at":1760000000000},{"id":"r2","text":"Deploy","to":"Zentrale","after":"Shirts"},{"text":"no id"}]}"#
+        guard case .sessions(let snap)? = Frame.decode(json) else { Issue.record("not a sessions frame"); return }
+        #expect(snap.reminders == [ReminderRow(id: "r1", text: "Tests", to: "Shirts", at: 1_760_000_000_000),
+                                   ReminderRow(id: "r2", text: "Deploy", to: "Zentrale", after: "Shirts")])
+        #expect(RemindersCard.when(snap.reminders[1], skew: 0) == "wenn Shirts fertig ist")
+    }
+
     @Test func emptyFrameStillDecodes() {
         #expect(Frame.decode(#"{"t":"sessions"}"#) == .sessions(Snapshot()))
     }

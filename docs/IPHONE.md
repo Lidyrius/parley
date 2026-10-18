@@ -60,7 +60,7 @@ Authorization: Bearer <secret>
 
 | `t`        | direction        | body |
 |------------|------------------|------|
-| `sessions` | host → phones    | the host's `GET /sessions` JSON (`sessions`, `today`) plus `at` (host clock, epoch ms). A row's `voice` means *holds the voice right now* (speaking/listening), not "voice mode on" — every listed session has voice mode. Sent on change, at least every 10 s. The relay keeps the latest one and sends it to a phone right after it connects. |
+| `sessions` | host → phones    | the host's `GET /sessions` JSON (`sessions`, `today`, `reminders`) plus `at` (host clock, epoch ms). A row's `voice` means *holds the voice right now* (speaking/listening), not "voice mode on" — every listed session has voice mode. Sent on change, at least every 10 s. The relay keeps the latest one and sends it to a phone right after it connects. |
 | `peer`     | relay → phones   | `{ "t": "peer", "host": true|false }` on connect and whenever the host comes or goes. |
 | `resume`   | phone → host     | `{ "t": "resume", "id": "<session id>" }` — same as `POST /resume` on the host. |
 | `hello`    | phone → host     | `{ "t": "hello", "device": "<name>" }` after connecting (informational). |
@@ -285,4 +285,12 @@ on by default):
   Shortcuts actions (CarPlay, leaving home), and on the host "Unterwegs, wenn der Mac / PC
   gesperrt ist" (locked ≥ 1 min; off by default) — the phone's own choice stays its own.
 - **Fortsetzen** also for sessions with work in the background (Claude Code takes a prompt then).
+- **Wiedervorlage:** the Zentrale turns "erinnere Shirts morgen um neun …" into `POST /remind`
+  (`to`, `text`, one of `at` / `in` / `after`; no `to` = for Sir); `GET /remind` lists,
+  `POST /remind/cancel {id}` removes. The host keeps them in `reminders.json` and checks every
+  30 s and at each session's turn end ("after"). Due for a session: its instruction ("Wiedervorlage
+  von Sir …"), resumed or started in its folder if it doesn't run. Due for Sir: a `reminder`
+  dialog, spoken like an update (the phone rings when Unterwegs). `/sessions` carries
+  `reminders: [{id, text, to, at (ms) | null, after | null}]`; the phone lists them under the
+  sessions.
 

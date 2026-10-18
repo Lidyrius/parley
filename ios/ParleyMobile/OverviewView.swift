@@ -69,6 +69,7 @@ struct OverviewView: View {
         case .connected, .connecting:
             if let snapshot = relay.snapshot {
                 sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend, resume: relay.resume)
+                if !snapshot.reminders.isEmpty { RemindersCard(list: snapshot.reminders, skew: relay.skew) }
             } else {
                 HStack(spacing: 10) {
                     ProgressView()
@@ -127,6 +128,51 @@ struct OverviewView: View {
     private func binding(_ id: String) -> Binding<Bool> {
         Binding(get: { expanded.contains(id) },
                 set: { if $0 { expanded.insert(id) } else { expanded.remove(id) } })
+    }
+}
+
+/// The host's Wiedervorlagen ("Shirts · morgen 09:00 · Lass die Tests laufen"), soonest first.
+/// Cancelled by voice through the Zentrale ("streich die Erinnerung für Shirts").
+struct RemindersCard: View {
+    let list: [ReminderRow]
+    let skew: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Wiedervorlagen").font(.title3.bold())
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(list) { r in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: r.to == "Sir" ? "bell" : r.after == nil ? "clock" : "arrow.turn.down.right")
+                            .foregroundStyle(Theme.claude)
+                            .frame(width: 20)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(r.to == "Sir" ? "Für dich" : r.to).font(.subheadline.weight(.semibold))
+                                Spacer(minLength: 8)
+                                Text(Self.when(r, skew: skew)).font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Text(r.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.card))
+        }
+    }
+
+    /// "heute 17:00", "morgen 09:00", "Mo., 20.10. 09:00" — or "wenn Shirts fertig ist".
+    static func when(_ r: ReminderRow, skew: Double) -> String {
+        guard let at = r.at else { return "wenn \(r.after ?? "es") fertig ist" }
+        let date = Date(timeIntervalSince1970: (at - skew) / 1000)
+        let time = date.formatted(date: .omitted, time: .shortened)
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "heute \(time)" }
+        if cal.isDateInTomorrow(date) { return "morgen \(time)" }
+        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.twoDigits).hour().minute())
     }
 }
 

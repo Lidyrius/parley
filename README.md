@@ -63,6 +63,8 @@ it's completely terminal-agnostic. In Codex, activate the skill explicitly with
   language and in the Jarvis character.
 - 🎤 **Voice replies** — talk back; silence ends the recording automatically.
 - ✋ **Barge-in** — just talk over Parley ("Stopp", or anything) and it stops and listens.
+- 🗓️ **Wiedervorlage** — "remind Shirts tomorrow at nine to run the tests", "when Shirts is
+  done, deploy", or a reminder for yourself; handed over at the time, even to a closed session.
 - 🌊 **Live waveform pill** — a floating, always-on-top capsule shows it's listening and
   a volume-pulsing orb, so you know you're heard.
 - ⏯️ **Smart media pause** — pauses YouTube/Spotify while speaking, resumes after —

@@ -226,6 +226,34 @@ jq -n '{name: "Apple", note: "Systemfarben aus Apples Human Interface Guidelines
 - Sir in einem Satz sagen, wie sie heißt und wie sie wirkt („Apple: Systemblau auf Weiß, nachts
   Tiefschwarz“) — die Hex-Werte nur auf dem Bildschirm.
 
+## Wiedervorlage
+
+Sir gibt einen Auftrag für später: „Erinnere Shirts morgen um neun, die Tests laufen zu lassen“,
+„sag Parley in zwei Stunden, es soll das Release prüfen“, „wenn Shirts fertig ist, soll die
+Zentrale deployen“ oder für sich selbst „erinnere mich um fünf an das Telefonat mit Max“. Parley
+hebt ihn auf (übersteht Neustarts) und übergibt ihn zur Zeit bzw. sobald die Session fertig ist —
+eine Session, die dann nicht läuft, nimmt Parley wieder auf oder startet sie in ihrem Ordner.
+
+```bash
+# für eine Session zu einer Uhrzeit (ISO 8601 MIT Zeitzone — die aktuelle per `date +%z`)
+jq -n '{to: "Shirts", text: "Lass die Tests laufen und berichte, was rot ist.", at: "2026-10-19T09:00:00+02:00"}' \
+  | curl -sS -X POST "http://127.0.0.1:${PARLEY_PORT:-8787}/remind" -H 'Content-Type: application/json' --data-binary @- | jq .
+# in N Minuten: {to, text, in: 120} · wenn eine Session fertig ist: {to: "Zentrale", text, after: "Shirts"}
+# für Sir: {text: "das Telefonat mit Max", in: 30} (ohne `to`) — Parley sagt dann „Erinnerung, Sir: …“
+```
+
+- `to` / `after`: der gesprochene Name (`label`) oder die id aus `/sessions`; eine frühere Session
+  per id aus `/past`; ein Ordner ohne Session: `cwd` statt `to`. Genau eins von `at`, `in`, `after`.
+- `text` ist der Auftrag an die Session, so formuliert, als gäbe ihn Sir gerade (sie erhält
+  „Wiedervorlage von Sir (gesprochen …): <text>“). Für Sir nur der Inhalt („das Telefonat mit Max“).
+- „Morgen“, „heute Abend“, „in zwei Stunden“: selbst ausrechnen (`date`), Uhrzeit ohne Datum =
+  die nächste. Mehrdeutig („später“)? Kurz nachfragen.
+- „Wenn X fertig ist“ = wenn X das nächste Mal seinen Zug beendet (oder geschlossen ist).
+- Antwort `{"ok":true,"reminder":{id,text,to,at,after}}`; `400` nennt den Fehler. Sir in einem
+  Satz bestätigen: „Morgen um neun erinnere ich Shirts an die Tests, Sir.“
+- „Was steht an?“ — `GET /remind` (`at` in ms, `after` = worauf sie wartet), gesprochen
+  zusammenfassen. „Streich …“ — die id aus der Liste: `POST /remind/cancel` mit `{id}` (oder `{ids}`).
+
 ## Allgemeine Fragen
 
 Beantworte sie selbst, direkt und kurz — die Antwort steht im `<speak>`-Tag, Ergänzungen auf dem
