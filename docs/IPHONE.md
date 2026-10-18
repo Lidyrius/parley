@@ -279,7 +279,8 @@ on by default):
   still working: it waits (`queued`, the Island shows it) for theirs, then one ring for all — "Ich
   habe drei Updates für Sie, Sir." Nothing else at work → it rings at once. Calling in starts the
   round at once; permission prompts never wait, nor does a turn after Sir's own "ruf mich in
-  zwei Minuten zurück" (it rings at once and ends a gather already under way).
+  zwei Minuten zurück" (it rings at once and ends a gather already under way), and a
+  Wiedervorlage for Sir ends a gather too.
 - **Wachhund:** every 30 s, each working session's transcript tail (same tool call 4× in the last
   8, the last 6 failed, or 10 min silent after 15 min of work) → Sir is asked "Soll ich
   eingreifen?" (a `watchdog` dialog like a permission prompt) or notified when Unterwegs; a yes

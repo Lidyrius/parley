@@ -393,6 +393,10 @@ public sealed class Server
 
     // ---- Wiedervorlage (Reminders.cs) ----------------------------------------------------
 
+    // A Wiedervorlage for Sir waits at the gate (a Fragerunde ends then, as for Sir's own timer).
+    private int _remindersWaiting;
+    public bool TimerQueued() => Sessions.TimerQueued() || Volatile.Read(ref _remindersWaiting) > 0;
+
     // Every 30 s (Program): what is due by time, or because its session is done.
     public void TickReminders() => FireReminders(r => ReminderStore.IsDue(r, DateTime.UtcNow, Sessions.StateSince));
 
@@ -422,7 +426,9 @@ public sealed class Server
             {
                 using var hold = PhoneCall.Hold();
                 Interlocked.Increment(ref _queued);
+                Interlocked.Increment(ref _remindersWaiting);
                 await _turnGate.WaitAsync();
+                Interlocked.Decrement(ref _remindersWaiting);
                 try
                 {
                     Interlocked.Decrement(ref _queued);

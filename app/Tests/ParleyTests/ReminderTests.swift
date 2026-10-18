@@ -74,6 +74,19 @@ final class ReminderTests: XCTestCase {
         XCTAssertEqual(voiced.first?.event, ControlServer.reminderEvent)
     }
 
+    func testAReminderForSirWaitingInTheQueueEndsAFragerunde() {
+        var held: ((TurnReply) -> Void)?
+        server.replyProvider = { [unowned self] turn, done in voiced.append(turn); if held == nil { held = done } else { done(TurnReply(transcript: "", park: false)) } }
+        let busy = TurnPayload(event: "turn", session_id: "s1", cwd: dir, project: "x", tmux_pane: "", speak: "…", label: "X", listen: true)
+        server.receiveTurn(busy) { _ in }                       // being voiced (a Fragerunde gathers in it)
+        XCTAssertFalse(server.timerQueued())
+        XCTAssertEqual(post("/remind", #"{"text":"Probeanruf","in":0}"#).0, 200)   // due at once → queued behind
+        XCTAssertTrue(server.timerQueued())
+        held?(TurnReply(transcript: "", park: false))
+        _ = server.sessionsJSON()
+        XCTAssertFalse(server.timerQueued())
+    }
+
     func testCancelAndBadRequests() throws {
         presence("s1", "Shirts", "idle")
         let made = post("/remind", #"{"to":"Shirts","text":"x","at":"2025-10-09T12:00:00+02:00"}"#)

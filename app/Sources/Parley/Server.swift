@@ -471,7 +471,10 @@ final class ControlServer: @unchecked Sendable {
     }
 
     func afterWait(_ id: String) -> Bool { queue.sync { sessions.afterWait(id) } }
-    func timerQueued() -> Bool { queue.sync { sessions.timerQueued() } }
+    // Sir's own timer or a Wiedervorlage for him waits in the queue: a Fragerunde ends now.
+    func timerQueued() -> Bool {
+        queue.sync { sessions.timerQueued() || replyQueue.contains { $0.turn.event == Self.reminderEvent } }
+    }
 
     private func pruneParked() {
         let cutoff = Date().addingTimeInterval(-90)

@@ -53,7 +53,7 @@ internal sealed class TrayApp : ApplicationContext
         _pipeline.Ring = label => Ringer.Ring(label);
         _pipeline.OthersWorking = id => serverRef?.Sessions.OthersWorking(id) ?? false;
         _pipeline.AfterWait = id => serverRef?.Sessions.AfterWait(id) ?? false;
-        _pipeline.TimerQueued = () => serverRef?.Sessions.TimerQueued() ?? false;
+        _pipeline.TimerQueued = () => serverRef?.TimerQueued() ?? false;
         _pipeline.SetCallback = (id, at) => _server.Sessions.SetCallback(id, at);
         _server.OnReminded = r => Notifier.Notify("Parley · Wiedervorlage", $"An {r.Label}: {r.Text}");
         _server.OnPalette = (name, frame) =>

@@ -290,7 +290,8 @@ final class AppController: ObservableObject {
 
     // Only while more can come: another session still working. Nothing else at work → it rings
     // at once (waiting would only delay this one update). Sir's own timer ("ruf mich in 2
-    // Minuten zurück") never waits: its turn rings at once, and one queued behind ends the wait.
+    // Minuten zurück") never waits: its turn rings at once, and one queued behind ends the wait —
+    // as does a Wiedervorlage for Sir.
     private func gatherRound(session: String) async {
         guard let end = lastCallEnd, !phone.callActive else { return }
         let ready = end.addingTimeInterval(Self.roundGap)
