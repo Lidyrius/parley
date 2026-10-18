@@ -42,6 +42,14 @@ final class AppController: ObservableObject {
             if bargeIn { BargeMonitor.requestAuthorization() }
         }
     }
+    // Einstellungen → App-Symbol: applies at once, kept in the Keychain.
+    @Published var appIcon = AppIconChoice.saved {
+        didSet {
+            Keychain.set(appIcon == .porzellan ? "" : appIcon.rawValue, for: .appIcon)
+            AppIconChoice.apply(appIcon)
+        }
+    }
+    private var appearanceWatch: NSKeyValueObservation?
     private var speaking: TTSPlayer?       // the Mac's voice right now (barge-in cuts it)
     private var localBarged = false
     private var localPreroll: [Int16] = []  // the last 2 s of mic when Sir barged in
@@ -75,6 +83,10 @@ final class AppController: ObservableObject {
         started = true
         mic.prepareInput()   // expensive AUHAL setup now → near-instant mic starts later
         if bargeIn { BargeMonitor.requestAuthorization() }
+        AppIconChoice.apply(appIcon)
+        appearanceWatch = NSApp.observe(\.effectiveAppearance) { _, _ in
+            Task { @MainActor in AppIconChoice.apply(AppController.shared.appIcon) }
+        }
         Notifier.requestAuth()
         server.onTurn = { [weak self] turn in
             Task { @MainActor in

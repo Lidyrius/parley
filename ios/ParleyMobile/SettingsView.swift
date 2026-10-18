@@ -10,6 +10,7 @@ struct SettingsView: View {
     /// Unlocked by tapping "Version" five times.
     @AppStorage("developer") private var developer = false
     @State private var versionTaps = 0
+    @State private var appIcon = AppIconChoice.current
 
     var body: some View {
         @Bindable var model = model
@@ -48,6 +49,7 @@ struct SettingsView: View {
                     Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Mit „Stumm“ kommt stattdessen eine Mitteilung; tippe darauf und antworte schriftlich. Anrufe starten auf dem Lautsprecher (AirPods und Auto bleiben, wie sie sind). „Nach dem Gespräch auflegen“: Hat Parley zu Ende gesprochen, legt es sofort auf – gut, wenn danach wieder Musik laufen soll. Aus, bleibt Parley dran und du redest einfach weiter. Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“. „Parley unterbrechen“: Fang einfach an zu reden, während Parley spricht (oder sag „Stopp“) – Parley verstummt sofort und hört zu. Automatisch: Einstellungen → Fokus → z. B. „Fahren“ → Fokusfilter → Parley schaltet Unterwegs mit dem Fokus ein und aus; oder in Kurzbefehle → Automation (CarPlay verbunden, Zuhause verlassen) die Aktion „Unterwegs“.")
                 }
                 Section("Darstellung") {
+                    AppIconRow(selection: $appIcon)
                     Picker("Erscheinungsbild", selection: Binding(get: { Appearance.shared.scheme },
                                                                    set: { Appearance.shared.scheme = $0 })) {
                         ForEach(SchemeChoice.allCases) { Text($0.name).tag($0) }
@@ -567,3 +569,75 @@ struct KnobTuner<Preview: View>: View {
         return t.truncatingRemainder(dividingBy: 6) < 4 ? 0.3 + 0.35 * abs(sin(t * 7.3)) * abs(cos(t * 3.1)) : 0
     }
 }
+
+/// The app's icon on the Home Screen: Porzellan · Indigo (the primary) or an alternate.
+enum AppIconChoice: String, CaseIterable, Identifiable {
+    case porzellan, indigo, graphit, petrol
+
+    var id: Self { self }
+
+    var name: String {
+        switch self {
+        case .porzellan: "Porzellan"
+        case .indigo: "Indigo"
+        case .graphit: "Graphit"
+        case .petrol: "Petrol"
+        }
+    }
+
+    /// The alternate icon (ios/AppIcons), nil = the primary.
+    var iconName: String? { self == .porzellan ? nil : "AppIcon-" + name }
+    var preview: String { "IconPreview" + name }
+
+    static var current: Self {
+        let set = UIApplication.shared.alternateIconName
+        return allCases.first { $0.iconName == set } ?? .porzellan
+    }
+}
+
+/// The four icons side by side; a tap switches at once (iOS confirms with its own short note).
+private struct AppIconRow: View {
+    @Binding var selection: AppIconChoice
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("App-Symbol", systemImage: "app.badge")
+            HStack(spacing: 0) {
+                ForEach(AppIconChoice.allCases) { choice in
+                    Button { pick(choice) } label: {
+                        VStack(spacing: 6) {
+                            Image(choice.preview)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 58, height: 58)
+                                .padding(3)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 17, style: .continuous)
+                                        .strokeBorder(selection == choice ? Theme.claude : .clear, lineWidth: 2.5)
+                                }
+                            Text(choice.name)
+                                .font(.caption)
+                                .foregroundStyle(selection == choice ? .primary : .secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("App-Symbol \(choice.name)")
+                    .accessibilityAddTraits(selection == choice ? .isSelected : [])
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .sensoryFeedback(.selection, trigger: selection)
+    }
+
+    private func pick(_ choice: AppIconChoice) {
+        guard choice != selection, UIApplication.shared.supportsAlternateIcons else { return }
+        let before = selection
+        selection = choice
+        Task {
+            do { try await UIApplication.shared.setAlternateIconName(choice.iconName) } catch { selection = before }
+        }
+    }
+}
+

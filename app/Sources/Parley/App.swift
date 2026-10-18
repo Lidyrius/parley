@@ -6,9 +6,12 @@ struct ParleyApp: App {
     @StateObject private var controller = AppController.shared
 
     var body: some Scene {
-        MenuBarExtra("Parley", systemImage: "waveform") {
+        MenuBarExtra {
             MenuBarView(controller: controller)
                 .task { controller.start() }
+        } label: {
+            Image(nsImage: AppIconChoice.menuBarImage)
+                .accessibilityLabel("Parley")
         }
         .menuBarExtraStyle(.window)
 

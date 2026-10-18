@@ -42,6 +42,7 @@ enum Keychain {
         case apnsKeyId      // APNs auth key id (from AuthKey_<KEYID>.p8)
         case apnsTeamId     // Apple team id; empty = 384887N3UL
         case apnsKeyP8      // the .p8 PEM text
+        case appIcon        // the app's icon (AppIconChoice raw value); empty = porzellan
         case zentraleDir    // the Zentrale's folder; empty = ~/workspace/privat/parley-zentrale
         case projectsDir    // where the Zentrale creates projects; empty = ~/workspace/privat
     }

@@ -31,6 +31,11 @@ fi
 # system Now-Playing state + send play/pause — universal media pause with zero user setup.
 cp -R "$ROOT/third_party/mediaremote-adapter" "$APP/Contents/Resources/"
 
+# The app icon: Icon Composer file (light, dark, clear, tinted) → Assets.car + Parley.icns.
+xcrun actool "$ROOT/app/AppIcon/Parley.icon" --compile "$APP/Contents/Resources" --platform macosx \
+  --minimum-deployment-target 14.0 --app-icon Parley \
+  --output-partial-info-plist "$(mktemp -d)/icon.plist" >/dev/null
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -43,6 +48,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key>           <string>1</string>
+    <key>CFBundleIconFile</key>          <string>Parley</string>
+    <key>CFBundleIconName</key>          <string>Parley</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>LSMinimumSystemVersion</key>    <string>14.0</string>
     <key>LSUIElement</key>               <true/>

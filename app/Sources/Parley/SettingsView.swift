@@ -17,6 +17,9 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("App-Symbol") {
+                AppIconPicker(controller: AppController.shared)
+            }
             Section("Sprache / Language") {
                 Picker("Gesprochene Sprache", selection: $language) {
                     ForEach(languages, id: \.self) { Text($0).tag($0) }
@@ -73,3 +76,43 @@ struct SettingsView: View {
         saved = true
     }
 }
+
+/// The four icons side by side; a click switches at once (no "Speichern" needed).
+private struct AppIconPicker: View {
+    @ObservedObject var controller: AppController
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: 18) {
+            ForEach(AppIconChoice.allCases) { choice in
+                let on = controller.appIcon == choice
+                Button { controller.appIcon = choice } label: {
+                    VStack(spacing: 6) {
+                        Group {
+                            if let image = choice.image(dark: scheme == .dark) {
+                                Image(nsImage: image).resizable().scaledToFit()
+                            } else {
+                                RoundedRectangle(cornerRadius: 12).fill(.quaternary)
+                            }
+                        }
+                        .frame(width: 56, height: 56)
+                        .padding(3)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                .strokeBorder(on ? Color.accentColor : .clear, lineWidth: 2.5)
+                        }
+                        Text(choice.name)
+                            .font(.caption)
+                            .foregroundStyle(on ? .primary : .secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("App-Symbol \(choice.name)")
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+    }
+}
+

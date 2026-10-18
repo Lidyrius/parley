@@ -75,6 +75,20 @@ internal sealed class TrayApp : ApplicationContext
             _tray!.Text = mute.Checked ? "Parley (stumm)" : "Parley";
         };
         menu.Items.Add(mute);
+        // App-Symbol: the tray shows the chosen icon at once (as the macOS / iPhone settings).
+        var icons = new ToolStripMenuItem("App-Symbol");
+        foreach (var (id, name) in AppIcon.Choices)
+        {
+            var item = new ToolStripMenuItem(name) { Checked = Config.Load().AppIcon == id };
+            item.Click += (_, _) =>
+            {
+                Config.Merge(new Dictionary<string, string> { ["appIcon"] = id });
+                foreach (ToolStripMenuItem other in icons.DropDownItems) other.Checked = other == item;
+                _tray.Icon = AppIcon.For(id);
+            };
+            icons.DropDownItems.Add(item);
+        }
+        menu.Items.Add(icons);
         // iPhone (docs/IPHONE.md): pairing opens the relay's QR page; the status line is set on open.
         var pair = new ToolStripMenuItem("iPhone verbinden…");
         pair.Click += (_, _) => PairIPhone();
@@ -134,7 +148,7 @@ internal sealed class TrayApp : ApplicationContext
 
         _tray = new NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = AppIcon.For(Config.Load().AppIcon),
             Text = "Parley",
             Visible = true,
             ContextMenuStrip = menu,

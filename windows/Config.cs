@@ -37,6 +37,7 @@ public sealed class Config
     public string PhoneActivityToken { get; init; } = "";   // the running Live Activity's update token; "" = none
     public bool AutoAwayOnLock { get; init; }   // the PC locked for a minute counts as Unterwegs
     public bool BargeIn { get; init; } = true;  // talking over Parley stops it and it listens
+    public string AppIcon { get; init; } = "porzellan";   // tray → App-Symbol (AppIcon.Choices id)
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
@@ -109,6 +110,7 @@ public sealed class Config
                 PhoneActivityToken = S("phoneActivityToken").Trim(),
                 AutoAwayOnLock = S("autoAwayOnLock") == "1",
                 BargeIn = S("bargeIn") != "0",
+                AppIcon = S("appIcon", "porzellan"),
             };
         }
         catch

@@ -14,6 +14,7 @@
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <Version>0.1.0</Version>
+    <ApplicationIcon>Parley.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
