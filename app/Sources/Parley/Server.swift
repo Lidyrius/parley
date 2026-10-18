@@ -240,6 +240,12 @@ final class ControlServer: @unchecked Sendable {
 
     // MARK: - the phone's wake word
 
+    // A Fortsetzen arrived just now (the call Sir started for it is not a call to greet).
+    private var resumedAt: Date?
+    func resumedRecently() -> Bool {
+        queue.sync { resumedAt.map { now().timeIntervalSince($0) < 5 } ?? false }
+    }
+
     // "Hey Parley" during a call: the wake dialog (greeting → listen → route), only while
     // nothing is queued or being voiced.
     func wakeFromPhone() {
@@ -417,6 +423,7 @@ final class ControlServer: @unchecked Sendable {
     // During Sir's timer: no dialog — the wait ends now and the session reports when it is done.
     private func startResume(_ id: String) -> Bool {
         guard sessions.canResume(id) else { return false }
+        resumedAt = now()
         if let text = sessions.endWait(id) {
             Log.write("resume: \(sessions.label(of: id) ?? id) — Sir ends the wait early")
             deliver(id, text)

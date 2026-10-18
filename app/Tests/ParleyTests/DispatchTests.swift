@@ -280,9 +280,12 @@ final class DispatchTests: XCTestCase {
         XCTAssertEqual(try state("w1"), "waiting")
         XCTAssertTrue(reg.canResume("w1"))
         XCTAssertEqual(post("/resume", #"{"id":"w1"}"#).0, 200)                    // Fortsetzen
+        XCTAssertTrue(server.resumedRecently())                                       // the call it starts is not greeted
         let woke = post("/wake", wake).1
         XCTAssertTrue(woke.contains("vorzeitig beendet") && woke.contains("Fahre fort"), woke)
         XCTAssertNotEqual(try state("w1"), "waiting")
+        clock.t += 6
+        XCTAssertFalse(server.resumedRecently())
     }
 
     func testResumeRejectsUnknownOrUnsafeIds() throws {

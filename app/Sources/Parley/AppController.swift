@@ -289,8 +289,21 @@ final class AppController: ObservableObject {
 
     private func syncPhone() {
         if phoneCall && !phone.callActive { lastCallEnd = Date() }
+        if !phoneCall && phone.callActive { greetCaller() }
         phoneCall = phone.callActive
         phoneAway = phone.away
+    }
+
+    // Sir called in: Parley greets him at once and listens ("Zu Diensten, Sir. Was darf ich für Sie
+    // tun?") — no "Hey Parley" needed. Only when nothing else runs: a call that answers a ring or
+    // calls back a waiting line has its turn, and Fortsetzen sends its resume right after the
+    // call starts (a dialog, or Sir's timer ending — then the session reports by itself).
+    private func greetCaller() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard let self, phone.callActive, !server.resumedRecently() else { return }
+            server.wakeFromPhone()
+        }
     }
 
     // MARK: - Fragerunde

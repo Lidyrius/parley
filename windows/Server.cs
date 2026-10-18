@@ -532,8 +532,13 @@ public sealed class Server
 
     // POST /resume and the relay's `resume` frame (docs/IPHONE.md): the voice dialog for a
     // resumable session. False = unknown or not resumable (atomic: a double click gets false).
+    // A Fortsetzen arrived just now (the call Sir started for it is not a call to greet).
+    private DateTime _resumedAt = DateTime.MinValue;
+    public bool ResumedRecently() => DateTime.UtcNow - _resumedAt < TimeSpan.FromSeconds(5);
+
     public bool StartResume(string id)
     {
+        if (id.Length > 0) _resumedAt = DateTime.UtcNow;
         // During Sir's timer: no dialog — the wait ends now and the session reports when done.
         if (id.Length > 0 && Sessions.EndWait(id) is { } early)
         {

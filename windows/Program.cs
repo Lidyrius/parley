@@ -188,6 +188,15 @@ internal sealed class TrayApp : ApplicationContext
         }, TaskScheduler.Default);
     }
 
+    // Sir called in: Parley greets him at once and listens — no "Hey Parley" needed. Only when
+    // nothing else runs (a call answering a ring or calling back a waiting line has its turn;
+    // Fortsetzen sends its resume right after the call starts). As macOS.
+    private async Task GreetCaller()
+    {
+        await Task.Delay(1200);
+        if (PhoneCall.Active && !_server.ResumedRecently()) _server.StartWake();
+    }
+
     // ---- the Wachhund (Watchdog.cs) ---------------------------------------------------
 
     private readonly WatchdogMemory _watchdogMemory = new();
@@ -314,7 +323,11 @@ internal sealed class TrayApp : ApplicationContext
         switch (message)
         {
             case PhoneResume r: _server.StartResume(r.Id); break;
-            case PhoneCallState c: PhoneCall.OnCall(c.Started, c.Down); break;
+            case PhoneCallState c:
+                var wasInCall = PhoneCall.Active;
+                PhoneCall.OnCall(c.Started, c.Down);
+                if (c.Started && !wasInCall) _ = GreetCaller();
+                break;
             case PhoneWake _: _server.StartWake(); break;
             case PhonePush p: PhoneCall.SetPush(p.Token, p.Env); break;
             case PhoneAway a: PhoneCall.SetAway(a.On); break;

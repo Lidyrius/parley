@@ -296,6 +296,9 @@ on by default):
   have given it (no dialog) and reports when done. Pressed in the app while Unterwegs, Fortsetzen
   starts the call from the phone (nothing to answer) and sends `resume` once it is connected; the
   host voices it into that call instead of ringing.
+- **Sir calls in** (nothing rang for it): Parley greets him at once — "Zu Diensten, Sir. Was darf
+  ich für Sie tun?" — and listens; no "Hey Parley" needed. Not when the call answers a ring, calls
+  back a waiting line, or carries a Fortsetzen (those have their own turn).
 - **A call Sir doesn't take** counts as "Ich rufe zurück": the line waits up to 30 min for his call
   (the tile offers "Rückrufen"), then "Danke für Ihren Rückruf, Sir." — except a permission
   prompt, whose hook gives up after two minutes.
