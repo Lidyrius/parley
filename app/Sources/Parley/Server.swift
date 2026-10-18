@@ -335,7 +335,8 @@ final class ControlServer: @unchecked Sendable {
         }
         if forNew, let name { pending.addName(name, cwd: cwd, at: now()) }
         let guardKey = forNew ? cwd + "\u{1}" + (name ?? "").lowercased() : cwd
-        if start, here == nil, startedAt[guardKey].map({ now().timeIntervalSince($0) >= Self.restartGuard }) ?? true {
+        if start, here == nil, startedAt[guardKey].map({ now().timeIntervalSince($0) >= Self.restartGuard }) ?? true,
+           forNew || !startOnTheWay(cwd) {
             startedAt[guardKey] = now()
             let at = now()
             starter(cwd, resume) { [weak self] tty in
@@ -348,6 +349,17 @@ final class ControlServer: @unchecked Sendable {
     }
 
     // MARK: - start check (StartWatch.swift)
+
+    // A Parley start in `cwd` that hasn't shown up yet — still watched, or its `claude
+    // '/parley:voice'` still runs there (e.g. hanging at a question past the 2-min guard, or
+    // from before a restart): no second session beside it; the instruction waits for that one.
+    var parleyStartRunning: (String) -> Bool = { SessionCloser.parleyStart(inFolder: $0) }
+
+    private func startOnTheWay(_ cwd: String) -> Bool {
+        guard startWatch.entry(cwd) != nil || parleyStartRunning(cwd) else { return false }
+        Log.write("dispatch: a start in \(cwd) is still on the way — no second session")
+        return true
+    }
 
     private func watchStart(_ cwd: String, tty: String?, at: Date) {
         startWatch.begin(cwd: cwd, tty: tty, at: at)

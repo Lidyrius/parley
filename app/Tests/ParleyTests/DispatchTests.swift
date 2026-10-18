@@ -19,6 +19,7 @@ final class DispatchTests: XCTestCase {
         starts = []
         resumed = []
         server.starter = { [unowned self] folder, resume, _ in self.starts.append(folder); self.resumed.append(resume) }
+        server.parleyStartRunning = { _ in false }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("parley-dispatch-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         dir = Zentrale.normalize(url.path)
@@ -117,6 +118,20 @@ final class DispatchTests: XCTestCase {
         XCTAssertEqual(obj["x"] as? String, "y/z")
         XCTAssertFalse(ClaudeTrust.accept("/b", file: file.appendingPathExtension("missing")))   // no config: left alone
         XCTAssertFalse(StartWatch.trustDialog("❯ Yes, I trust this folder\n  No, exit"))       // already on yes
+    }
+
+    func testNoSecondSessionWhileAStartHangs() {
+        final class Running: @unchecked Sendable { var folders: Set<String> = [] }
+        let running = Running()
+        server.parleyStartRunning = { running.folders.contains($0) }
+        XCTAssertEqual(dispatch("Baue X").1, #"{"ok":true,"delivered":"pending","started":true}"#)
+        running.folders.insert(dir)                                   // its claude hangs at a question
+        clock.t += 300                                                // past the 2-min guard
+        XCTAssertEqual(dispatch("Und Y").1, #"{"ok":true,"delivered":"pending","started":false}"#)
+        XCTAssertEqual(starts, [dir])
+        running.folders.removeAll()                                   // it died: a new start is fine
+        XCTAssertEqual(dispatch("Und Z").1, #"{"ok":true,"delivered":"pending","started":true}"#)
+        XCTAssertEqual(starts, [dir, dir])
     }
 
     func testDefaultNoSpotsOnlyQuestionsWhoseDefaultIsNo() {

@@ -211,6 +211,12 @@ enum SessionCloser {
         }
     }
 
+    // A terminal `claude … /parley:voice` (Parley's start command) working in `cwd`.
+    static func parleyStart(inFolder cwd: String) -> Bool {
+        let mine = running().filter { $0.tty != "??" && $0.args.contains(SessionStarter.firstPrompt) }
+        return cwds(mine.map(\.pid)).values.contains(cwd)
+    }
+
     // ~/.claude/sessions/<pid>.json: Claude Code's own pid → session id (not every session has one).
     static func claimed() -> [Int32: String] {
         struct File: Decodable { let pid: Int32; let sessionId: String }
