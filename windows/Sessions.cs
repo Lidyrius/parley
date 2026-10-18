@@ -14,6 +14,8 @@ public sealed class SessionRegistry
     private sealed class Entry
     {
         public string Id = "", Label = "", Project = "";   // session_id, spoken label, cwd basename
+        public string BaseLabel = "";     // the label its hook / mod report (.parley.json)
+        public string? Name;              // Sir's name for this one session (POST /rename, /dispatch name)
         public string Cwd = "";           // its folder, as last reported (routing, POST /dispatch)
         public DateTime FirstSeen;
         public DateTime? PresenceAt;      // last /presence (null = never sent, e.g. Codex)
@@ -348,6 +350,76 @@ public sealed class SessionRegistry
         }
     }
 
+    // ---- its own name ----------------------------------------------------------------
+
+    // Kept across restarts: a session keeps its name when Parley updates (null file = none).
+    public string? NamesFile;
+    private Dictionary<string, string>? _names;
+    private Dictionary<string, string> Names => _names ??= LoadNames();
+
+    private Dictionary<string, string> LoadNames()
+    {
+        try
+        {
+            return NamesFile is not null && File.Exists(NamesFile)
+                ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(NamesFile)) ?? new()
+                : new();
+        }
+        catch { return new(); }
+    }
+
+    public string? Name(string id)
+    {
+        lock (_gate) return _entries.TryGetValue(id, out var e) ? e.Name : null;
+    }
+
+    public DateTime? FirstSeen(string id)
+    {
+        lock (_gate) return _entries.TryGetValue(id, out var e) ? e.FirstSeen : null;
+    }
+
+    /// Gives one session its own name (null / blank → back to its project's). Also for a session
+    /// not seen yet (a resumed one): it carries the name once it shows up. Returns its label now
+    /// (null when it isn't listed yet).
+    public string? Rename(string id, string? raw)
+    {
+        var name = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+        if (name is { Length: > 60 }) name = name[..60];
+        string? label = null;
+        lock (_gate)
+        {
+            if (name is null) Names.Remove(id); else Names[id] = name;
+            try
+            {
+                if (NamesFile is not null)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(NamesFile)!);
+                    File.WriteAllText(NamesFile, JsonSerializer.Serialize(Names));
+                }
+            }
+            catch (Exception e) { Log.Write($"rename: not saved ({e.Message})"); }
+            if (!_entries.ContainsKey(id)) return null;
+        }
+        Update(id, "", "", (e, _) =>
+        {
+            e.Name = name;
+            e.Label = name ?? (e.BaseLabel.Length > 0 ? e.BaseLabel : e.Project);
+            label = e.Label;
+        });
+        return label;
+    }
+
+    /// A running session in `cwd` with this name (any case).
+    public string? Named(string name, string cwd)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.Values.FirstOrDefault(e => e.State != "stopped" && CwdPath.Same(e.Cwd, cwd)
+                && string.Equals(e.Label, name, StringComparison.OrdinalIgnoreCase))?.Id;
+        }
+    }
+
     // POST /close: label, folder and state of a known session, or null.
     public (string Label, string Cwd, string State)? Info(string id)
     {
@@ -529,13 +601,13 @@ public sealed class SessionRegistry
             var t = _now();
             if (!_entries.TryGetValue(id, out var e))
             {
-                e = new Entry { Id = id, FirstSeen = t, HookAt = t, Since = t };
+                e = new Entry { Id = id, FirstSeen = t, HookAt = t, Since = t, Name = Names.GetValueOrDefault(id) };
                 _entries[id] = e;
             }
             var before = e.Label;
             if (project.Length > 0) e.Project = project;
-            if (label.Length > 0) e.Label = label;
-            else if (e.Label.Length == 0) e.Label = e.Project;
+            if (label.Length > 0) e.BaseLabel = label;
+            e.Label = e.Name ?? (e.BaseLabel.Length > 0 ? e.BaseLabel : e.Project);
             change(e, t);
             Refresh();
             if (e.Label != before && e.Label.Length > 0) changedLabel = e.Label;

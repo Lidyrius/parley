@@ -11,7 +11,9 @@ import Foundation
 final class SessionRegistry {
     struct Entry {
         var id: String                 // the agent's session_id
-        var label = ""                 // spoken label (.parley.json) or the project
+        var label = ""                 // spoken label: its own name, else .parley.json, else the project
+        var baseLabel = ""             // the label its hook / mod report (.parley.json)
+        var name: String?              // Sir's name for this one session (POST /rename, /dispatch name)
         var project = ""               // cwd basename
         var cwd = ""                   // its folder, normalized (Zentrale.normalize) — dispatch + routing
         var firstSeen: Date
@@ -230,6 +232,44 @@ final class SessionRegistry {
     }
 
     func label(of id: String) -> String? { entries[id]?.label }
+    func name(of id: String) -> String? { entries[id]?.name }
+    func firstSeen(_ id: String) -> Date? { entries[id]?.firstSeen }
+
+    // MARK: - its own name
+
+    // Kept across restarts: a session keeps its name when Parley updates (nil file = tests).
+    var namesFile: URL?
+    private lazy var names: [String: String] = namesFile
+        .flatMap { try? Data(contentsOf: $0) }
+        .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+
+    /// Gives one session its own name (nil / blank → back to its project's). Also for a session
+    /// not seen yet (a resumed one): it carries the name once it shows up. Returns its label now
+    /// (nil when it isn't listed yet).
+    @discardableResult
+    func rename(_ id: String, to raw: String?) -> String? {
+        let name = raw?.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60).description
+        let new = name?.isEmpty == false ? name : nil
+        names[id] = new
+        if let url = namesFile {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? JSONEncoder().encode(names).write(to: url, options: .atomic)
+        }
+        guard entries[id] != nil else { return nil }
+        update(id) { e, _ in
+            e.name = new
+            e.label = new ?? (e.baseLabel.isEmpty ? e.project : e.baseLabel)
+        }
+        return entries[id]?.label
+    }
+
+    /// A running session in `cwd` with this name (any case).
+    func named(_ name: String, inFolder cwd: String) -> String? {
+        refresh()
+        return entries.values.first {
+            $0.state != "stopped" && $0.cwd == cwd && $0.label.caseInsensitiveCompare(name) == .orderedSame
+        }?.id
+    }
     func info(_ id: String) -> (label: String, cwd: String, state: String)? {
         refresh()
         return entries[id].map { ($0.label, $0.cwd, $0.state) }
@@ -298,7 +338,6 @@ final class SessionRegistry {
         return (id, parkedHookAlive(id) || e.presenceAt != nil)
     }
 
-    // Any session besides `id` that isn't stopped → the turn gets announced.
     // Sir's own timer ran out ("ruf mich in 2 Minuten zurück"): this session's turn, or one
     // waiting in the queue — it rings at once, no Fragerunde.
     func afterWait(_ id: String) -> Bool { entries[id]?.afterWait ?? false }
@@ -310,6 +349,7 @@ final class SessionRegistry {
         return entries.values.contains { $0.id != id && ($0.state == "working" || $0.state == "background") }
     }
 
+    // Any session besides `id` that isn't stopped → the turn gets announced.
     func othersAlive(except id: String) -> Bool {
         refresh()
         return entries.values.contains { $0.id != id && $0.state != "stopped" }
@@ -431,11 +471,12 @@ final class SessionRegistry {
                         _ change: (inout Entry, Date) -> Void) {
         guard !id.isEmpty else { return }
         let t = now()
-        var e = entries[id] ?? Entry(id: id, firstSeen: t, hookAt: t, since: t)
+        var e = entries[id] ?? Entry(id: id, name: names[id], firstSeen: t, hookAt: t, since: t)
         let before = e.label
         if !project.isEmpty { e.project = project }
         if !cwd.isEmpty { e.cwd = Zentrale.normalize(cwd) }
-        if !label.isEmpty { e.label = label } else if e.label.isEmpty { e.label = e.project }
+        if !label.isEmpty { e.baseLabel = label }
+        e.label = e.name ?? (e.baseLabel.isEmpty ? e.project : e.baseLabel)
         change(&e, t)
         entries[id] = e
         refresh()

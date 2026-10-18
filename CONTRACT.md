@@ -47,6 +47,32 @@ Fired on skill activation to wake + greet. App plays a random pre-cached Jarvis 
 ## `GET /health`
 `200 {"ok":true}` — used by `greet.sh` to detect/relaunch the app.
 
+## Session labels
+A session's spoken label comes from `.parley.json` (`name`) in its folder, else the folder name —
+so every session of a folder shares it. One session can have **its own name** instead (it wins over
+the label the hook / mod report, everywhere: `/sessions` `label`, the app, the iPhone, the
+announcement "Update zu …", and the `label` of its queued turn). Names survive app restarts.
+
+### `POST /dispatch` (local, the Zentrale)
+```json
+{ "cwd": "/abs/path", "instruction": "…", "start": true,
+  "resume": "<past session id>",            // optional: continue that session (cwd defaults to its own)
+  "name": "Literally Apps SEO" }            // optional: that one session's own name
+```
+→ `{"ok":true,"delivered":"session"|"pending","started":bool}`.
+- Without `name`: the folder's running session gets the instruction; none → one is started and
+  takes it on its first presence / turn.
+- With `name` (no `resume`): the running session **of that name** in the folder gets it; none → a
+  **new** session is started beside any running there — only a session that appears after the
+  dispatch takes the instruction and the name.
+- With `name` and `resume`: that session gets the name (now, or once it shows up).
+
+### `POST /rename`
+```json
+{ "id": "<session id>", "name": "Literally Apps SEO" }   // "" or null → back to the project's label
+```
+→ `200 {"ok":true,"id":…,"label":…}` · `404` unknown session · `400` no id.
+
 ## Notes
 - Routing/identity is by `session_id` (the hook holds its own blocking connection);
   `tmux_pane` is retained in the payload but no longer drives injection.

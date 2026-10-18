@@ -159,7 +159,10 @@ final class ControlServer: @unchecked Sendable {
         let key = Self.sessionKey(turn)
         fireReminders { $0.after == key }    // its turn ended: "wenn Shirts fertig ist"
         sessions.queued(id: key, label: turn.label ?? "", project: turn.project, cwd: turn.cwd)
-        if let instruction = takePending(turn.cwd) {
+        claimName(key, cwd: turn.cwd)
+        var turn = turn
+        if let name = sessions.name(of: key) { turn.label = name }   // its own name: announced, rung, shown
+        if let instruction = takePending(turn.cwd, id: key) {
             Log.write("dispatch: handing the waiting instruction to \(turn.spokenLabel) (its turn)")
             let reply = TurnReply(transcript: instruction, park: false)
             sessions.finished(id: key, reply: reply)
@@ -285,25 +288,41 @@ final class ControlServer: @unchecked Sendable {
     }
 
     // `resume`: that past session is the one to reach — started with `--resume` unless it runs.
+    // `name`: its own name (with `resume` for that session; else the running session of that name
+    // here, or a NEW one beside any already running in the folder — only it takes the instruction).
     // ponytail: the instruction still waits by folder; another idle session in the same folder
-    // could take it first. Key it by session id if that ever bites.
-    private func dispatchOnQueue(cwd raw: String, instruction: String, start: Bool, resume: String? = nil) -> DispatchResult {
+    // could take it first. Key it by session id if that ever bites. A session the app hasn't seen
+    // since its start counts as new.
+    private func dispatchOnQueue(cwd raw: String, instruction: String, start: Bool, resume: String? = nil,
+                                 name rawName: String? = nil) -> DispatchResult {
         let cwd = Zentrale.normalize(raw)
         prunePending()
         let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        let here = resume.map { sessions.alive($0) } ?? sessions.session(inFolder: cwd)
+        let name = rawName.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+        var here = resume.map { sessions.alive($0) } ?? sessions.session(inFolder: cwd)
+        var forNew = false
+        if let name {
+            if let resume {
+                sessions.rename(resume, to: name)
+            } else {
+                here = sessions.named(name, inFolder: cwd).flatMap { sessions.alive($0) }
+                forNew = here == nil
+            }
+        }
         var result = DispatchResult(delivered: "none", started: false)
         if !text.isEmpty {
             if let s = here, s.reachable {
                 deliver(s.id, text)
                 result.delivered = "session"
             } else {
-                pending.add(text, cwd: cwd, at: now())
+                pending.add(text, cwd: cwd, at: now(), forNew: forNew)
                 result.delivered = "pending"
             }
         }
-        if start, here == nil, startedAt[cwd].map({ now().timeIntervalSince($0) >= Self.restartGuard }) ?? true {
-            startedAt[cwd] = now()
+        if forNew, let name { pending.addName(name, cwd: cwd, at: now()) }
+        let guardKey = forNew ? cwd + "\u{1}" + (name ?? "").lowercased() : cwd
+        if start, here == nil, startedAt[guardKey].map({ now().timeIntervalSince($0) >= Self.restartGuard }) ?? true {
+            startedAt[guardKey] = now()
             starter(cwd, resume)
             result.started = true
         }
@@ -311,11 +330,21 @@ final class ControlServer: @unchecked Sendable {
         return result
     }
 
-    // The instruction(s) waiting for `cwd`, consumed.
-    private func takePending(_ cwd: String?) -> String? {
+    // The instruction(s) waiting for `cwd` that session `id` may take, consumed.
+    private func takePending(_ cwd: String?, id: String) -> String? {
         guard let cwd, !cwd.isEmpty else { return nil }
         prunePending()
-        return pending.take(cwd: Zentrale.normalize(cwd), now: now())
+        return pending.take(cwd: Zentrale.normalize(cwd), now: now(), firstSeen: sessions.firstSeen(id) ?? now())
+    }
+
+    // A named dispatch started a new session in `cwd`: the first one there that appeared after it
+    // takes the name.
+    private func claimName(_ id: String, cwd: String?) {
+        guard let cwd, !cwd.isEmpty, sessions.name(of: id) == nil,
+              let name = pending.takeName(cwd: Zentrale.normalize(cwd), now: now(), firstSeen: sessions.firstSeen(id) ?? now())
+        else { return }
+        sessions.rename(id, to: name)
+        Log.write("dispatch: the new session in \(cwd) is \(name)")
     }
 
     private func prunePending() {
@@ -335,11 +364,12 @@ final class ControlServer: @unchecked Sendable {
         p.project = w?.project ?? p.project
         p.cwd = w?.cwd ?? p.cwd
         p.lastSeen = Date()
-        let pending = p.pending ?? takePending(w?.cwd)
+        let pending = p.pending ?? takePending(w?.cwd, id: key)
         p.pending = nil
         parked[key] = p
         sessions.wakePoll(id: key, label: w?.label ?? "", project: w?.project ?? "", resumed: pending != nil,
                           cwd: w?.cwd ?? "")
+        claimName(key, cwd: w?.cwd)
         pruneParked()
         notifyParked()
         return Self.turnJSON(TurnReply(transcript: pending ?? "", park: false))
@@ -550,7 +580,8 @@ final class ControlServer: @unchecked Sendable {
                                                 cwd: p.cwd ?? "")
             // An instruction waits for this folder: an idle session takes it now (a working one
             // gets it as the reply to its turn, or once it is idle).
-            if instruction == nil, (p.state ?? "idle") == "idle", let text = takePending(p.cwd) {
+            claimName(p.session_id, cwd: p.cwd)
+            if instruction == nil, (p.state ?? "idle") == "idle", let text = takePending(p.cwd, id: p.session_id) {
                 sessions.handedOver(id: p.session_id)
                 Log.write("dispatch: handing the waiting instruction to \(p.label ?? project) (presence)")
                 instruction = text
@@ -581,7 +612,7 @@ final class ControlServer: @unchecked Sendable {
             guard !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || start else {
                 return (400, #"{"ok":false,"error":"nothing to do"}"#)
             }
-            let r = dispatchOnQueue(cwd: cwd, instruction: instruction, start: start, resume: d.resume)
+            let r = dispatchOnQueue(cwd: cwd, instruction: instruction, start: start, resume: d.resume, name: d.name)
             return (200, #"{"ok":true,"delivered":"\#(r.delivered)","started":\#(r.started)}"#)
         case ("POST", "/past"):
             // The Zentrale looks up a past session (title, folder, last prompt) to resume it.
@@ -614,6 +645,19 @@ final class ControlServer: @unchecked Sendable {
             saveReminders()
             Log.write("remind: cancelled \(gone.map(\.label).joined(separator: ", "))")
             return (200, Self.encode(["cancelled": Reminders.rows(gone)]))
+        case ("POST", "/rename"):
+            // One session's own name, beside its project's ("Literally Apps SEO"); "" → back.
+            struct Rename: Decodable { var id: String?; var name: String? }
+            guard let r = try? JSONDecoder().decode(Rename.self, from: req.body), let id = r.id, !id.isEmpty else {
+                return (400, #"{"ok":false,"error":"give id and name"}"#)
+            }
+            guard sessions.info(id) != nil, let label = sessions.rename(id, to: r.name) else {
+                return (404, #"{"ok":false,"error":"unknown session"}"#)
+            }
+            Log.write("rename: \(id) → \(label)")
+            notifyParked()
+            struct Wire: Encodable { let ok = true; let id: String; let label: String }
+            return (200, Self.encode(Wire(id: id, label: label)))
         case ("POST", "/close"):
             guard let c = Contract.decodeClose(req.body) else {
                 return (400, #"{"ok":false,"error":"bad close payload"}"#)

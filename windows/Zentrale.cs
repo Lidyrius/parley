@@ -63,24 +63,39 @@ public sealed class PendingByCwd
     public static readonly TimeSpan Ttl = TimeSpan.FromMinutes(10);
 
     private readonly object _gate = new();
-    private readonly List<(string Dir, string Instruction, DateTime At)> _items = new();
+    // ForNew: only a session that showed up after the dispatch takes it (a named dispatch started a
+    // second session beside one already running in the folder). Name: what that session is called.
+    private readonly List<(string Dir, string Instruction, DateTime At, bool ForNew)> _items = new();
+    private readonly List<(string Dir, string Name, DateTime At)> _names = new();
     private readonly Func<DateTime> _now;
 
     public PendingByCwd(Func<DateTime>? now = null) => _now = now ?? (() => DateTime.UtcNow);
 
-    public void Add(string cwd, string instruction)
+    public void Add(string cwd, string instruction, bool forNew = false)
     {
         var dir = CwdPath.Normalize(cwd);
         if (dir.Length == 0 || instruction.Length == 0) return;
         lock (_gate)
         {
             Prune();
-            _items.Add((dir, instruction, _now()));
+            _items.Add((dir, instruction, _now(), forNew));
         }
     }
 
-    // The oldest live instruction for the folder, removed — one per presence, in order.
-    public string? Take(string? cwd)
+    public void AddName(string cwd, string name)
+    {
+        var dir = CwdPath.Normalize(cwd);
+        if (dir.Length == 0 || name.Length == 0) return;
+        lock (_gate)
+        {
+            Prune();
+            _names.Add((dir, name, _now()));
+        }
+    }
+
+    // The oldest live instruction for the folder that a session first seen at `firstSeen` may
+    // take, removed — one per presence, in order.
+    public string? Take(string? cwd, DateTime? firstSeen = null)
     {
         lock (_gate)
         {
@@ -88,10 +103,27 @@ public sealed class PendingByCwd
             Prune();
             var dir = CwdPath.Normalize(cwd);
             if (dir.Length == 0) return null;
-            var i = _items.FindIndex(x => string.Equals(x.Dir, dir, StringComparison.OrdinalIgnoreCase));
+            var seen = firstSeen ?? DateTime.MinValue;
+            var i = _items.FindIndex(x => string.Equals(x.Dir, dir, StringComparison.OrdinalIgnoreCase) && (!x.ForNew || seen > x.At));
             if (i < 0) return null;
             var found = _items[i].Instruction;
             _items.RemoveAt(i);
+            return found;
+        }
+    }
+
+    // The name waiting for a new session in the folder (one first seen after the dispatch), removed.
+    public string? TakeName(string? cwd, DateTime firstSeen)
+    {
+        lock (_gate)
+        {
+            if (_names.Count == 0) return null;
+            Prune();
+            var dir = CwdPath.Normalize(cwd);
+            var i = _names.FindIndex(x => string.Equals(x.Dir, dir, StringComparison.OrdinalIgnoreCase) && firstSeen > x.At);
+            if (i < 0) return null;
+            var found = _names[i].Name;
+            _names.RemoveAt(i);
             return found;
         }
     }
@@ -105,6 +137,7 @@ public sealed class PendingByCwd
     {
         var t = _now();
         _items.RemoveAll(x => t - x.At >= Ttl);
+        _names.RemoveAll(x => t - x.At >= Ttl);
     }
 }
 
@@ -369,26 +402,56 @@ public sealed class Delivery
         _start = start ?? ((dir, resume) => SessionStarter.Start(dir, resume));
     }
 
-    // /presence: an instruction waiting for this folder, or null.
-    public string? TakePending(string? cwd) => _pending.Take(cwd);
+    // /presence: an instruction waiting for this folder that session `id` may take, or null.
+    public string? TakePending(string? cwd, string id) => _pending.Take(cwd, _sessions.FirstSeen(id) ?? DateTime.UtcNow);
+
+    // A named dispatch started a new session in `cwd`: the first one there that appeared after it
+    // takes the name.
+    public void ClaimName(string id, string? cwd)
+    {
+        if (string.IsNullOrEmpty(cwd) || _sessions.Name(id) is not null) return;
+        if (_pending.TakeName(cwd, _sessions.FirstSeen(id) ?? DateTime.UtcNow) is not { } name) return;
+        _sessions.Rename(id, name);
+        Log.Write($"dispatch: the new session in {cwd} is {name}");
+    }
 
     // POST /dispatch: a live session in `cwd` gets the instruction now; else it waits for the
     // folder's first presence and (start) a session is started there — once per 2 min.
     // `resume`: that past session is the one to reach — started with --resume unless it runs.
+    // `name`: its own name (with `resume` for that session; else the running session of that name
+    // here, or a NEW one beside any already running in the folder — only it takes the instruction).
     // ponytail: the instruction still waits by folder; another idle session in the same folder
-    // could take it first. Key it by session id if that ever bites.
-    public DispatchResult Dispatch(string cwd, string instruction, bool start, string? resume = null)
+    // could take it first. Key it by session id if that ever bites. A session the app hasn't seen
+    // since its start counts as new.
+    public DispatchResult Dispatch(string cwd, string instruction, bool start, string? resume = null, string? name = null)
     {
         var dir = CwdPath.Normalize(cwd);
+        name = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+        var forNew = false;
         var (alive, deliverable) = resume is null ? (false, false) : _sessions.Running(resume);
-        var id = resume is null ? _sessions.DeliverableIn(dir) : deliverable ? resume : null;
+        string? id;
+        if (resume is not null)
+        {
+            if (name is not null) _sessions.Rename(resume, name);
+            id = deliverable ? resume : null;
+        }
+        else if (name is not null)
+        {
+            var mine = _sessions.Named(name, dir);
+            (alive, deliverable) = mine is null ? (false, false) : _sessions.Running(mine);
+            id = deliverable ? mine : null;
+            forNew = mine is null;
+        }
+        else id = _sessions.DeliverableIn(dir);
         if (id is not null)
         {
             if (instruction.Length > 0) _deliver(id, instruction);
             Log.Write($"dispatch: {dir} → its running session");
             return DispatchResult.Delivered;
         }
-        _pending.Add(dir, instruction);
+        _pending.Add(dir, instruction, forNew);
+        if (forNew) _pending.AddName(dir, name!);
+        var key = forNew ? dir + "\u0001" + name!.ToLowerInvariant() : dir;
         if (alive) start = false;   // it runs, just can't take it yet: its next turn does
         if (!start)
         {
@@ -397,19 +460,19 @@ public sealed class Delivery
         }
         lock (_started)
         {
-            if (_started.TryGetValue(dir, out var at) && DateTime.UtcNow - at < RestartAfter)
+            if (_started.TryGetValue(key, out var at) && DateTime.UtcNow - at < RestartAfter)
             {
                 Log.Write($"dispatch: {dir} → pending (a session is already starting)");
                 return DispatchResult.Started;
             }
-            _started[dir] = DateTime.UtcNow;
+            _started[key] = DateTime.UtcNow;
         }
         if (_start(dir, resume))
         {
             if (resume is not null) Log.Write($"dispatch: {dir} → session {resume} resumed");
             return DispatchResult.Started;
         }
-        lock (_started) _started.Remove(dir);
+        lock (_started) _started.Remove(key);
         return DispatchResult.Failed;
     }
 

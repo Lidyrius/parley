@@ -115,7 +115,9 @@ Everything in v1 stays. Additions (unknown types are still ignored everywhere):
   folder, `git init`, `.parley.json`), and starts new sessions the same way (terminal + first prompt
   `/parley:voice` + the task delivered as pending-by-cwd via `POST /dispatch`).
 - **`POST /dispatch`** (local, for the Zentrale): `{"cwd":"<abs path>","instruction":"<task>","start":true}`
-  → starts a session there if none is alive (terminal) and delivers the instruction to it.
+  → starts a session there if none is alive (terminal) and delivers the instruction to it. Optional
+  `name`: that session's own name — a new, second session beside a running one (see CONTRACT.md);
+  `POST /rename {"id","name"}` renames a running one. The phone shows the name as the `label`.
 - **Ringing (Unterwegs-Modus).** While `away` is on and no call is connected, a turn that is about to
   be voiced instead sends a **VoIP push** (APNs, topic `de.developaway.parley.mobile.voip`, push type
   `voip`, payload `{"label":…}`) plus a `ring` frame, and waits up to 45 s for `call start`; then it

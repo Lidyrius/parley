@@ -43,6 +43,7 @@ internal sealed class TrayApp : ApplicationContext
             (id, instr) => serverRef?.Resume(id, instr),
             id => serverRef?.Sessions.OthersAlive(id) ?? false);
         _server = new Server(turn => _pipeline.Run(turn), () => StatsStore.StartSession());
+        _server.Sessions.NamesFile = Path.Combine(Config.Dir, "session-names.json");
         serverRef = _server;
         // A session's label appeared → pre-render its "Update zu" + resume lines in the
         // background, so the first announcement / resume click is instant.

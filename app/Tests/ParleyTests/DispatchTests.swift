@@ -187,6 +187,88 @@ final class DispatchTests: XCTestCase {
         XCTAssertEqual(starts, [])
     }
 
+    // MARK: - a session's own name
+
+    private func label(_ id: String) throws -> String? {
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(reg.json().utf8)) as? [String: Any])
+        return (obj["sessions"] as? [[String: Any]])?.first { $0["id"] as? String == id }?["label"] as? String
+    }
+
+    func testANamedDispatchStartsASecondSessionBesideTheRunningOne() throws {
+        presence("old", "idle")
+        XCTAssertEqual(post("/dispatch", #"{"cwd":"\#(dir)","instruction":"Baue die SEO-Seiten","name":"Literally Apps SEO"}"#).1,
+                       #"{"ok":true,"delivered":"pending","started":true}"#)
+        XCTAssertEqual(starts, [dir])
+        clock.t += 3
+        XCTAssertEqual(presence("old", "idle"), "{}")                                    // not the running one
+        XCTAssertEqual(try label("old"), "Neu")
+        XCTAssertEqual(presence("new", "idle"), #"{"instruction":"Baue die SEO-Seiten"}"#)   // the new one
+        XCTAssertEqual(try label("new"), "Literally Apps SEO")
+        XCTAssertEqual(try label("old"), "Neu")                                          // untouched
+        // The name now finds that session: no third one.
+        XCTAssertEqual(post("/dispatch", #"{"cwd":"\#(dir)","instruction":"Und die Sitemap","name":"literally apps seo"}"#).1,
+                       #"{"ok":true,"delivered":"session","started":false}"#)
+        XCTAssertEqual(starts.count, 1)
+        // Without a name it stays as before: the folder's session, no start.
+        XCTAssertEqual(dispatch("Noch was").1, #"{"ok":true,"delivered":"session","started":false}"#)
+        XCTAssertEqual(starts.count, 1)
+    }
+
+    func testTheNewSessionsFirstTurnTakesNameAndInstruction() throws {
+        presence("old", "working")
+        XCTAssertEqual(post("/dispatch", #"{"cwd":"\#(dir)","instruction":"Baue X","name":"Zweite"}"#).0, 200)
+        clock.t += 5
+        var replies: [String] = []
+        var voiced: [String?] = []
+        server.replyProvider = { turn, done in voiced.append(turn.label); done(TurnReply(transcript: "ok", park: false)) }
+        server.receiveTurn(turn("old")) { replies.append($0.transcript) }                // the running one: voiced as usual
+        _ = server.sessionsJSON()                                                        // its reply settled on the queue
+        server.receiveTurn(turn("t2")) { replies.append($0.transcript) }                 // the new one: takes it
+        _ = server.sessionsJSON()
+        XCTAssertEqual(replies, ["ok", "Baue X"])
+        XCTAssertEqual(voiced, ["Neu"])
+        XCTAssertEqual(try label("t2"), "Zweite")
+    }
+
+    func testRenameARunningSessionAndBack() throws {
+        presence("s1", "idle")
+        let (code, body) = post("/rename", #"{"id":"s1","name":"Literally Apps SEO"}"#)
+        XCTAssertEqual(code, 200)
+        XCTAssertTrue(body.contains(#""label":"Literally Apps SEO""#), body)
+        presence("s1", "idle")                                                           // its mod still says "Neu"
+        XCTAssertEqual(try label("s1"), "Literally Apps SEO")
+        var voiced: [String?] = []
+        server.replyProvider = { turn, done in voiced.append(turn.label); done(TurnReply(transcript: "", park: false)) }
+        server.receiveTurn(turn("s1")) { _ in }
+        _ = server.sessionsJSON()
+        XCTAssertEqual(voiced, ["Literally Apps SEO"])                                   // announced by its name
+        XCTAssertEqual(post("/rename", #"{"id":"s1","name":""}"#).0, 200)
+        XCTAssertEqual(try label("s1"), "Neu")
+        XCTAssertEqual(post("/rename", #"{"id":"nope","name":"X"}"#).0, 404)
+        XCTAssertEqual(post("/rename", #"{"name":"X"}"#).0, 400)
+    }
+
+    func testResumeWithANameNamesThatSession() throws {
+        _ = try pastSession("aaaa-1111", title: "Rechnungen")
+        XCTAssertEqual(post("/dispatch", #"{"resume":"aaaa-1111","instruction":"Weiter","name":"Rechnungen PDF"}"#).1,
+                       #"{"ok":true,"delivered":"pending","started":true}"#)
+        clock.t += 5
+        XCTAssertTrue(presence("aaaa-1111", "idle").contains("Weiter"))
+        XCTAssertEqual(try label("aaaa-1111"), "Rechnungen PDF")
+    }
+
+    func testNamesSurviveARestart() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("names-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        reg.namesFile = file
+        presence("s1", "idle")
+        reg.rename("s1", to: "Eigener Name")
+        let again = SessionRegistry(now: { [clock] in clock.t }, phase: { "idle" }, daily: DailyStats(now: { [clock] in clock.t }))
+        again.namesFile = file
+        again.presence(id: "s1", label: "Neu", project: "neu", state: "idle")
+        XCTAssertEqual(again.label(of: "s1"), "Eigener Name")
+    }
+
     func testResumeRejectsUnknownOrUnsafeIds() throws {
         _ = try pastSession("aaaa-1111", title: "Rechnungen")
         XCTAssertEqual(post("/dispatch", #"{"resume":"bbbb-2222"}"#).0, 404)
@@ -269,6 +351,19 @@ final class ZentraleTests: XCTestCase {
         p.add("x", cwd: "/c", at: t)
         p.add("y", cwd: "/c", at: t)
         XCTAssertEqual(p.take(cwd: "/c", now: t), "x\n\ny")
+    }
+
+    func testInstructionsAndNamesForANewSessionOnly() {
+        var p = PendingInstructions()
+        let t = Date(timeIntervalSince1970: 1000)
+        p.add("neu", cwd: "/a", at: t, forNew: true)
+        p.add("alle", cwd: "/a", at: t)
+        p.addName("Zweite", cwd: "/a", at: t)
+        XCTAssertEqual(p.take(cwd: "/a", now: t + 5, firstSeen: t - 60), "alle")          // an older session
+        XCTAssertNil(p.takeName(cwd: "/a", now: t + 5, firstSeen: t - 60))
+        XCTAssertEqual(p.take(cwd: "/a", now: t + 6, firstSeen: t + 4), "neu")            // the new one
+        XCTAssertEqual(p.takeName(cwd: "/a", now: t + 6, firstSeen: t + 4), "Zweite")
+        XCTAssertNil(p.takeName(cwd: "/a", now: t + 6, firstSeen: t + 4))
     }
 
 }

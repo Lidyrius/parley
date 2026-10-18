@@ -253,21 +253,48 @@ enum SessionCloser {
 struct PendingInstructions {
     static let ttl: TimeInterval = 600
 
-    private var items: [String: [(text: String, at: Date)]] = [:]
+    // `forNew`: only a session that showed up after the dispatch takes it (a named dispatch
+    // started a second session beside one already running in the folder).
+    private struct Item { var text: String; var at: Date; var forNew: Bool }
+    private var items: [String: [Item]] = [:]
+    // The name such a dispatch gave its new session, until that session shows up.
+    private var names: [String: [(name: String, at: Date)]] = [:]
 
-    mutating func add(_ text: String, cwd: String, at: Date) {
-        items[cwd, default: []].append((text, at))
+    mutating func add(_ text: String, cwd: String, at: Date, forNew: Bool = false) {
+        items[cwd, default: []].append(Item(text: text, at: at, forNew: forNew))
+    }
+
+    mutating func addName(_ name: String, cwd: String, at: Date) {
+        names[cwd, default: []].append((name, at))
     }
 
     func has(cwd: String, now: Date) -> Bool {
         items[cwd]?.contains { now.timeIntervalSince($0.at) < Self.ttl } ?? false
     }
 
-    /// Everything still fresh for `cwd`, oldest first, joined — and gone from the store.
-    mutating func take(cwd: String, now: Date) -> String? {
-        guard let list = items.removeValue(forKey: cwd) else { return nil }
-        let fresh = list.filter { now.timeIntervalSince($0.at) < Self.ttl }.map(\.text)
-        return fresh.isEmpty ? nil : fresh.joined(separator: "\n\n")
+    /// What a session in `cwd` first seen at `firstSeen` may take, still fresh, oldest first,
+    /// joined — and gone from the store. An instruction for a new session only goes to one that
+    /// appeared after it was dispatched.
+    mutating func take(cwd: String, now: Date, firstSeen: Date = .distantPast) -> String? {
+        guard let list = items[cwd] else { return nil }
+        let fresh = list.filter { now.timeIntervalSince($0.at) < Self.ttl }
+        let mine = fresh.filter { !$0.forNew || firstSeen > $0.at }
+        let rest = fresh.filter { $0.forNew && firstSeen <= $0.at }
+        items[cwd] = rest.isEmpty ? nil : rest
+        return mine.isEmpty ? nil : mine.map(\.text).joined(separator: "\n\n")
+    }
+
+    /// The name waiting for a new session in `cwd` (one that appeared after the dispatch).
+    mutating func takeName(cwd: String, now: Date, firstSeen: Date) -> String? {
+        guard var list = names[cwd] else { return nil }
+        list.removeAll { now.timeIntervalSince($0.at) >= Self.ttl }
+        guard let i = list.firstIndex(where: { firstSeen > $0.at }) else {
+            names[cwd] = list.isEmpty ? nil : list
+            return nil
+        }
+        let name = list.remove(at: i).name
+        names[cwd] = list.isEmpty ? nil : list
+        return name
     }
 
     /// Drops expired instructions; returns the folders that lost any (for the log).
@@ -278,6 +305,10 @@ struct PendingInstructions {
             let fresh = list.filter { now.timeIntervalSince($0.at) < Self.ttl }
             if fresh.count != list.count { dropped.append(cwd) }
             items[cwd] = fresh.isEmpty ? nil : fresh
+        }
+        for (cwd, list) in names {
+            let fresh = list.filter { now.timeIntervalSince($0.at) < Self.ttl }
+            names[cwd] = fresh.isEmpty ? nil : fresh
         }
         return dropped.sorted()
     }

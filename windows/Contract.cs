@@ -114,6 +114,9 @@ public sealed class DispatchPayload
     [JsonPropertyName("start")] public bool? Start { get; set; }
     // A past session's id: started as `claude --resume <id>` (cwd then defaults to its folder).
     [JsonPropertyName("resume")] public string? Resume { get; set; }
+    // That one session's own name ("Literally Apps SEO"); without `resume` a new session beside
+    // one already running in the folder.
+    [JsonPropertyName("name")] public string? Name { get; set; }
 
     public static DispatchPayload? Decode(string body)
     {

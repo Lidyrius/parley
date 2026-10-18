@@ -110,6 +110,8 @@ struct DispatchPayload: Codable, Equatable {
     var instruction: String?
     var start: Bool?
     var resume: String?       // a past session's id: started as `claude --resume <id>`
+    var name: String?         // that one session's own name ("Literally Apps SEO"); without
+                              // `resume` a new session beside one already running in the folder
 }
 
 // POST /close — end running sessions: one id, several, or every running one of a project

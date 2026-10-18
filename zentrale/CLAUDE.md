@@ -112,6 +112,40 @@ jq -n --arg cwd "$dir" --arg task "$auftrag" '{cwd: $cwd, instruction: $task, st
 - Antwort prüfen: Fehler oder keine Verbindung → ehrlich sagen, nicht so tun, als sei es
   übergeben. Erfolg kurz bestätigen („Erledigt, Sir — Tippfrei kümmert sich darum.“).
 
+### Eigener Name / zweite Session im selben Ordner
+
+Ohne Namen heißen alle Sessions eines Ordners wie das Projekt (`.parley.json`) — und `/dispatch`
+landet immer bei der Session, die dort schon läuft. Mit `name` bekommt **eine** Session ihren
+eigenen Namen, ohne dass sich der Projektname ändert:
+
+```bash
+jq -n --arg cwd "$dir" --arg task "$auftrag" --arg name "Literally Apps SEO" \
+  '{cwd: $cwd, instruction: $task, name: $name, start: true}' \
+  | curl -sS -X POST "http://127.0.0.1:${PARLEY_PORT:-8787}/dispatch" \
+      -H 'Content-Type: application/json' --data-binary @-
+```
+
+- Läuft im Ordner schon eine Session **dieses Namens**, bekommt sie den Auftrag. Sonst startet
+  Parley eine **neue, zweite** Session neben der laufenden; nur sie bekommt Auftrag und Namen.
+- Der Name gilt überall: `/sessions` (`label`), App, iPhone, Live Activity und die Ansage
+  („Update zu Literally Apps SEO“). Er übersteht Neustarts von Parley.
+- Mit `resume` zusammen: `{resume: $id, name: $name, …}` gibt der fortgesetzten Session den Namen.
+- Nimm einen Namen, wenn Sir „eine zweite Session“, „eine neue für …“ oder einen Namen sagt —
+  sonst keinen (dann bleibt alles wie bisher).
+
+### Session umbenennen
+
+„Nenn die Literally-Apps-Session ‚SEO‘“: die id aus `/sessions`, dann
+
+```bash
+jq -n --arg id "$id" --arg name "Literally Apps SEO" '{id: $id, name: $name}' \
+  | curl -sS -X POST "http://127.0.0.1:${PARLEY_PORT:-8787}/rename" \
+      -H 'Content-Type: application/json' --data-binary @- | jq .
+```
+
+Antwort `{"ok":true,"id":…,"label":…}`; `404` = unbekannte id. `name: ""` gibt der Session wieder
+den Projektnamen. Heißen zwei Sessions gleich, Sir fragen, welche gemeint ist.
+
 ## Frühere Session fortsetzen
 
 Sir will an einer **früheren, beendeten** Session weitermachen („mach mit der Export-Session

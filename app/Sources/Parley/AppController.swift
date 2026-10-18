@@ -79,7 +79,7 @@ final class AppController: ObservableObject {
         server.onTurn = { [weak self] turn in
             Task { @MainActor in
                 self?.upsert(SessionInfo(id: self?.routeKey(turn.tmux_pane, turn.session_id) ?? turn.session_id,
-                                         project: turn.project, pane: turn.tmux_pane, status: "speaking"))
+                                         project: turn.spokenLabel, pane: turn.tmux_pane, status: "speaking"))
             }
         }
         server.onReady = { [weak self] ready in
@@ -89,7 +89,7 @@ final class AppController: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.upsert(SessionInfo(id: self.routeKey(turn.tmux_pane, turn.session_id),
-                                        project: turn.project, pane: turn.tmux_pane, status: "queued"))
+                                        project: turn.spokenLabel, pane: turn.tmux_pane, status: "queued"))
                 Notifier.notify(title: "Parley", body: "Projekt \(turn.spokenLabel) wartet auf Antwort")
             }
         }
@@ -114,6 +114,7 @@ final class AppController: ObservableObject {
         let server = self.server
         phone.onWake = { server.wakeFromPhone() }
         server.remindersFile = Reminders.file
+        server.sessions.namesFile = Reminders.file.deletingLastPathComponent().appendingPathComponent("session-names.json")
         server.onReminded = { r in Notifier.notify(title: "Parley · Wiedervorlage", body: "An \(r.label): \(r.text)") }
         server.onPalette = { [weak self] name, frame in
             Log.write("palette: \(name) → the phone")

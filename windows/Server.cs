@@ -141,6 +141,8 @@ public sealed class Server
                 var id = SessionKey(turn);
                 FireReminders(r => r.After == id);   // its turn ended: "wenn Shirts fertig ist"
                 Sessions.Queued(id, turn.Label ?? "", turn.Project, turn.Cwd);
+                Delivery.ClaimName(id, turn.Cwd);
+                if (Sessions.Name(id) is { } own) turn.Label = own;   // its own name: announced, rung, shown
                 using var hold = PhoneCall.Hold();   // released after the reply — never leaks on an error
                 Interlocked.Increment(ref _queued);
                 if (_turnGate.CurrentCount == 0)   // another turn is active → this one waits
@@ -178,6 +180,7 @@ public sealed class Server
                     p.LastSeen = DateTime.UtcNow;
                     pending = Interlocked.Exchange(ref p.Pending, null) ?? "";
                     Sessions.WakePoll(key, turn.Label ?? "", turn.Project, pending.Length > 0, turn.Cwd);
+                    Delivery.ClaimName(key, turn.Cwd);
                     Prune();
                     NotifyParked();
                 }
@@ -202,7 +205,8 @@ public sealed class Server
                     presence.State ?? "idle", presence.Usage, presence.Tasks, presence.Host, presence.Cwd);
                 // A session started for an instruction (POST /dispatch, a wake routed to the
                 // Zentrale) gets it on the first presence from its folder.
-                if (instruction is null && Delivery.TakePending(presence.Cwd) is { } waiting)
+                Delivery.ClaimName(presence.SessionId, presence.Cwd);
+                if (instruction is null && Delivery.TakePending(presence.Cwd, presence.SessionId) is { } waiting)
                 {
                     instruction = waiting;
                     Sessions.MarkInjected(presence.SessionId);
@@ -264,7 +268,7 @@ public sealed class Server
                     await Respond(ctx, 400, "{\"ok\":false,\"error\":\"cwd must be an existing absolute folder\"}");
                     return;
                 }
-                var result = Delivery.Dispatch(cwd, (d.Instruction ?? "").Trim(), d.Start ?? true, d.Resume);
+                var result = Delivery.Dispatch(cwd, (d.Instruction ?? "").Trim(), d.Start ?? true, d.Resume, d.Name);
                 if (result == DispatchResult.Failed)
                 {
                     await Respond(ctx, 500, "{\"ok\":false,\"error\":\"could not start a session\"}");
@@ -329,6 +333,35 @@ public sealed class Server
                 }
                 Log.Write($"remind: cancelled {string.Join(", ", gone.Select(g => g.Label))}");
                 await Respond(ctx, 200, JsonSerializer.Serialize(new { cancelled = ReminderStore.Rows(gone) }));
+                return;
+            }
+
+            // /rename — one session's own name, beside its project's ("Literally Apps SEO"); "" → back.
+            // Same answers as macOS: {"ok":true,"id","label"}, 404 unknown, 400 without id.
+            if (req.HttpMethod == "POST" && path == "/rename")
+            {
+                string? id = null, name = null;
+                try
+                {
+                    using var doc = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
+                    var r = doc.RootElement;
+                    if (r.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.String) id = i.GetString();
+                    if (r.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String) name = n.GetString();
+                }
+                catch (JsonException) { }
+                if (string.IsNullOrEmpty(id))
+                {
+                    await Respond(ctx, 400, "{\"ok\":false,\"error\":\"give id and name\"}");
+                    return;
+                }
+                if (Sessions.Info(id) is null || Sessions.Rename(id, name) is not { } label)
+                {
+                    await Respond(ctx, 404, "{\"ok\":false,\"error\":\"unknown session\"}");
+                    return;
+                }
+                Log.Write($"rename: {id} → {label}");
+                NotifyParked();
+                await Respond(ctx, 200, JsonSerializer.Serialize(new { ok = true, id, label }));
                 return;
             }
 
