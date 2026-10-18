@@ -18,6 +18,28 @@ public static class Watchdog
     public static readonly TimeSpan WorkingFor = TimeSpan.FromMinutes(15), QuietFor = TimeSpan.FromMinutes(10);
 
     // The tool calls in transcript lines, oldest first, each with whether its result failed.
+    // The turn is over: the transcript's last message is Claude's, ended normally (`end_turn`).
+    // The session waits for Sir, whatever the registry still believes — a turn that spoke
+    // nothing (an empty `<speak-end>`) never told Parley it ended. As macOS.
+    public static bool TurnEnded(IReadOnlyList<string> lines)
+    {
+        for (var i = lines.Count - 1; i >= 0; i--)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(lines[i]);
+                var e = doc.RootElement;
+                if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("type", out var t)) continue;
+                var type = t.GetString();
+                if (type is not ("assistant" or "user")) continue;
+                return type == "assistant" && e.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.Object
+                    && m.TryGetProperty("stop_reason", out var r) && r.ValueKind == JsonValueKind.String && r.GetString() == "end_turn";
+            }
+            catch (JsonException) { }
+        }
+        return false;
+    }
+
     public static List<Call> Calls(IEnumerable<string> lines)
     {
         var order = new List<(string Id, string Key, string Label)>();

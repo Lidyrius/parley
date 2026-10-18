@@ -20,6 +20,17 @@ final class WatchdogTests: XCTestCase {
         XCTAssertNotEqual(calls[0].key, calls[1].key)
     }
 
+    func testAFinishedTurnIsNotHanging() {
+        let ended = #"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"Fertig."}]}}"#
+        let tool = #"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Bash","input":{}}]}}"#
+        let result = #"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t"}]}}"#
+        let meta = #"{"type":"last-prompt"}"#
+        XCTAssertTrue(Watchdog.turnEnded(lines([tool, result, ended, meta])))
+        XCTAssertFalse(Watchdog.turnEnded(lines([ended, tool])))                 // a new step runs
+        XCTAssertFalse(Watchdog.turnEnded(lines([tool, result])))                // waiting on its result
+        XCTAssertFalse(Watchdog.turnEnded(lines([])))
+    }
+
     func testCirclesFailingAndSilence() {
         var l: [String] = []
         for i in 0..<4 { l += [use("t\(i)", "npm test"), result("t\(i)", failed: false), use("o\(i)", "ls \(i)"), result("o\(i)", failed: false)] }

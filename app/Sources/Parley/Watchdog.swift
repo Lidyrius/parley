@@ -59,6 +59,18 @@ enum Watchdog {
         return order.map { Call(key: $0.call.key, label: $0.call.label, failed: failed.contains($0.id)) }
     }
 
+    /// The turn is over: the transcript's last message is Claude's, ended normally (`end_turn`).
+    /// The session waits for Sir, whatever the registry still believes — a turn that spoke
+    /// nothing (an empty `<speak-end>`) never told Parley it ended.
+    static func turnEnded(_ lines: [Data]) -> Bool {
+        for line in lines.reversed() {
+            guard let e = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+                  let type = e["type"] as? String, type == "assistant" || type == "user" else { continue }
+            return type == "assistant" && (e["message"] as? [String: Any])?["stop_reason"] as? String == "end_turn"
+        }
+        return false
+    }
+
     /// What is wrong with a session, if anything. Only working sessions are judged.
     static func check(state: String, since: Date, lastWrite: Date?, calls: [Call], now: Date) -> Finding? {
         guard state == "working" else { return nil }

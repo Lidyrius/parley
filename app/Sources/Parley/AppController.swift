@@ -202,7 +202,9 @@ final class AppController: ObservableObject {
             guard let id = s["id"] as? String, let file = Transcript.file(for: id) else { continue }
             let since = Date(timeIntervalSince1970: ((s["since"] as? NSNumber)?.doubleValue ?? 0) / 1000)
             let written = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-            let calls = Watchdog.calls(Transcript.tailLines(file, bytes: 256 * 1024))
+            let tail = Transcript.tailLines(file, bytes: 256 * 1024)
+            if Watchdog.turnEnded(tail) { continue }   // it waits for Sir, it doesn't hang
+            let calls = Watchdog.calls(tail)
             guard let finding = Watchdog.check(state: "working", since: since, lastWrite: written, calls: calls, now: now),
                   watchdogMemory.shouldReport(id, finding, now: now) else { continue }
             let label = (s["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (s["project"] as? String ?? "Eine Session")

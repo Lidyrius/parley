@@ -193,7 +193,9 @@ internal sealed class TrayApp : ApplicationContext
                 string? Str(string k) => s.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
                 if (Str("state") != "working" || Str("id") is not { Length: > 0 } id || Transcript.File(id) is not { } file) continue;
                 var since = DateTime.UnixEpoch.AddMilliseconds(s.TryGetProperty("since", out var sv) && sv.ValueKind == JsonValueKind.Number ? sv.GetDouble() : 0);
-                var calls = Watchdog.Calls(Transcript.TailLines(file, 256 * 1024));
+                var tail = Transcript.TailLines(file, 256 * 1024).ToList();
+                if (Watchdog.TurnEnded(tail)) continue;   // it waits for Sir, it doesn't hang
+                var calls = Watchdog.Calls(tail);
                 var finding = Watchdog.Check("working", since, File.GetLastWriteTimeUtc(file), calls, now);
                 if (finding is null || !_watchdogMemory.ShouldReport(id, finding, now)) continue;
                 var label = Str("label") is { Length: > 0 } l ? l : Str("project") ?? "Eine Session";
