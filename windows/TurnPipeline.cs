@@ -48,6 +48,7 @@ public sealed class TurnPipeline
             if (turn.Event == Server.ResumeEvent) return await RunResume(turn);
             if (turn.Event == Server.WakeEvent) return await RunWake(turn);
             if (turn.Event is Server.PermissionEvent or Server.WatchdogEvent) return await RunPermission(turn);
+            if (turn.Event == Server.ReminderEvent) return await RunReminder(turn);
             return await RunTurn(turn);
         }
         finally { LiveStatus.Set("idle"); }
@@ -124,6 +125,34 @@ public sealed class TurnPipeline
     // POST /permission: "<Projekt> möchte … — erlauben?" → beep → listen. The transcript goes back;
     // the server maps it to allow / deny / ask. No TTS (nothing could be asked) or past the
     // request's deadline → "" (= ask: the on-screen prompt decides).
+    // A Wiedervorlage for Sir (Reminders.cs), spoken like an update: the phone rings when
+    // Unterwegs; muted, Stumm or not reached → a notification (and an alert on the phone). As macOS.
+    private async Task<(string transcript, bool park, int wait, string resume)> RunReminder(TurnPayload turn)
+    {
+        var none = ("", false, 0, "");
+        var config = Config.Load();
+        _resumeGen++;
+        var synth = GoogleTts.Synthesize(turn.Speak, config);
+        if (PhoneCall.Away && !PhoneCall.Silent && !PhoneCall.Active) await ReachPhone("Parley", "");
+        if ((Muted || PhoneCall.Away) && !PhoneCall.Active)
+        {
+            Log.Write("reminder → notification");
+            Notifier.Notify("Parley · Erinnerung", turn.Speak);
+            if (PhoneCall.Away) _ = Apns.SendAlert("Parley · Erinnerung", turn.Speak, "");
+            return none;
+        }
+        if (_ackTask is not null) { await _ackTask; _ackTask = null; }
+        if (await synth is not { } pcm)
+        {
+            Notifier.Notify("Parley · Erinnerung", turn.Speak);
+            return none;
+        }
+        await PauseMediaIfPlaying();
+        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak, last: _queuedTurns() == 0);
+        ScheduleResume();
+        return none;
+    }
+
     private async Task<(string transcript, bool park, int wait, string resume)> RunPermission(TurnPayload turn)
     {
         var config = Config.Load();

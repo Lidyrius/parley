@@ -113,6 +113,8 @@ final class AppController: ObservableObject {
         }
         let server = self.server
         phone.onWake = { server.wakeFromPhone() }
+        server.remindersFile = Reminders.file
+        server.onReminded = { r in Notifier.notify(title: "Parley · Wiedervorlage", body: "An \(r.label): \(r.text)") }
         server.onPalette = { [weak self] name, frame in
             Log.write("palette: \(name) → the phone")
             Task { @MainActor in
@@ -165,6 +167,7 @@ final class AppController: ObservableObject {
         }
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickWatchdog() }
+            self?.server.tickReminders()
         }
         let center = DistributedNotificationCenter.default()
         for (name, locked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
@@ -345,6 +348,7 @@ final class AppController: ObservableObject {
         case ControlServer.resumeEvent: return await runResume(turn)
         case ControlServer.wakeEvent: return await runWake()
         case ControlServer.permissionEvent, ControlServer.watchdogEvent: return await runPermission(turn)
+        case ControlServer.reminderEvent: return await runReminder(turn)
         default: break
         }
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
@@ -794,6 +798,30 @@ final class AppController: ObservableObject {
         startAck(intent: decision == .allow ? .cont : (decision == .deny ? .stop : .other),
                  hasText: decision != .ask, config: config)
         return TurnReply(transcript: text, park: false)
+    }
+
+    // A Wiedervorlage for Sir (Reminders.swift), spoken like an update: the phone rings when
+    // Unterwegs; muted, Stumm or not reached → a notification (and an alert on the phone).
+    private func runReminder(_ turn: TurnPayload) async -> TurnReply {
+        let none = TurnReply(transcript: "", park: false)
+        let config = AppConfig.load()
+        resumeGen += 1
+        if !(phone.away && phone.silent), shouldRing { _ = await reachPhone(label: "Parley", session: "", key: nil) }
+        if (effectivelyMuted || phone.away) && !phone.callActive {
+            Log.write("reminder → notification")
+            Notifier.notify(title: "Parley · Erinnerung", body: turn.speak)
+            if phone.away, let target = phone.alertTarget {
+                let apns = self.apns, body = turn.speak
+                Task.detached { await apns.notify(token: target.token, env: target.env, title: "Parley · Erinnerung", body: body, session: "") }
+            }
+            return none
+        }
+        await ackTask?.value
+        ackTask = nil
+        await pauseMediaIfPlaying()
+        await speakAndBeep(turn.speak, config: config, beep: false, last: server.nothingQueued())
+        scheduleResume()
+        return none
     }
 
     // "Push-Schlüssel wählen…": the APNs auth key (AuthKey_<KEYID>.p8) → credentials.json.

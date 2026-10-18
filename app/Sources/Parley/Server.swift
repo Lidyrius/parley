@@ -49,6 +49,11 @@ final class ControlServer: @unchecked Sendable {
     var zentraleDir: () -> String = { ZentraleSettings.load().zentraleDir }
     // A palette for the phone (POST /palette): its `palette` frame, to send and keep until confirmed.
     var onPalette: ((_ name: String, _ frame: String) -> Void)?
+    // Wiedervorlagen (Reminders.swift): kept here, on the queue; nil file = not persisted (tests).
+    var remindersFile: URL?
+    private lazy var reminders: [Reminder] = Reminders.load(remindersFile)
+    // A Wiedervorlage was handed to a session (the app shows a notification).
+    var onReminded: ((Reminder) -> Void)?
 
     // POST /permission holds the hook at most this long, then answers "ask".
     var permissionHold: TimeInterval = 110
@@ -72,7 +77,9 @@ final class ControlServer: @unchecked Sendable {
     static let wakeEvent = "wake"
     // The Wachhund's question (Watchdog.swift), the same way.
     static let watchdogEvent = "watchdog"
-    static let dialogEvents: Set<String> = [resumeEvent, permissionEvent, wakeEvent, watchdogEvent]
+    // A Wiedervorlage for Sir himself, spoken like an update.
+    static let reminderEvent = "reminder"
+    static let dialogEvents: Set<String> = [resumeEvent, permissionEvent, wakeEvent, watchdogEvent, reminderEvent]
     private var lastResumable: [ParkedInfo] = []
 
     // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
@@ -96,6 +103,7 @@ final class ControlServer: @unchecked Sendable {
         l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
         l.start(queue: queue)
         listener = l
+        queue.async { self.sessions.reminders = Reminders.rows(self.reminders) }
     }
 
     private func accept(_ conn: NWConnection) {
@@ -149,6 +157,7 @@ final class ControlServer: @unchecked Sendable {
     // the session's opening line is moot now.
     func receiveTurn(_ turn: TurnPayload, respond: @escaping (TurnReply) -> Void) {
         let key = Self.sessionKey(turn)
+        fireReminders { $0.after == key }    // its turn ended: "wenn Shirts fertig ist"
         sessions.queued(id: key, label: turn.label ?? "", project: turn.project, cwd: turn.cwd)
         if let instruction = takePending(turn.cwd) {
             Log.write("dispatch: handing the waiting instruction to \(turn.spokenLabel) (its turn)")
@@ -584,6 +593,20 @@ final class ControlServer: @unchecked Sendable {
                 reply = (200, Reply(ok: true, name: p.name))
             }
             return (reply.0, (try? JSONEncoder().encode(reply.1)).map { String(decoding: $0, as: UTF8.self) } ?? "{}")
+        case ("POST", "/remind"):
+            return remind(req.body)
+        case ("GET", "/remind"):
+            return (200, Self.encode(["reminders": Reminders.rows(reminders)]))
+        case ("POST", "/remind/cancel"):
+            struct Cancel: Decodable { var id: String?; var ids: [String]? }
+            let c = try? JSONDecoder().decode(Cancel.self, from: req.body)
+            let ids = Set((c?.ids ?? []) + (c?.id.map { [$0] } ?? []))
+            let gone = reminders.filter { ids.contains($0.id) }
+            guard !gone.isEmpty else { return (404, #"{"ok":false,"error":"no reminder with that id"}"#) }
+            reminders.removeAll { ids.contains($0.id) }
+            saveReminders()
+            Log.write("remind: cancelled \(gone.map(\.label).joined(separator: ", "))")
+            return (200, Self.encode(["cancelled": Reminders.rows(gone)]))
         case ("POST", "/close"):
             guard let c = Contract.decodeClose(req.body) else {
                 return (400, #"{"ok":false,"error":"bad close payload"}"#)
@@ -661,5 +684,85 @@ enum LiveStatus {
             let data = try? JSONEncoder().encode(Wire(phase: phase, session: session, levels: rounded))
             return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"phase":"idle"}"#
         }
+    }
+}
+
+// MARK: - Wiedervorlage (Reminders.swift)
+
+extension ControlServer {
+    static func encode<T: Encodable>(_ value: T) -> String {
+        (try? JSONEncoder().encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
+    // POST /remind (on the queue).
+    func remind(_ body: Data) -> (Int, String) {
+        struct Wire: Encodable { let ok: Bool; var reminder: Reminders.Row?; var error: String? }
+        switch Reminders.make(body, now: now(), resolve: resolveSession) {
+        case .failure(let e):
+            return (400, Self.encode(Wire(ok: false, error: e.why)))
+        case .success(let r):
+            reminders.append(r)
+            saveReminders()
+            Log.write("remind: for \(r.label), \(r.at.map { "at \($0)" } ?? "after \(r.afterLabel ?? "?")")")
+            fireReminders { $0.id == r.id && Reminders.isDue($0, now: self.now(), state: self.sessions.stateSince) }
+            return (200, Self.encode(Wire(ok: true, reminder: Reminders.rows([r]).first)))
+        }
+    }
+
+    // Every 30 s (AppController): what is due by time, or because its session is done.
+    func tickReminders() {
+        queue.async { self.fireReminders { Reminders.isDue($0, now: self.now(), state: self.sessions.stateSince) } }
+    }
+
+    /// A session by id, spoken name / folder name (running first), or a past session's id.
+    private func resolveSession(_ name: String) -> (id: String?, label: String, cwd: String)? {
+        if let i = sessions.info(name) { return (name, i.label, i.cwd) }
+        func same(_ a: String) -> Bool { a.caseInsensitiveCompare(name) == .orderedSame }
+        if let id = sessions.running(named: name).first, let i = sessions.info(id) { return (id, i.label, i.cwd) }
+        if let e = sessions.entries.values.first(where: { same($0.label) || same($0.project) }) { return (e.id, e.label, e.cwd) }
+        if Transcript.isSessionID(name), let f = Transcript.file(for: name, root: transcripts),
+           let p = Transcript.summary(f, at: now()) {
+            return (name, (p.cwd as NSString).lastPathComponent, Zentrale.normalize(p.cwd))
+        }
+        return nil
+    }
+
+    private func saveReminders() {
+        Reminders.save(reminders, to: remindersFile)
+        sessions.reminders = Reminders.rows(reminders)
+    }
+
+    // Takes the matching reminders out (once) and hands each over.
+    private func fireReminders(_ due: (Reminder) -> Bool) {
+        let fire = reminders.filter(due)
+        guard !fire.isEmpty else { return }
+        let ids = Set(fire.map(\.id))
+        reminders.removeAll { ids.contains($0.id) }
+        saveReminders()
+        for r in fire { hand(r) }
+    }
+
+    // For Sir: spoken through the queue like an update. For a session: its instruction now if it
+    // can take it, else by its folder — resuming that very session, or starting one.
+    private func hand(_ r: Reminder) {
+        if r.forSir {
+            Log.write("remind: Sir — \(r.text)")
+            let turn = TurnPayload(event: Self.reminderEvent, session_id: "", cwd: "", project: "", tmux_pane: "",
+                                   speak: Reminders.spoken(r), label: nil, listen: false)
+            _ = enqueue(turn) { _ in }
+            return
+        }
+        let text = Reminders.instruction(r, now: now())
+        if let id = r.session, sessions.reachable(id) {
+            deliver(id, text)
+        } else if let cwd = r.cwd, !cwd.isEmpty {
+            let resume = r.session.flatMap { Transcript.file(for: $0, root: transcripts) != nil ? $0 : nil }
+            _ = dispatchOnQueue(cwd: cwd, instruction: text, start: true, resume: resume)
+        } else {
+            Log.write("remind: \(r.label) is gone and has no folder — dropped: \(r.text)")
+            return
+        }
+        Log.write("remind: handed to \(r.label)")
+        onReminded?(r)
     }
 }

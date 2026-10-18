@@ -44,6 +44,12 @@ public sealed class Server
     public const string PermissionEvent = "permission";
     // The Wachhund's question (Watchdog.cs): through the gate like a permission prompt.
     public const string WatchdogEvent = "watchdog";
+    // A Wiedervorlage for Sir himself (Reminders.cs), spoken like an update.
+    public const string ReminderEvent = "reminder";
+
+    // Wiedervorlagen (Reminders.cs), kept in reminders.json; a handed-over one → OnReminded.
+    public ReminderStore Reminders { get; } = new(Path.Combine(Config.Dir, "reminders.json"));
+    public Action<Reminder>? OnReminded;
 
     // POST /permission is answered within this — the hook waits ≤ 120 s; a few seconds spare.
     public static readonly TimeSpan PermissionHold = TimeSpan.FromSeconds(115);
@@ -59,6 +65,7 @@ public sealed class Server
         _runTurn = runTurn;
         _onReady = onReady;
         Delivery = new Delivery(Sessions, (id, instruction) => Deliver(id, instruction));
+        Sessions.ReminderRows = () => Reminders.Rows();
         // 127.0.0.1 covers native Git Bash and WSL2 mirrored networking. (WSL NAT mode
         // would need an urlacl + firewall rule — documented, not default.)
         _listener.Prefixes.Add("http://127.0.0.1:8787/");
@@ -103,6 +110,11 @@ public sealed class Server
                 await Respond(ctx, 200, Sessions.Json());
                 return;
             }
+            if (req.HttpMethod == "GET" && path == "/remind")
+            {
+                await Respond(ctx, 200, JsonSerializer.Serialize(new { reminders = Reminders.Rows() }));
+                return;
+            }
 
             string body;
             using (var r = new StreamReader(req.InputStream, Encoding.UTF8))
@@ -127,6 +139,7 @@ public sealed class Server
                     return;
                 }
                 var id = SessionKey(turn);
+                FireReminders(r => r.After == id);   // its turn ended: "wenn Shirts fertig ist"
                 Sessions.Queued(id, turn.Label ?? "", turn.Project, turn.Cwd);
                 using var hold = PhoneCall.Hold();   // released after the reply — never leaks on an error
                 Interlocked.Increment(ref _queued);
@@ -281,6 +294,44 @@ public sealed class Server
                 return;
             }
 
+            // /remind — a Wiedervorlage (Reminders.cs). Same answers as macOS:
+            // {"ok":true,"reminder":{id,text,to,at,after}} or 400 {"ok":false,"error"}.
+            if (req.HttpMethod == "POST" && path == "/remind")
+            {
+                var (rem, error) = Reminders.Add(body, DateTime.UtcNow, ResolveSession);
+                if (rem is null)
+                {
+                    await Respond(ctx, 400, JsonSerializer.Serialize(new { ok = false, error }));
+                    return;
+                }
+                Log.Write($"remind: for {rem.Label}, {(rem.At is { } at ? $"at {at:o}" : $"after {rem.AfterLabel}")}");
+                FireReminders(r => r.Id == rem.Id && ReminderStore.IsDue(r, DateTime.UtcNow, Sessions.StateSince));
+                await Respond(ctx, 200, JsonSerializer.Serialize(new { ok = true, reminder = ReminderStore.Rows(new[] { rem })[0] }));
+                return;
+            }
+            if (req.HttpMethod == "POST" && path == "/remind/cancel")
+            {
+                var ids = new List<string>();
+                try
+                {
+                    using var doc = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
+                    var r = doc.RootElement;
+                    if (r.TryGetProperty("ids", out var a) && a.ValueKind == JsonValueKind.Array)
+                        ids.AddRange(a.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!));
+                    if (r.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.String) ids.Add(i.GetString()!);
+                }
+                catch (JsonException) { }
+                var gone = Reminders.Cancel(ids);
+                if (gone.Count == 0)
+                {
+                    await Respond(ctx, 404, "{\"ok\":false,\"error\":\"no reminder with that id\"}");
+                    return;
+                }
+                Log.Write($"remind: cancelled {string.Join(", ", gone.Select(g => g.Label))}");
+                await Respond(ctx, 200, JsonSerializer.Serialize(new { cancelled = ReminderStore.Rows(gone) }));
+                return;
+            }
+
             // /close — the Zentrale ends running sessions: {"id"} | {"ids":[…]} | {"project":"…"}.
             if (req.HttpMethod == "POST" && path == "/close")
             {
@@ -305,6 +356,61 @@ public sealed class Server
             Log.Write($"server error: {e.Message}");
             try { ctx.Response.Abort(); } catch { }
         }
+    }
+
+    // ---- Wiedervorlage (Reminders.cs) ----------------------------------------------------
+
+    // Every 30 s (Program): what is due by time, or because its session is done.
+    public void TickReminders() => FireReminders(r => ReminderStore.IsDue(r, DateTime.UtcNow, Sessions.StateSince));
+
+    /// A session by id, spoken name / folder name (running first), or a past session's id.
+    private (string? Id, string Label, string Cwd)? ResolveSession(string name)
+    {
+        if (Sessions.Info(name) is { } i) return (name, i.Label, i.Cwd);
+        if (Sessions.Named(name) is { } id && Sessions.Info(id) is { } n) return (id, n.Label, n.Cwd);
+        if (Transcript.IsSessionId(name) && Transcript.File(name) is { } f && Transcript.Summary(f) is { } p)
+            return (name, Path.GetFileName(p.Cwd.TrimEnd('/', '\\')), CwdPath.Normalize(p.Cwd));
+        return null;
+    }
+
+    private void FireReminders(Func<Reminder, bool> due)
+    {
+        foreach (var r in Reminders.Take(due)) Hand(r);
+    }
+
+    // For Sir: spoken through the gate like an update. For a session: its instruction now if it
+    // can take it, else by its folder — resuming that very session, or starting one.
+    private void Hand(Reminder r)
+    {
+        if (r.ForSir)
+        {
+            Log.Write($"remind: Sir — {r.Text}");
+            _ = Task.Run(async () =>
+            {
+                using var hold = PhoneCall.Hold();
+                Interlocked.Increment(ref _queued);
+                await _turnGate.WaitAsync();
+                try
+                {
+                    Interlocked.Decrement(ref _queued);
+                    await _runTurn(new TurnPayload { Event = ReminderEvent, Speak = ReminderStore.Spoken(r), Listen = false });
+                }
+                catch (Exception e) { Log.Write($"reminder failed: {e.Message}"); }
+                finally { _turnGate.Release(); }
+            });
+            return;
+        }
+        var text = ReminderStore.Instruction(r);
+        if (r.Session is { } id && Sessions.Running(id).Deliverable) Deliver(id, text);
+        else if (r.Cwd is { Length: > 0 } cwd)
+            Delivery.Dispatch(cwd, text, true, r.Session is { } sid && Transcript.File(sid) is not null ? sid : null);
+        else
+        {
+            Log.Write($"remind: {r.Label} is gone and has no folder — dropped: {r.Text}");
+            return;
+        }
+        Log.Write($"remind: handed to {r.Label}");
+        OnReminded?.Invoke(r);
     }
 
     // ---- closing sessions (POST /close) ------------------------------------------------

@@ -333,6 +333,31 @@ public sealed class SessionRegistry
         }
     }
 
+    // A session's state and since when (Wiedervorlage "after").
+    public (string State, DateTime Since)? StateSince(string id)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.TryGetValue(id, out var e) ? (e.State, e.Since) : null;
+        }
+    }
+
+    // A session by label or folder name (any case): a running one first, else a stopped one.
+    public string? Named(string name)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            bool Same(string a) => string.Equals(a, name, StringComparison.OrdinalIgnoreCase);
+            return _entries.Values.Where(e => Same(e.Label) || Same(e.Project))
+                .OrderBy(e => e.State == "stopped").ThenBy(e => e.Id, StringComparer.Ordinal).FirstOrDefault()?.Id;
+        }
+    }
+
+    // The Wiedervorlagen, as /sessions lists them for the phone (the server's store).
+    public Func<List<object>>? ReminderRows;
+
     // Running sessions whose label or folder name is `name` (any case) — POST /close by project.
     public List<string> RunningNamed(string name)
     {
@@ -412,7 +437,7 @@ public sealed class SessionRegistry
                 spokenSeconds = (int)Math.Round(day.SpokenSeconds),
                 rateLimits = _rateLimits,
             };
-            return JsonSerializer.Serialize(new { sessions = rows, today });
+            return JsonSerializer.Serialize(new { sessions = rows, today, reminders = ReminderRows?.Invoke() ?? new List<object>() });
         }
     }
 

@@ -51,6 +51,7 @@ internal sealed class TrayApp : ApplicationContext
         // routed to a session or the Zentrale. The phone's settings survive restarts.
         _pipeline.Ring = label => Ringer.Ring(label);
         _pipeline.SetCallback = (id, at) => _server.Sessions.SetCallback(id, at);
+        _server.OnReminded = r => Notifier.Notify("Parley · Wiedervorlage", $"An {r.Label}: {r.Text}");
         _server.OnPalette = (name, frame) =>
         {
             Log.Write($"palette: {name} → the phone");
@@ -148,7 +149,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         StartRelay();
         _activityTimer = new System.Threading.Timer(_ => TickLiveActivity(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
-        _watchdogTimer = new System.Threading.Timer(_ => TickWatchdog(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        _watchdogTimer = new System.Threading.Timer(_ => { TickWatchdog(); _server.TickReminders(); }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     // ---- Unterwegs when the PC is locked ------------------------------------------------

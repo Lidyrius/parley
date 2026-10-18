@@ -254,6 +254,15 @@ final class SessionRegistry {
     }
     func cwd(of id: String) -> String? { entries[id]?.cwd }
 
+    // A session's state and since when (Wiedervorlage "after").
+    func stateSince(_ id: String) -> (state: String, since: Date)? {
+        refresh()
+        return entries[id].map { ($0.state, $0.since) }
+    }
+
+    // The Wiedervorlagen, as /sessions lists them for the phone (the server keeps them current).
+    var reminders: [Reminders.Row] = []
+
     // An instruction can be handed to the session now: its parked hook polls /wake, or the mod
     // reports presence (and takes it with its next /presence).
     func reachable(_ id: String) -> Bool {
@@ -312,11 +321,11 @@ final class SessionRegistry {
         let day = daily.snapshot()
         let today = Today(costUsd: (day.costUsd * 10_000).rounded() / 10_000, turns: day.turns,
                           spokenSeconds: Int(day.spokenSeconds.rounded()), rateLimits: rateLimits)
-        let data = try? JSONEncoder().encode(Wire(sessions: rows, today: today))
+        let data = try? JSONEncoder().encode(Wire(sessions: rows, today: today, reminders: reminders))
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"sessions":[]}"#
     }
 
-    private struct Wire: Encodable { let sessions: [Row]; let today: Today }
+    private struct Wire: Encodable { let sessions: [Row]; let today: Today; let reminders: [Reminders.Row] }
     private struct Today: Encodable { let costUsd: Double; let turns: Int; let spokenSeconds: Int; let rateLimits: [RateLimit] }
 
     private struct Row: Encodable {
