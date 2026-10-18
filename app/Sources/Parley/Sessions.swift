@@ -296,6 +296,12 @@ final class SessionRegistry {
     }
 
     // Any session besides `id` that isn't stopped → the turn gets announced.
+    // Another session is still at work — an update may follow soon (a Fragerunde waits for it).
+    func othersWorking(except id: String) -> Bool {
+        refresh()
+        return entries.values.contains { $0.id != id && ($0.state == "working" || $0.state == "background") }
+    }
+
     func othersAlive(except id: String) -> Bool {
         refresh()
         return entries.values.contains { $0.id != id && $0.state != "stopped" }

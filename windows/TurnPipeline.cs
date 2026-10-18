@@ -238,7 +238,7 @@ public sealed class TurnPipeline
         // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
         // Fragerunde: right after a call, gather for a few minutes, then ring once for all.
         var ringing = PhoneCall.Away && !PhoneCall.Silent && !PhoneCall.Active;
-        if (ringing) await GatherRound();
+        if (ringing) await GatherRound(Server.SessionKey(turn));
         var (_, calledBack) = await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
         if (ringing && PhoneCall.Active) await AnnounceRound(config);
         // Unterwegs and not on the phone: the PC stays silent — the line waits as a notification.
@@ -432,19 +432,26 @@ public sealed class TurnPipeline
 
     // ---- Fragerunde (as macOS) ----------------------------------------------------------
 
-    // After a call, the next updates don't ring at once: for a few minutes they gather (queued,
+    // After a call, the next updates don't ring at once while other sessions still work: for up
+    // to 90 s they gather (queued,
     // shown so in the Island) and then come as one round. Sir calling in meanwhile starts it.
     // Permission prompts never wait.
-    public static readonly TimeSpan RoundGap = TimeSpan.FromMinutes(4);
+    public static readonly TimeSpan RoundGap = TimeSpan.FromSeconds(90);
+    // Another session besides this one is still working (an update may follow soon).
+    public Func<string, bool>? OthersWorking;
 
-    private static async Task GatherRound()
+    // Only while more can come: another session still working. Nothing else at work → it rings
+    // at once (waiting would only delay this one update).
+    private async Task GatherRound(string session)
     {
         if (PhoneCall.LastCallEnd is not { } end || PhoneCall.Active) return;
         var ready = end + RoundGap;
-        if (DateTime.UtcNow >= ready) return;
+        bool More() => OthersWorking?.Invoke(session) == true;
+        if (DateTime.UtcNow >= ready || !More()) return;
         Log.Write($"Fragerunde: gathering until {ready.ToLocalTime():HH:mm:ss}");
         LiveStatus.Set("queued");
-        while (DateTime.UtcNow < ready && !PhoneCall.Active && PhoneCall.Away) await Task.Delay(500);
+        while (DateTime.UtcNow < ready && !PhoneCall.Active && PhoneCall.Away && More()) await Task.Delay(500);
+        Log.Write($"Fragerunde: ringing now ({(DateTime.UtcNow < ready ? "nothing else at work" : "waited long enough")})");
         LiveStatus.Set("speaking");
     }
 

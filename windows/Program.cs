@@ -50,6 +50,7 @@ internal sealed class TrayApp : ApplicationContext
         // iPhone (docs/IPHONE.md, v2): Unterwegs-Modus rings before a turn; a wake utterance is
         // routed to a session or the Zentrale. The phone's settings survive restarts.
         _pipeline.Ring = label => Ringer.Ring(label);
+        _pipeline.OthersWorking = id => serverRef?.Sessions.OthersWorking(id) ?? false;
         _pipeline.SetCallback = (id, at) => _server.Sessions.SetCallback(id, at);
         _server.OnReminded = r => Notifier.Notify("Parley · Wiedervorlage", $"An {r.Label}: {r.Text}");
         _server.OnPalette = (name, frame) =>

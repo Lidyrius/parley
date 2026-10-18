@@ -314,6 +314,16 @@ public sealed class SessionRegistry
         lock (_gate) if (_entries.TryGetValue(id, out var e)) e.CallbackAt = at;
     }
 
+    // Another session is still at work — an update may follow soon (a Fragerunde waits for it).
+    public bool OthersWorking(string id)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.Values.Any(e => e.Id != id && e.State is "working" or "background");
+        }
+    }
+
     public bool OthersAlive(string id)
     {
         lock (_gate)

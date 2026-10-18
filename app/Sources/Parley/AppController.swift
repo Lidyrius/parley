@@ -280,21 +280,25 @@ final class AppController: ObservableObject {
 
     // MARK: - Fragerunde
 
-    // After a call, the next updates don't ring at once: for a few minutes they gather (queued,
-    // shown so in the Island) and then come as one round — "Ich habe drei Updates für Sie, Sir."
+    // After a call, the next updates don't ring at once while other sessions still work: for up
+    // to 90 s they gather (queued, shown so in the Island) and then come as one round — "Ich habe
+    // drei Updates für Sie, Sir."
     // Sir calling in meanwhile starts the round right away. Permission prompts never wait.
-    static let roundGap: TimeInterval = 4 * 60
+    static let roundGap: TimeInterval = 90
     private var lastCallEnd: Date?
 
-    private func gatherRound() async {
+    // Only while more can come: another session still working. Nothing else at work → it rings
+    // at once (waiting would only delay this one update).
+    private func gatherRound(session: String) async {
         guard let end = lastCallEnd, !phone.callActive else { return }
         let ready = end.addingTimeInterval(Self.roundGap)
-        guard Date() < ready else { return }
+        guard Date() < ready, server.othersWorking(except: session) else { return }
         Log.write("Fragerunde: gathering until \(ready.formatted(date: .omitted, time: .standard))")
         LiveStatus.set(phase: "queued")
-        while Date() < ready, !phone.callActive, phone.away, !Task.isCancelled {
+        while Date() < ready, !phone.callActive, phone.away, !Task.isCancelled, server.othersWorking(except: session) {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
+        Log.write("Fragerunde: ringing now (\(Date() < ready ? "nothing else at work" : "waited long enough"))")
         LiveStatus.set(phase: "speaking")
     }
 
@@ -403,7 +407,7 @@ final class AppController: ObservableObject {
         // "Not now" on the phone puts the line off: ring again in a minute or five, or wait for
         // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
         var calledBack = false
-        if ringing { await gatherRound() }
+        if ringing { await gatherRound(session: ControlServer.sessionKey(turn)) }
         let rang = ringing && !phone.callActive
         if rang, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: key) {
             calledBack = back

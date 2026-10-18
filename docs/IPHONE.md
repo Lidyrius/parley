@@ -273,9 +273,10 @@ on by default):
 
 ### Fragerunde, Wachhund, Unterwegs by itself
 
-- **Fragerunde:** for 4 min after a call ends, a new update doesn't ring: it waits (`queued`, the
-  Island shows it), others line up, then one ring for all — "Ich habe drei Updates für Sie, Sir."
-  Calling in starts the round at once; permission prompts never wait.
+- **Fragerunde:** for 90 s after a call ends, a new update doesn't ring while other sessions are
+  still working: it waits (`queued`, the Island shows it) for theirs, then one ring for all — "Ich
+  habe drei Updates für Sie, Sir." Nothing else at work → it rings at once. Calling in starts the
+  round at once; permission prompts never wait.
 - **Wachhund:** every 30 s, each working session's transcript tail (same tool call 4× in the last
   8, the last 6 failed, or 10 min silent after 15 min of work) → Sir is asked "Soll ich
   eingreifen?" (a `watchdog` dialog like a permission prompt) or notified when Unterwegs; a yes

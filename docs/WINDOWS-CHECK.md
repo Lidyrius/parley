@@ -17,8 +17,9 @@ Go through it once; the log is `%APPDATA%\Parley\debug.log` (look for the quoted
 - [ ] Put a call off from the phone → rings again in a minute.
 
 ## New in this release
-- [ ] **Fragerunde:** hang up, let two sessions finish within 4 min → no ring in between, then one
-      ring: "Ich habe zwei Updates für Sie, Sir."
+- [ ] **Fragerunde:** hang up while two sessions work; one finishes within 90 s → no ring until the
+      other finishes too (or 90 s pass), then one ring: "Ich habe zwei Updates für Sie, Sir." A lone
+      update with nothing else at work rings at once.
 - [ ] **Unterwegs bei Sperre:** tray "Unterwegs, wenn der PC gesperrt ist" on, Win+L, wait over a
       minute → the next update rings the phone; unlock → the PC speaks again.
 - [ ] **Wachhund:** a session that keeps repeating the same command (or hangs for 15 min) → Parley
