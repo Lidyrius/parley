@@ -6,10 +6,13 @@ struct CallLook: Equatable {
 
     let mood: Mood
 
-    init(phase: CallPhase, host: HostAudio) {
+    /// `awaitingHost`: just connected, the host hasn't spoken yet — still "connecting" (no flash of
+    /// the idle green before Parley's first word).
+    init(phase: CallPhase, host: HostAudio, awaitingHost: Bool = false) {
         switch phase {
         case .ringing: mood = .ringing
         case .none, .dialing, .connecting: mood = .connecting
+        case .active where host == .idle && awaitingHost: mood = .connecting
         case .active:
             switch host {
             case .speaking: mood = .speaking
@@ -55,7 +58,7 @@ struct CallView: View {
 
     var body: some View {
         let call = model.call
-        let look = CallLook(phase: call.phase, host: call.hostAudio)
+        let look = CallLook(phase: call.phase, host: call.hostAudio, awaitingHost: call.awaitingHost)
         let voiced = model.relay.snapshot?.sessions.first { $0.voice }
         ZStack {
             Theme.background.ignoresSafeArea()

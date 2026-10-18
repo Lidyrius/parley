@@ -7,6 +7,10 @@ struct CallTests {
         #expect(CallLook(phase: .ringing, host: .idle).mood == .ringing)
         #expect(CallLook(phase: .dialing, host: .speaking).mood == .connecting)
         #expect(CallLook(phase: .connecting, host: .idle).mood == .connecting)
+        // Just connected, the host hasn't spoken yet: no flash of the idle green.
+        #expect(CallLook(phase: .active(since: .now), host: .idle, awaitingHost: true).mood == .connecting)
+        #expect(CallLook(phase: .active(since: .now), host: .speaking, awaitingHost: true).mood == .speaking)
+        #expect(CallLook(phase: .active(since: .now), host: .idle).mood == .idle)
         let since = Date()
         #expect(CallLook(phase: .active(since: since), host: .speaking).mood == .speaking)
         #expect(CallLook(phase: .active(since: since), host: .listening).mood == .listening)

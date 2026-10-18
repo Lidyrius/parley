@@ -30,6 +30,10 @@ final class CallController {
     private(set) var label: String?
     private(set) var muted = false
     private(set) var speaker = false
+    /// Just connected, the host hasn't spoken yet: the screen stays as while connecting (no flash
+    /// of "bereit") until the host speaks or listens, or a few seconds pass.
+    private(set) var awaitingHost = false
+    @ObservationIgnored private var awaitingTask: Task<Void, Never>?
     /// Live captions of the line being spoken (v3), timed against the frames actually played.
     private(set) var caption: Caption?
     /// The line's slides (docs/CALL-SLIDES.md), on the captions' clock.
@@ -406,6 +410,7 @@ final class CallController {
             return
         }
         hostAudio = state
+        if state != .idle { awaitingHost = false; awaitingTask?.cancel() }
         autoHangUpTask?.cancel()
         if state != .idle {
             wakeArmed = true
@@ -468,6 +473,13 @@ final class CallController {
             guard phase == .dialing || phase == .connecting else { return }   // ended meanwhile
             audio.muted = muted
             relay.send(Outgoing.call(started: true))
+            awaitingHost = true
+            awaitingTask?.cancel()
+            awaitingTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled else { return }
+                self?.awaitingHost = false
+            }
             phase = .active(since: .now)
             if outgoing, let uuid { provider?.reportOutgoingCall(with: uuid, connectedAt: .now) }
             updateWake()
@@ -563,6 +575,8 @@ final class CallController {
         speaker = false
         audioActive = false
         answering = false
+        awaitingHost = false
+        awaitingTask?.cancel()
         wakeArmed = true
         wakeSent = false
         showsScreen = false
