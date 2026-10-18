@@ -82,15 +82,20 @@ enum Zentrale {
 // `activate`): `cd '<dir>' && claude '/parley:voice'`. The command line carries only the folder
 // (shell-quoted) and the fixed first prompt — never an instruction; those stay pending by cwd.
 // The command reaches AppleScript as argv, so nothing is spliced into script source either.
+// Shell hooks on `cd` that ask before going on (Gas Town: "Add '<dir>' to Gas Town? [y/N/never]")
+// would leave the session hanging on a question nobody sees: their opt-out goes first — for Gas
+// Town that is "no" without asking.
 enum SessionStarter {
     static let firstPrompt = "/parley:voice"
+
+    static let quietHooks = "export GASTOWN_DISABLE_OFFER_ADD=1; "
 
     static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: #"'\''"#) + "'" }
 
     // `resume`: a past session (checked by Transcript.isSessionID) continued with its history.
     static func command(folder: String, resume: String? = nil) -> String {
         let r = resume.map { " --resume \(shellQuote($0))" } ?? ""
-        return "cd \(shellQuote(folder)) && claude\(r) \(shellQuote(firstPrompt))"
+        return "\(quietHooks)cd \(shellQuote(folder)) && claude\(r) \(shellQuote(firstPrompt))"
     }
 
     static func osascriptArguments(folder: String, resume: String? = nil) -> [String] {

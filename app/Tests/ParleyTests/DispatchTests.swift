@@ -299,9 +299,9 @@ final class DispatchTests: XCTestCase {
 final class SessionStarterTests: XCTestCase {
     func testCommandQuotesTheFolderAndCarriesOnlyTheFixedPrompt() {
         XCTAssertEqual(SessionStarter.command(folder: "/Users/x/it's here"),
-                       #"cd '/Users/x/it'\''s here' && claude '/parley:voice'"#)
-        XCTAssertEqual(SessionStarter.command(folder: "/tmp/$(rm -rf ~)"), #"cd '/tmp/$(rm -rf ~)' && claude '/parley:voice'"#)
-        XCTAssertEqual(SessionStarter.command(folder: "/p", resume: "abc-123"), #"cd '/p' && claude --resume 'abc-123' '/parley:voice'"#)
+                       #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/Users/x/it'\''s here' && claude '/parley:voice'"#)
+        XCTAssertEqual(SessionStarter.command(folder: "/tmp/$(rm -rf ~)"), #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/tmp/$(rm -rf ~)' && claude '/parley:voice'"#)
+        XCTAssertEqual(SessionStarter.command(folder: "/p", resume: "abc-123"), #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/p' && claude --resume 'abc-123' '/parley:voice'"#)
     }
 
     func testOsascriptGetsTheCommandAsArgvNotAsScript() {
