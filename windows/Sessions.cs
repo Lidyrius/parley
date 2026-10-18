@@ -23,6 +23,7 @@ public sealed class SessionRegistry
         public DateTime HookAt;           // last /turn, /wake or turn reply
         public bool Queued;               // a /turn (or resume dialog) waits at the gate
         public DateTime? WaitUntil;       // "Warte X Minuten": the hook sleeps until then
+        public bool AfterWait;            // its turn comes after Sir's "Warte X Minuten": rings at once
         public DateTime? CallbackAt;      // its call was put off: rings again then (MaxValue = Sir calls back)
         public DateTime? ClosedAt;        // POST /close ended it: a dying mod's last presence is ignored
         public bool Parked;               // answered with park; its hook polls /wake
@@ -108,6 +109,7 @@ public sealed class SessionRegistry
             if (!string.IsNullOrEmpty(cwd)) e.Cwd = cwd;
             e.HookAt = t;
             e.Queued = true;
+            e.AfterWait = e.WaitUntil is not null;
             e.WaitUntil = null;
             e.Parked = false;
             e.InjectedAt = null;
@@ -155,6 +157,7 @@ public sealed class SessionRegistry
             {
                 e.HookAt = t;
                 e.Queued = false;
+                e.AfterWait = false;
                 e.WaitUntil = waitSeconds > 0 ? t.AddSeconds(waitSeconds) : null;
                 e.Parked = park;
                 e.WakeAt = park ? t : null;
@@ -312,6 +315,18 @@ public sealed class SessionRegistry
     public void SetCallback(string id, DateTime? at)
     {
         lock (_gate) if (_entries.TryGetValue(id, out var e)) e.CallbackAt = at;
+    }
+
+    // Sir's own timer ran out ("ruf mich in 2 Minuten zurück"): this session's turn, or one
+    // waiting at the gate — it rings at once, no Fragerunde.
+    public bool AfterWait(string id)
+    {
+        lock (_gate) return _entries.TryGetValue(id, out var e) && e.AfterWait;
+    }
+
+    public bool TimerQueued()
+    {
+        lock (_gate) return _entries.Values.Any(e => e.Queued && e.AfterWait);
     }
 
     // Another session is still at work — an update may follow soon (a Fragerunde waits for it).

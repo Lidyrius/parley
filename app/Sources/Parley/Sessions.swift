@@ -22,6 +22,7 @@ final class SessionRegistry {
         var hookAt: Date               // last /turn, /wake or turn reply
         var queued = false             // a /turn (or resume dialog) waits in the queue
         var waitUntil: Date?           // "Warte X Minuten": the hook sleeps until then
+        var afterWait = false          // its turn comes after Sir's "Warte X Minuten": rings at once
         var callbackAt: Date?          // its call was put off: rings again then (distantFuture = Sir calls back)
         var closedAt: Date?            // POST /close ended it: a dying mod's last presence is ignored
         var parked = false             // answered with park; its hook polls /wake
@@ -99,6 +100,7 @@ final class SessionRegistry {
         update(id, label: label, project: project, cwd: cwd) { e, t in
             e.hookAt = t
             e.queued = true
+            e.afterWait = e.waitUntil != nil
             e.waitUntil = nil
             e.parked = false
             e.injectedAt = nil
@@ -130,6 +132,7 @@ final class SessionRegistry {
         update(id) { e, t in
             e.hookAt = t
             e.queued = false
+            e.afterWait = false
             e.waitUntil = reply.waitSeconds > 0 ? t.addingTimeInterval(TimeInterval(reply.waitSeconds)) : nil
             e.parked = reply.park
             e.wakeAt = reply.park ? t : nil
@@ -296,6 +299,11 @@ final class SessionRegistry {
     }
 
     // Any session besides `id` that isn't stopped → the turn gets announced.
+    // Sir's own timer ran out ("ruf mich in 2 Minuten zurück"): this session's turn, or one
+    // waiting in the queue — it rings at once, no Fragerunde.
+    func afterWait(_ id: String) -> Bool { entries[id]?.afterWait ?? false }
+    func timerQueued() -> Bool { entries.values.contains { $0.queued && $0.afterWait } }
+
     // Another session is still at work — an update may follow soon (a Fragerunde waits for it).
     func othersWorking(except id: String) -> Bool {
         refresh()

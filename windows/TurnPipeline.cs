@@ -439,19 +439,26 @@ public sealed class TurnPipeline
     public static readonly TimeSpan RoundGap = TimeSpan.FromSeconds(90);
     // Another session besides this one is still working (an update may follow soon).
     public Func<string, bool>? OthersWorking;
+    // Sir's own timer ran out for this session's turn / for one waiting at the gate.
+    public Func<string, bool>? AfterWait;
+    public Func<bool>? TimerQueued;
 
     // Only while more can come: another session still working. Nothing else at work → it rings
-    // at once (waiting would only delay this one update).
+    // at once (waiting would only delay this one update). Sir's own timer ("ruf mich in 2
+    // Minuten zurück") never waits: its turn rings at once, and one queued behind ends the wait.
     private async Task GatherRound(string session)
     {
         if (PhoneCall.LastCallEnd is not { } end || PhoneCall.Active) return;
         var ready = end + RoundGap;
         bool More() => OthersWorking?.Invoke(session) == true;
+        bool Timer() => TimerQueued?.Invoke() == true;
         if (DateTime.UtcNow >= ready || !More()) return;
+        if (AfterWait?.Invoke(session) == true) { Log.Write("Fragerunde: skipped — Sir's timer ran out"); return; }
         Log.Write($"Fragerunde: gathering until {ready.ToLocalTime():HH:mm:ss}");
         LiveStatus.Set("queued");
-        while (DateTime.UtcNow < ready && !PhoneCall.Active && PhoneCall.Away && More()) await Task.Delay(500);
-        Log.Write($"Fragerunde: ringing now ({(DateTime.UtcNow < ready ? "nothing else at work" : "waited long enough")})");
+        while (DateTime.UtcNow < ready && !PhoneCall.Active && PhoneCall.Away && More() && !Timer()) await Task.Delay(500);
+        var why = DateTime.UtcNow >= ready ? "waited long enough" : Timer() ? "Sir's timer ran out" : "nothing else at work";
+        Log.Write($"Fragerunde: ringing now ({why})");
         LiveStatus.Set("speaking");
     }
 

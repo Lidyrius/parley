@@ -440,6 +440,9 @@ final class ControlServer: @unchecked Sendable {
         queue.sync { sessions.othersWorking(except: id) }
     }
 
+    func afterWait(_ id: String) -> Bool { queue.sync { sessions.afterWait(id) } }
+    func timerQueued() -> Bool { queue.sync { sessions.timerQueued() } }
+
     private func pruneParked() {
         let cutoff = Date().addingTimeInterval(-90)
         parked = parked.filter { $0.value.lastSeen > cutoff }

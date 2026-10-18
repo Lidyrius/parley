@@ -288,17 +288,21 @@ final class AppController: ObservableObject {
     private var lastCallEnd: Date?
 
     // Only while more can come: another session still working. Nothing else at work → it rings
-    // at once (waiting would only delay this one update).
+    // at once (waiting would only delay this one update). Sir's own timer ("ruf mich in 2
+    // Minuten zurück") never waits: its turn rings at once, and one queued behind ends the wait.
     private func gatherRound(session: String) async {
         guard let end = lastCallEnd, !phone.callActive else { return }
         let ready = end.addingTimeInterval(Self.roundGap)
         guard Date() < ready, server.othersWorking(except: session) else { return }
+        if server.afterWait(session) { Log.write("Fragerunde: skipped — Sir's timer ran out"); return }
         Log.write("Fragerunde: gathering until \(ready.formatted(date: .omitted, time: .standard))")
         LiveStatus.set(phase: "queued")
-        while Date() < ready, !phone.callActive, phone.away, !Task.isCancelled, server.othersWorking(except: session) {
+        while Date() < ready, !phone.callActive, phone.away, !Task.isCancelled,
+              server.othersWorking(except: session), !server.timerQueued() {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
-        Log.write("Fragerunde: ringing now (\(Date() < ready ? "nothing else at work" : "waited long enough"))")
+        let why = Date() >= ready ? "waited long enough" : server.timerQueued() ? "Sir's timer ran out" : "nothing else at work"
+        Log.write("Fragerunde: ringing now (\(why))")
         LiveStatus.set(phase: "speaking")
     }
 

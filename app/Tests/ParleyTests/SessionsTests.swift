@@ -449,6 +449,22 @@ final class SessionsTests: XCTestCase {
             XCTAssertEqual(ProjectClips.resumePhrases(name: "Demo", language: language).filter { $0.contains("Demo") }.count, 3)
         }
     }
+
+    // Sir's "ruf mich in 2 Minuten zurück": the turn after the wait rings at once (no Fragerunde).
+    func testTheTurnAfterSirsTimerIsMarked() {
+        reg.queued(id: "a", label: "A", project: "a")
+        XCTAssertFalse(reg.afterWait("a"))
+        reg.finished(id: "a", reply: TurnReply(transcript: "", park: false, waitSeconds: 120))
+        clock.t += 125
+        reg.queued(id: "a", label: "A", project: "a")
+        XCTAssertTrue(reg.afterWait("a"))
+        XCTAssertTrue(reg.timerQueued())
+        reg.activate(id: "a", speak: "Die zwei Minuten sind um, Sir.")
+        XCTAssertTrue(reg.afterWait("a"))
+        XCTAssertFalse(reg.timerQueued())
+        reg.finished(id: "a", reply: TurnReply(transcript: "ok", park: false))
+        XCTAssertFalse(reg.afterWait("a"))
+    }
 }
 
 // End to end over a real loopback socket: /turn → queued/active → reply → state; /wake.
@@ -498,4 +514,5 @@ final class SessionsLoopbackTests: XCTestCase {
         }
         XCTAssertEqual(woke, "weiter so")
     }
+
 }
