@@ -18,7 +18,7 @@ final class DispatchTests: XCTestCase {
         server = ControlServer(sessions: reg, now: { c.t })
         starts = []
         resumed = []
-        server.starter = { [unowned self] folder, resume in self.starts.append(folder); self.resumed.append(resume) }
+        server.starter = { [unowned self] folder, resume, _ in self.starts.append(folder); self.resumed.append(resume) }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("parley-dispatch-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         dir = Zentrale.normalize(url.path)
@@ -46,6 +46,53 @@ final class DispatchTests: XCTestCase {
     private func state(_ id: String) throws -> String? {
         let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(reg.json().utf8)) as? [String: Any])
         return (obj["sessions"] as? [[String: Any]])?.first { $0["id"] as? String == id }?["state"] as? String
+    }
+
+    // MARK: - the start check (StartWatch.swift)
+
+    private func waitFor(_ cond: () -> Bool, file: StaticString = #filePath, line: UInt = #line) {
+        let end = Date() + 3
+        while !cond(), Date() < end { RunLoop.current.run(until: Date() + 0.02) }
+        XCTAssertTrue(cond(), file: file, line: line)
+    }
+
+    func testStartCheckSaysNoToADefaultNoQuestionAndShowsTheZentraleTheRest() throws {
+        final class Tab: @unchecked Sendable { let lock = NSLock(); var screen = ""; var typed: [String] = [] }
+        let tab = Tab()
+        tab.screen = "Last login: Sun Oct 18\n\nAdd 'neu' to Gas Town? [y/N/never] "
+        server.starter = { [unowned self] folder, _, done in self.starts.append(folder); done("/dev/ttys042") }
+        server.tabScreen = { _ in tab.lock.withLock { tab.screen } }
+        server.tabType = { text, tty in tab.lock.withLock { tab.typed.append(text + "@" + tty) }; return true }
+        let zentrale = dir + "/zentrale"
+        server.zentraleDir = { zentrale }
+
+        _ = dispatch("Baue X")
+        server.startCheckNow()
+        waitFor { tab.lock.withLock { tab.typed } == ["n@/dev/ttys042"] }
+        server.startCheckNow()                                                     // asked once, answered once
+        let starting = server.handle(HTTPRequest(method: "GET", path: "/starting", body: Data())).1
+        XCTAssertTrue(starting.contains(#""readable":true"#), starting)
+        XCTAssertEqual(tab.lock.withLock { tab.typed }.count, 1)
+
+        tab.lock.withLock { tab.screen = "Enter your token:" }                    // something else holds it
+        clock.t += 95
+        server.startCheckNow()
+        waitFor { self.starts.contains(zentrale) }                                // the Zentrale is started with the note
+        XCTAssertEqual(post("/starting/answer", #"{"cwd":"\#(dir)","text":"abc"}"#).0, 200)
+        XCTAssertTrue(tab.lock.withLock { tab.typed }.contains("abc@/dev/ttys042"))
+        XCTAssertEqual(post("/starting/answer", #"{"cwd":"/nowhere","text":"y"}"#).0, 404)   // only Parley's own starts
+
+        presence("s1", "idle")                                                    // the session arrives
+        server.startCheckNow()
+        waitFor { !self.server.handle(HTTPRequest(method: "GET", path: "/starting", body: Data())).1.contains(self.dir + "\"") }
+    }
+
+    func testDefaultNoSpotsOnlyQuestionsWhoseDefaultIsNo() {
+        XCTAssertEqual(StartWatch.defaultNo("x\nAdd 'gta-6' to Gas Town? [y/N/never] "), "Add 'gta-6' to Gas Town? [y/N/never]")
+        XCTAssertNotNil(StartWatch.defaultNo("Overwrite? (y/N)"))
+        XCTAssertNil(StartWatch.defaultNo("Update now? [Y/n]"))
+        XCTAssertNil(StartWatch.defaultNo("Add it? [y/N]\n╭──────╮"))                // not the last line any more
+        XCTAssertNil(StartWatch.defaultNo("Enter your token:"))
     }
 
     // MARK: - starting + the first turn
@@ -310,7 +357,7 @@ final class SessionStarterTests: XCTestCase {
         let script = args.dropLast().joined(separator: "\n")
         XCTAssertFalse(script.contains("quoted"))
         XCTAssertFalse(script.contains("activate"))
-        XCTAssertTrue(script.contains(#"tell application "Terminal" to do script (item 1 of argv)"#))
+        XCTAssertTrue(script.contains(#"tell application "Terminal" to return tty of (do script (item 1 of argv))"#))
     }
 }
 

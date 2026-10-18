@@ -298,6 +298,19 @@ public sealed class Server
                 return;
             }
 
+            // Start check (Zentrale.cs Delivery): GET /starting lists the starts on the way; Windows
+            // can't type into another console, so POST /starting/answer says so.
+            if (req.HttpMethod == "GET" && path == "/starting")
+            {
+                await Respond(ctx, 200, JsonSerializer.Serialize(Delivery.Starting()));
+                return;
+            }
+            if (req.HttpMethod == "POST" && path == "/starting/answer")
+            {
+                await Respond(ctx, 501, JsonSerializer.Serialize(new { ok = false, error = "not on Windows — answer in the session's window" }));
+                return;
+            }
+
             // /remind — a Wiedervorlage (Reminders.cs). Same answers as macOS:
             // {"ok":true,"reminder":{id,text,to,at,after}} or 400 {"ok":false,"error"}.
             if (req.HttpMethod == "POST" && path == "/remind")

@@ -41,8 +41,16 @@ final class ControlServer: @unchecked Sendable {
     private var startedAt: [String: Date] = [:]
     static let restartGuard: TimeInterval = 120   // no second session start in a folder within this
 
-    // Starts a session in a folder (Terminal + `claude '/parley:voice'`); a stub in tests.
-    var starter: (String, String?) -> Void = { SessionStarter.start(folder: $0, resume: $1) }   // folder, resume id
+    // Starts a session in a folder (Terminal + `claude '/parley:voice'`); a stub in tests. The
+    // callback gets the Terminal tab (its tty) for the start check.
+    var starter: (String, String?, @escaping @Sendable (String?) -> Void) -> Void = {
+        SessionStarter.start(folder: $0, resume: $1, tab: $2)
+    }   // folder, resume id, tab
+    // The start check's look at a tab / typing into it (StartWatch.swift); stubs in tests.
+    var tabScreen: (String) -> String? = { TerminalTabs.screen(tty: $0) }
+    var tabType: (String, String) -> Bool = { TerminalTabs.type($0, tty: $1) }
+    private var startWatch = StartWatch()
+    private var startTicking = false
     var transcripts = Transcript.projects   // Claude Code's transcripts (/past, /dispatch resume)
     // Ends a session's process (POST /close; a stub in tests): nil = closing, else why not.
     var closer: (_ id: String, _ cwd: String) -> String? = { SessionCloser.close(id: $0, cwd: $1) }
@@ -329,11 +337,102 @@ final class ControlServer: @unchecked Sendable {
         let guardKey = forNew ? cwd + "\u{1}" + (name ?? "").lowercased() : cwd
         if start, here == nil, startedAt[guardKey].map({ now().timeIntervalSince($0) >= Self.restartGuard }) ?? true {
             startedAt[guardKey] = now()
-            starter(cwd, resume)
+            let at = now()
+            starter(cwd, resume) { [weak self] tty in
+                self?.queue.async { self?.watchStart(cwd, tty: tty, at: at) }
+            }
             result.started = true
         }
         Log.write("dispatch: \(cwd) → \(result.delivered)\(result.started ? (resume == nil ? ", session started" : ", session \(resume!) resumed") : "")")
         return result
+    }
+
+    // MARK: - start check (StartWatch.swift)
+
+    private func watchStart(_ cwd: String, tty: String?, at: Date) {
+        startWatch.begin(cwd: cwd, tty: tty, at: at)
+        guard !startTicking else { return }
+        startTicking = true
+        queue.asyncAfter(deadline: .now() + StartWatch.every) { [weak self] in self?.startTick() }
+    }
+
+    // A look now (tests).
+    func startCheckNow() { queue.async { self.startTick() } }
+
+    // One look at every start still on the way: its session up → done; else read its tab (off the
+    // queue), answer a default-No question with "n", and after a while show the Zentrale.
+    func startTick() {
+        let t = now()
+        for e in startWatch.entries {
+            if sessions.seen(inFolder: e.cwd, since: e.since) {
+                startWatch.end(e.cwd)
+                Log.write("start: the session in \(e.cwd) is up")
+            } else if t.timeIntervalSince(e.since) > StartWatch.giveUp {
+                startWatch.end(e.cwd)
+            }
+        }
+        guard !startWatch.entries.isEmpty else { startTicking = false; return }
+        let looks = startWatch.entries.map { ($0.cwd, $0.tty) }
+        let (screenOf, type) = (tabScreen, tabType)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let screens = looks.map { cwd, tty in (cwd, tty, tty.map { screenOf($0) }) }
+            self?.queue.async {
+                guard let self else { return }
+                for (cwd, tty, read) in screens { self.look(cwd, tty: tty, read: read, type: type) }
+                self.queue.asyncAfter(deadline: .now() + StartWatch.every) { [weak self] in self?.startTick() }
+            }
+        }
+    }
+
+    // `read`: nil = no tab known; .some(nil) = the tab is gone.
+    private func look(_ cwd: String, tty: String?, read: String??, type: @escaping (String, String) -> Bool) {
+        guard let e = startWatch.entry(cwd) else { return }
+        if case .some(.none) = read {
+            startWatch.end(cwd)
+            Log.write("start: the Terminal tab for \(cwd) was closed")
+            return
+        }
+        var text = ""
+        if case .some(.some(let s)) = read { text = s }
+        let screen = StartWatch.tail(text)
+        startWatch.update(cwd) { $0.screen = screen }
+        if let tty, let question = StartWatch.defaultNo(screen), !e.answered.contains(question) {
+            startWatch.update(cwd) { $0.answered.insert(question) }
+            Log.write("start: answered \"n\" to \"\(question)\" in \(cwd)")
+            DispatchQueue.global(qos: .utility).async { _ = type("n", tty) }
+            return
+        }
+        let waited = Int(now().timeIntervalSince(e.since))
+        guard !e.reported, Double(waited) >= StartWatch.reportAfter else { return }
+        startWatch.update(cwd) { $0.reported = true }
+        let zentrale = Zentrale.normalize(zentraleDir())
+        Log.write("start: the session in \(cwd) isn't up after \(waited) s — shown to the Zentrale")
+        guard cwd != zentrale else { return }   // the Zentrale itself hangs: nobody to show it to
+        _ = dispatchOnQueue(cwd: zentrale, instruction: StartWatch.note(cwd: cwd, screen: screen, seconds: waited), start: true)
+    }
+
+    // GET /starting: the starts still on the way, with what their tab shows.
+    private func startingJSON() -> String {
+        struct Row: Encodable { let cwd: String; let seconds: Int; let screen: String; let readable: Bool }
+        let rows = startWatch.entries.map {
+            Row(cwd: $0.cwd, seconds: Int(now().timeIntervalSince($0.since)), screen: $0.screen, readable: $0.tty != nil)
+        }
+        return Self.encode(["starting": rows])
+    }
+
+    // POST /starting/answer {cwd, text}: types the answer and Enter into that start's tab — only a
+    // start Parley made that hasn't shown up yet.
+    private func startingAnswer(_ body: Data) -> (Int, String) {
+        struct Answer: Decodable { var cwd: String?; var text: String? }
+        guard let a = try? JSONDecoder().decode(Answer.self, from: body), let raw = a.cwd, let text = a.text,
+              text.count <= 200, !text.contains(where: { $0.isNewline }) else {
+            return (400, #"{"ok":false,"error":"give cwd and a one-line text"}"#)
+        }
+        let cwd = Zentrale.normalize(raw)
+        guard let tty = startWatch.entry(cwd)?.tty else { return (404, #"{"ok":false,"error":"no start on the way there"}"#) }
+        guard tabType(text, tty) else { return (409, #"{"ok":false,"error":"the tab is gone"}"#) }
+        Log.write("start: the Zentrale answered \"\(text.prefix(40))\" in \(cwd)")
+        return (200, #"{"ok":true}"#)
     }
 
     // The instruction(s) waiting for `cwd` that session `id` may take, consumed.
@@ -653,6 +752,10 @@ final class ControlServer: @unchecked Sendable {
             return (reply.0, (try? JSONEncoder().encode(reply.1)).map { String(decoding: $0, as: UTF8.self) } ?? "{}")
         case ("POST", "/remind"):
             return remind(req.body)
+        case ("GET", "/starting"):
+            return (200, startingJSON())
+        case ("POST", "/starting/answer"):
+            return startingAnswer(req.body)
         case ("GET", "/remind"):
             return (200, Self.encode(["reminders": Reminders.rows(reminders)]))
         case ("POST", "/remind/cancel"):

@@ -311,6 +311,16 @@ public sealed class SessionRegistry
         }
     }
 
+    // A session in `cwd` that showed up at or after `since` (a start has arrived).
+    public bool SeenSince(string cwd, DateTime since)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.Values.Any(e => CwdPath.Same(e.Cwd, cwd) && e.FirstSeen >= since.AddSeconds(-2));
+        }
+    }
+
     public string? DeliverableIn(string cwd)
     {
         lock (_gate)

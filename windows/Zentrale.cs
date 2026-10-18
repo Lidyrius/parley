@@ -394,6 +394,12 @@ public sealed class Delivery
     private readonly Func<string, string?, bool> _start; // folder, resume id → started
     private readonly PendingByCwd _pending = new();
     private readonly Dictionary<string, DateTime> _started = new(StringComparer.OrdinalIgnoreCase);
+    // Start check (as macOS StartWatch.swift): the starts still on the way. ponytail: Windows can't
+    // read or type into another console window, so a start that hangs is only shown to the
+    // Zentrale after 90 s (no "n" to [y/N] questions — and no Gas Town-like cd hooks start here).
+    private readonly Dictionary<string, (DateTime Since, bool Reported)> _starting = new(StringComparer.OrdinalIgnoreCase);
+    private System.Threading.Timer? _startTimer;
+    private static readonly TimeSpan ReportAfter = TimeSpan.FromSeconds(90), GiveUp = TimeSpan.FromMinutes(10);
 
     public Delivery(SessionRegistry sessions, Action<string, string> deliver, Func<string, string?, bool>? start = null)
     {
@@ -470,10 +476,52 @@ public sealed class Delivery
         if (_start(dir, resume))
         {
             if (resume is not null) Log.Write($"dispatch: {dir} → session {resume} resumed");
+            lock (_starting) _starting[dir] = (DateTime.UtcNow, false);
+            _startTimer ??= new System.Threading.Timer(_ => CheckStarts(), null, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(4));
             return DispatchResult.Started;
         }
         lock (_started) _started.Remove(key);
         return DispatchResult.Failed;
+    }
+
+    // Every 4 s: a start whose session is up is done; one that hangs 90 s is shown to the Zentrale.
+    public void CheckStarts()
+    {
+        var now = DateTime.UtcNow;
+        List<string> report = new();
+        lock (_starting)
+        {
+            foreach (var (dir, s) in _starting.ToList())
+            {
+                if (_sessions.SeenSince(dir, s.Since)) { _starting.Remove(dir); Log.Write($"start: the session in {dir} is up"); }
+                else if (now - s.Since > GiveUp) _starting.Remove(dir);
+                else if (!s.Reported && now - s.Since >= ReportAfter) { _starting[dir] = (s.Since, true); report.Add(dir); }
+            }
+        }
+        foreach (var dir in report)
+        {
+            var zentrale = CwdPath.Normalize(Zentrale.Dir(Config.Load()));
+            Log.Write($"start: the session in {dir} isn't up after {(int)ReportAfter.TotalSeconds} s — shown to the Zentrale");
+            if (CwdPath.Same(dir, zentrale)) continue;   // the Zentrale itself hangs: nobody to show it to
+            Dispatch(zentrale, Note(dir, (int)ReportAfter.TotalSeconds), start: true);
+        }
+    }
+
+    public static string Note(string dir, int seconds) =>
+        $"[Parley · Start-Check] Die neue Session in {dir} ist nach {seconds} s noch nicht da. " +
+        "Unter Windows kann Parley ihr Fenster nicht lesen: Sag Sir kurz, dass dort im Terminal-Fenster etwas auf eine Eingabe wartet.";
+
+    // GET /starting: the starts still on the way (macOS also shows each tab's last lines).
+    public object Starting()
+    {
+        lock (_starting)
+            return new
+            {
+                starting = _starting.Select(kv => new
+                {
+                    cwd = kv.Key, seconds = (int)(DateTime.UtcNow - kv.Value.Since).TotalSeconds, screen = "", readable = false,
+                }).ToList(),
+            };
     }
 
     // A wake utterance → a running session by name (Groq LLM, label substring fallback) or the

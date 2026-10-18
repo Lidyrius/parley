@@ -98,24 +98,30 @@ enum SessionStarter {
         return "\(quietHooks)cd \(shellQuote(folder)) && claude\(r) \(shellQuote(firstPrompt))"
     }
 
+    // Returns the new tab's tty, so the start check (StartWatch) finds the tab again.
     static func osascriptArguments(folder: String, resume: String? = nil) -> [String] {
-        ["-e", "on run argv", "-e", #"tell application "Terminal" to do script (item 1 of argv)"#, "-e", "end run",
+        ["-e", "on run argv", "-e", #"tell application "Terminal" to return tty of (do script (item 1 of argv))"#, "-e", "end run",
          command(folder: folder, resume: resume)]
     }
 
-    static func start(folder: String, resume: String? = nil) {
+    // `tab`: the new tab's tty once Terminal has it (nil if it couldn't be read).
+    static func start(folder: String, resume: String? = nil, tab: @escaping @Sendable (String?) -> Void = { _ in }) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = osascriptArguments(folder: folder, resume: resume)
-        p.standardOutput = Pipe()
+        let out = Pipe()
+        p.standardOutput = out
         let err = Pipe()
         p.standardError = err
         p.terminationHandler = { proc in
             let msg = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let tty = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             Log.write("session start in \(folder): osascript exit \(proc.terminationStatus)\(msg.isEmpty ? "" : " — \(msg)")")
+            tab(proc.terminationStatus == 0 && tty.hasPrefix("/dev/") ? tty : nil)
         }
-        do { try p.run() } catch { Log.write("session start in \(folder) failed: \(error.localizedDescription)") }
+        do { try p.run() } catch { Log.write("session start in \(folder) failed: \(error.localizedDescription)"); tab(nil) }
     }
 }
 

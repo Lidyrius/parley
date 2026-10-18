@@ -112,6 +112,26 @@ jq -n --arg cwd "$dir" --arg task "$auftrag" '{cwd: $cwd, instruction: $task, st
 - Antwort prüfen: Fehler oder keine Verbindung → ehrlich sagen, nicht so tun, als sei es
   übergeben. Erfolg kurz bestätigen („Erledigt, Sir — Tippfrei kümmert sich darum.“).
 
+### Startet eine Session nicht? (Start-Check)
+
+Parley beobachtet jede neu gestartete Session, bis sie da ist. Fragen der Shell mit „Nein“ als
+Standard (`[y/N]`, z. B. „Add '…' to Gas Town? [y/N/never]“) beantwortet Parley selbst mit `n`.
+Hängt ein Start nach 90 s immer noch, bekommst du eine Nachricht **„[Parley · Start-Check] …“** mit
+den letzten Zeilen aus dem Terminal. Dann:
+
+- **Harmlos und eindeutig** (ein Hinweis zum Bestätigen, ein Update-Angebot, ja/nein mit
+  offensichtlicher Antwort): selbst beantworten —
+  ```bash
+  jq -n --arg cwd "$dir" --arg text "n" '{cwd: $cwd, text: $text}' \
+    | curl -sS -X POST "http://127.0.0.1:${PARLEY_PORT:-8787}/starting/answer" \
+        -H 'Content-Type: application/json' --data-binary @-
+  ```
+  Danach kurz an Sir: was da stand und was du geantwortet hast.
+- **Alles andere** (Login, Passwort, Fehlermeldung, eine echte Entscheidung): **nichts eintippen**,
+  Sir kurz sagen, was dort steht.
+- Selbst nachsehen: `curl -sS http://127.0.0.1:${PARLEY_PORT:-8787}/starting` (Starts, die noch
+  laufen, mit `screen` = letzte Zeilen). Unter Windows ist `screen` leer — dort Sir Bescheid sagen.
+
 ### Eigener Name / zweite Session im selben Ordner
 
 Ohne Namen heißen alle Sessions eines Ordners wie das Projekt (`.parley.json`) — und `/dispatch`
