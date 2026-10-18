@@ -16,6 +16,8 @@ final class PhoneFrameTests: XCTestCase {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"away","on":false}"#), .away(false))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"resume","id":"s1"}"#), .resume("s1"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"silent","on":true}"#), .silent(true))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"round","seconds":180}"#), .round(seconds: 180))
+        XCTAssertNil(RelayFrame.parse(#"{"t":"round"}"#))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"push","token":"AB","env":"production","kind":"alert"}"#), .alert(token: "ab", env: "production"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1"}"#), .history(id: "s1", before: nil))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1","before":"u#0"}"#), .history(id: "s1", before: "u#0"))
@@ -135,6 +137,17 @@ final class PhoneHubTests: XCTestCase {
         XCTAssertEqual(wire.changes, 1)
         hub.handle(.away(false))
         XCTAssertFalse(hub.away)
+    }
+
+    // Einstellungen → Fragerunde: kept, clamped to 0…600 s, 90 s until the phone says otherwise.
+    func testFragerundeFromThePhone() {
+        XCTAssertEqual(hub.roundSeconds, 90)
+        hub.handle(.round(seconds: 180))
+        XCTAssertEqual(hub.roundSeconds, 180)
+        hub.handle(.round(seconds: 0))
+        XCTAssertEqual(hub.roundSeconds, 0)
+        hub.handle(.round(seconds: 9999))
+        XCTAssertEqual(hub.roundSeconds, 600)
     }
 
     func testStummAlertTokenAndChatEvents() {

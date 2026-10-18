@@ -295,11 +295,10 @@ final class AppController: ObservableObject {
 
     // MARK: - Fragerunde
 
-    // After a call, the next updates don't ring at once while other sessions still work: for up
-    // to 90 s they gather (queued, shown so in the Island) and then come as one round — "Ich habe
-    // drei Updates für Sie, Sir."
+    // After a call, the next updates don't ring at once while other sessions still work: for up to
+    // the phone's setting (Einstellungen → Fragerunde, 90 s by default, 0 = off) they gather (queued,
+    // shown so in the Island) and then come as one round — "Ich habe drei Updates für Sie, Sir."
     // Sir calling in meanwhile starts the round right away. Permission prompts never wait.
-    static let roundGap: TimeInterval = 90
     private var lastCallEnd: Date?
 
     // Only while more can come: another session still working. Nothing else at work → it rings
@@ -307,8 +306,9 @@ final class AppController: ObservableObject {
     // Minuten zurück") never waits: its turn rings at once, and one queued behind ends the wait —
     // as does a Wiedervorlage for Sir.
     private func gatherRound(session: String) async {
-        guard let end = lastCallEnd, !phone.callActive else { return }
-        let ready = end.addingTimeInterval(Self.roundGap)
+        let gap = TimeInterval(phone.roundSeconds)
+        guard gap > 0, let end = lastCallEnd, !phone.callActive else { return }
+        let ready = end.addingTimeInterval(gap)
         guard Date() < ready, server.othersWorking(except: session) else { return }
         if server.afterWait(session) { Log.write("Fragerunde: skipped — Sir's timer ran out"); return }
         Log.write("Fragerunde: gathering until \(ready.formatted(date: .omitted, time: .standard))")

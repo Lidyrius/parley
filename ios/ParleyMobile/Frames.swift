@@ -268,6 +268,8 @@ enum Outgoing {
     static func away(_ on: Bool) -> String { encode(["t": .s("away"), "on": .b(on)]) }
     /// v3: Stumm — with Unterwegs on, updates come as a notification instead of a call.
     static func silent(_ on: Bool) -> String { encode(["t": .s("silent"), "on": .b(on)]) }
+    /// Fragerunde: how long an update waits for others still at work (0 = never).
+    static func round(seconds: Int) -> String { encode(["t": .s("round"), "seconds": .i(seconds)]) }
     /// v3: the notification push token (hex).
     static func alertPush(token: String, env: PushEnvironment) -> String {
         encode(["t": .s("push"), "token": .s(token), "env": .s(env.rawValue), "kind": .s("alert")])

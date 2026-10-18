@@ -79,6 +79,9 @@ final class PhoneHub: CallLink, @unchecked Sendable {
         onChange?()
     }
     var silent: Bool { store.get(.phoneSilent) == "1" }
+    /// Fragerunde (the phone's settings): how long an update waits for others still at work.
+    var roundSeconds: Int { store.get(.roundSeconds).flatMap(Int.init) ?? Self.roundDefault }
+    static let roundDefault = 90, roundMax = 600
 
     // Where a notification push goes; nil until the phone sent its alert token.
     var alertTarget: (token: String, env: String)? {
@@ -149,6 +152,11 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             store.set(on ? "1" : "0", .phoneSilent)
             log("phone: Stumm \(on ? "an" : "aus")")
             onChange?()
+        case .round(let seconds):
+            let s = min(Self.roundMax, max(0, seconds))
+            guard roundSeconds != s else { return }
+            store.set(String(s), .roundSeconds)
+            log("phone: Fragerunde \(s == 0 ? "aus" : "bis \(s) s")")
         case .alert(let token, let env):
             guard store.get(.phoneAlertToken) != token else { return }
             store.set(token, .phoneAlertToken)

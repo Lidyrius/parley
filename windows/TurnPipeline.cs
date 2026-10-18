@@ -433,10 +433,9 @@ public sealed class TurnPipeline
     // ---- Fragerunde (as macOS) ----------------------------------------------------------
 
     // After a call, the next updates don't ring at once while other sessions still work: for up
-    // to 90 s they gather (queued,
+    // to the phone's setting (90 s by default, 0 = off) they gather (queued,
     // shown so in the Island) and then come as one round. Sir calling in meanwhile starts it.
     // Permission prompts never wait.
-    public static readonly TimeSpan RoundGap = TimeSpan.FromSeconds(90);
     // Another session besides this one is still working (an update may follow soon).
     public Func<string, bool>? OthersWorking;
     // Sir's own timer ran out for this session's turn / for one waiting at the gate.
@@ -448,8 +447,9 @@ public sealed class TurnPipeline
     // Minuten zurück") never waits: its turn rings at once, and one queued behind ends the wait.
     private async Task GatherRound(string session)
     {
-        if (PhoneCall.LastCallEnd is not { } end || PhoneCall.Active) return;
-        var ready = end + RoundGap;
+        var gap = TimeSpan.FromSeconds(Config.Load().RoundSeconds);   // the phone's setting; 0 = off
+        if (gap <= TimeSpan.Zero || PhoneCall.LastCallEnd is not { } end || PhoneCall.Active) return;
+        var ready = end + gap;
         bool More() => OthersWorking?.Invoke(session) == true;
         bool Timer() => TimerQueued?.Invoke() == true;
         if (DateTime.UtcNow >= ready || !More()) return;

@@ -32,6 +32,7 @@ public sealed class Config
     public string PhonePushEnv { get; init; } = "production";   // production | development
     public bool PhoneAway { get; init; }
     public bool PhoneSilent { get; init; }          // Unterwegs + Stumm: a notification instead of a call
+    public int RoundSeconds { get; init; } = 90;    // Fragerunde (the phone's setting): 0 = never wait
     public string PhoneAlertToken { get; init; } = "";   // notification push token (hex)
     public string PhoneActivityStart { get; init; } = "";   // Live Activity push-to-start token (hex)
     public string PhoneActivityToken { get; init; } = "";   // the running Live Activity's update token; "" = none
@@ -105,6 +106,7 @@ public sealed class Config
                 PhonePushEnv = S("phonePushEnv") == "development" ? "development" : "production",
                 PhoneAway = S("phoneAway") == "1",
                 PhoneSilent = S("phoneSilent") == "1",
+                RoundSeconds = int.TryParse(S("roundSeconds"), out var rs) ? rs : 90,
                 PhoneAlertToken = S("phoneAlertToken").Trim(),
                 PhoneActivityStart = S("phoneActivityStart").Trim(),
                 PhoneActivityToken = S("phoneActivityToken").Trim(),

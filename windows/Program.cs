@@ -320,6 +320,14 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneAway a: PhoneCall.SetAway(a.On); break;
             case PhoneLater l: PhoneCall.SetLater(l.After); break;
             case PhoneSilent s: PhoneCall.SetSilent(s.On); break;
+            case PhoneRound r:
+                var secs = Math.Clamp(r.Seconds, 0, 600);
+                if (Config.Load().RoundSeconds != secs)
+                {
+                    Config.Merge(new Dictionary<string, string> { ["roundSeconds"] = secs.ToString() });
+                    Log.Write($"phone: Fragerunde {(secs == 0 ? "aus" : $"bis {secs} s")}");
+                }
+                break;
             case PhoneAlert a: PhoneCall.SetAlert(a.Token, a.Env); break;
             case PhoneActivityStart s: PhoneCall.SetActivityStart(s.Token, s.Env); break;
             case PhoneBarge:

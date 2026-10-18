@@ -63,6 +63,7 @@ Authorization: Bearer <secret>
 | `sessions` | host → phones    | the host's `GET /sessions` JSON (`sessions`, `today`, `reminders`) plus `at` (host clock, epoch ms). A row's `voice` means *holds the voice right now* (speaking/listening), not "voice mode on" — every listed session has voice mode. Sent on change, at least every 10 s. The relay keeps the latest one and sends it to a phone right after it connects. |
 | `peer`     | relay → phones   | `{ "t": "peer", "host": true|false }` on connect and whenever the host comes or goes. |
 | `resume`   | phone → host     | `{ "t": "resume", "id": "<session id>" }` — same as `POST /resume` on the host. |
+| `round`    | phone → host     | `{ "t": "round", "seconds": 90 }` — Einstellungen → Fragerunde: after a call, how long a new update waits while other sessions still work (0 = never, ≤ 600). Sent on change and on connect; the host keeps it. |
 | `hello`    | phone → host     | `{ "t": "hello", "device": "<name>" }` after connecting (informational). |
 
 Unknown types are ignored by every side (forward compatible). The relay forwards host messages
@@ -275,8 +276,8 @@ on by default):
 
 ### Fragerunde, Wachhund, Unterwegs by itself
 
-- **Fragerunde:** for 90 s after a call ends, a new update doesn't ring while other sessions are
-  still working: it waits (`queued`, the Island shows it) for theirs, then one ring for all — "Ich
+- **Fragerunde:** for 90 s after a call ends (the phone's setting, `round` frame; 0 = off), a new
+  update doesn't ring while other sessions are still working: it waits (`queued`, the Island shows it) for theirs, then one ring for all — "Ich
   habe drei Updates für Sie, Sir." Nothing else at work → it rings at once. Calling in starts the
   round at once; permission prompts never wait, nor does a turn after Sir's own "ruf mich in
   zwei Minuten zurück" (it rings at once and ends a gather already under way), and a

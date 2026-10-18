@@ -64,6 +64,19 @@ final class AppModel {
     let relay = Relay()
     let call: CallController
     private(set) var pairing: Pairing?
+    /// Fragerunde (Einstellungen): after a call, how long a new update waits while other sessions
+    /// still work, so they come as one call (0 = never; nothing else at work → it rings at once).
+    /// Persisted; sent on change and after every (re)connect.
+    static let roundKey = "roundSeconds"
+    static let roundChoices = [0, 30, 60, 90, 120, 180, 300]
+    var roundSeconds = UserDefaults.standard.object(forKey: AppModel.roundKey) as? Int ?? 90 {
+        didSet {
+            guard roundSeconds != oldValue else { return }
+            UserDefaults.standard.set(roundSeconds, forKey: Self.roundKey)
+            relay.send(Outgoing.round(seconds: roundSeconds))
+        }
+    }
+
     /// Unterwegs-Modus: updates ring this phone instead of being voiced on the Mac. Persisted;
     /// sent on change and after every (re)connect.
     var away: Bool {
@@ -342,6 +355,7 @@ final class AppModel {
             // Per-connection state: the host may have restarted or the socket been replaced.
             relay.send(Outgoing.away(away))
             relay.send(Outgoing.silent(silent))
+            relay.send(Outgoing.round(seconds: roundSeconds))
             sendPushToken()
             sendAlertToken()
             sendActivityTokens()

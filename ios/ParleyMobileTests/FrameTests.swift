@@ -126,6 +126,7 @@ struct FrameTests {
         #expect(Outgoing.push(token: "01", env: .development) == #"{"env":"development","t":"push","token":"01"}"#)
         #expect(Outgoing.alertPush(token: "ab", env: .production) == #"{"env":"production","kind":"alert","t":"push","token":"ab"}"#)
         #expect(Outgoing.silent(true) == #"{"on":true,"t":"silent"}"#)
+        #expect(Outgoing.round(seconds: 120) == #"{"seconds":120,"t":"round"}"#)
         #expect(Outgoing.history(id: "s1") == #"{"id":"s1","t":"history"}"#)
         #expect(Outgoing.history(id: "s1", before: "a#0") == #"{"before":"a#0","id":"s1","t":"history"}"#)
         #expect(Outgoing.image(id: "s1", key: "u#0") == #"{"id":"s1","key":"u#0","t":"image"}"#)

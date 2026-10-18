@@ -33,6 +33,7 @@ enum Keychain {
         case phonePushToken // the iPhone's VoIP push token (hex), from its `push` frame
         case phonePushEnv   // "production" | "development" (APNs host)
         case phoneAway      // "1" = Unterwegs-Modus on (the phone's `away` frame): updates ring the phone
+        case roundSeconds   // Fragerunde: an update waits up to this long (s) while others work; empty = 90
         case phoneSilent    // "1" = Unterwegs + Stumm (`silent` frame): a notification instead of a call
         case phoneAlertToken // the iPhone's notification push token (hex), `push` frame with kind "alert"
         case phoneActivityStart // the Live Activity's push-to-start token (hex), `activity` frame
