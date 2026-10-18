@@ -6,8 +6,17 @@ import Foundation
 /// The audio session itself belongs to CallKit (it activates it); this only runs the engine.
 @MainActor
 final class CallAudio {
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    /// The engine and its player. Only `start` touches them off the main actor — turning on voice
+    /// processing and starting the I/O take a few hundred ms, which froze the answer animation —
+    /// and nothing else uses them before `isRunning`.
+    private final class IO: @unchecked Sendable {
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+    }
+    private let io = IO()
+    private var engine: AVAudioEngine { io.engine }
+    private var player: AVAudioPlayerNode { io.player }
+    private var starting = false
     private let mic: MicPipeline
     private let meter: AudioMeter
     private var jitter = JitterBuffer()
@@ -39,34 +48,58 @@ final class CallAudio {
         set { mic.isMuted = newValue }
     }
 
-    func start() throws {
-        guard !isRunning else { return }
-        hasMicrophone = false
-        if Self.usesMicrophone {
-            let input = engine.inputNode
+    func start() async throws {
+        guard !isRunning, !starting else { return }
+        starting = true
+        defer { starting = false }
+        let run = generation
+        let (io, mic, usesMicrophone) = (io, mic, Self.usesMicrophone)
+        let r = try await Task.detached(priority: .userInitiated) {
+            try Self.startIO(io, mic: mic, usesMicrophone: usesMicrophone)
+        }.value
+        guard run == generation else {   // stopped while starting
+            Self.stopIO(io, hasMicrophone: r.hasMicrophone)
+            return
+        }
+        echoCancellation = r.echoCancellation
+        hasMicrophone = r.hasMicrophone
+        isRunning = true
+    }
+
+    private nonisolated static func startIO(_ io: IO, mic: MicPipeline, usesMicrophone: Bool) throws
+        -> (echoCancellation: Bool, hasMicrophone: Bool) {
+        var echo = false, hasMic = false
+        if usesMicrophone {
+            let input = io.engine.inputNode
             do {
                 if !input.isVoiceProcessingEnabled { try input.setVoiceProcessingEnabled(true) }
-                echoCancellation = true
+                echo = true
             } catch {
-                echoCancellation = false
+                echo = false
             }
             let format = input.outputFormat(forBus: 0)
-            hasMicrophone = format.sampleRate > 0 && format.channelCount > 0
-            if hasMicrophone {
+            hasMic = format.sampleRate > 0 && format.channelCount > 0
+            if hasMic {
                 mic.prepare(input: format)
-                input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.tap(mic))
+                input.installTap(onBus: 0, bufferSize: 1024, format: format, block: tap(mic))
             }
         }
-        engine.connect(player, to: engine.mainMixerNode, format: PCM.playFormat)
-        engine.prepare()
+        io.engine.connect(io.player, to: io.engine.mainMixerNode, format: PCM.playFormat)
+        io.engine.prepare()
         do {
-            try engine.start()
+            try io.engine.start()
         } catch {
-            if hasMicrophone { engine.inputNode.removeTap(onBus: 0) }
+            if hasMic { io.engine.inputNode.removeTap(onBus: 0) }
             throw error
         }
-        player.play()
-        isRunning = true
+        io.player.play()
+        return (echo, hasMic)
+    }
+
+    private nonisolated static func stopIO(_ io: IO, hasMicrophone: Bool) {
+        if hasMicrophone { io.engine.inputNode.removeTap(onBus: 0) }
+        io.player.stop()
+        io.engine.stop()
     }
 
     /// The simulator's audio input is the Mac's microphone; when that path isn't available, an
@@ -82,12 +115,10 @@ final class CallAudio {
     }
 
     func stop() {
+        generation += 1   // also cancels a start still under way
         guard isRunning else { return }
         isRunning = false
-        if hasMicrophone { engine.inputNode.removeTap(onBus: 0) }
-        player.stop()
-        engine.stop()
-        generation += 1
+        Self.stopIO(io, hasMicrophone: hasMicrophone)
         jitter.reset()
         flushTimer?.cancel()
         flushTimer = nil
@@ -97,7 +128,7 @@ final class CallAudio {
     func restart() {
         guard isRunning else { return }
         stop()
-        try? start()
+        Task { try? await start() }
     }
 
     // MARK: - Playback

@@ -67,6 +67,11 @@ final class CallController {
     @ObservationIgnored private let callKit = CXCallController(queue: .main)
     @ObservationIgnored private var uuid: UUID?
     @ObservationIgnored private var audioActive = false
+    @ObservationIgnored private var beginning = false
+    /// "Annehmen" was tapped: the screen morphs at once, not only once CallKit confirms.
+    private var answering = false
+    /// The ringing screen (buttons, ring, "later") — until answered.
+    var isRinging: Bool { phase == .ringing && !answering }
     @ObservationIgnored private var wakeArmed = true
     @ObservationIgnored private var connectTimeout: Task<Void, Never>?
     @ObservationIgnored private var lossTimeout: Task<Void, Never>?
@@ -157,6 +162,7 @@ final class CallController {
         uuid = id
         self.label = label
         phase = .ringing
+        if provider != nil { try? Self.configureSession() }   // now, not while answering animates
         // Not answered in 40 s (on the lock screen there is only "answer"): stop ringing, tell the
         // host, and offer "later" as a notification.
         ringExpiry?.cancel()
@@ -231,6 +237,7 @@ final class CallController {
         if isDemo { phase = .active(since: .now); return }
         guard let uuid else { return }
         showsScreen = true
+        answering = true
         guard provider != nil else {
             try? startWithoutCallKit(answering: true)
             return
@@ -436,27 +443,33 @@ final class CallController {
 
     // MARK: - Lifecycle
 
-    /// Relay + audio session ready → engine, `call start`.
+    /// Relay + audio session ready → engine (started off the main actor), `call start`.
     private func begin() {
-        guard phase == .dialing || phase == .connecting, relay.canSend, audioActive else { return }
+        guard phase == .dialing || phase == .connecting, relay.canSend, audioActive, !beginning else { return }
+        beginning = true
         let outgoing = phase == .dialing
         connectTimeout?.cancel()
-        do {
-            try audio.start()
-        } catch {
-            fail("Das Mikrofon ließ sich nicht starten.")
-            return
-        }
-        audio.muted = muted
-        // Loudspeaker by default — only instead of the earpiece: AirPods, the car and headsets keep their route.
+        // Loudspeaker by default — only instead of the earpiece: AirPods, the car and headsets keep
+        // their route. Before the engine starts: switching after rebuilds its I/O (a second stall).
         if Self.speakerByDefault, !isDemo,
            AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) {
             setSpeaker(true)
         }
-        relay.send(Outgoing.call(started: true))
-        phase = .active(since: .now)
-        if outgoing, let uuid { provider?.reportOutgoingCall(with: uuid, connectedAt: .now) }
-        updateWake()
+        Task {
+            defer { beginning = false }
+            do {
+                try await audio.start()
+            } catch {
+                fail("Das Mikrofon ließ sich nicht starten.")
+                return
+            }
+            guard phase == .dialing || phase == .connecting else { return }   // ended meanwhile
+            audio.muted = muted
+            relay.send(Outgoing.call(started: true))
+            phase = .active(since: .now)
+            if outgoing, let uuid { provider?.reportOutgoingCall(with: uuid, connectedAt: .now) }
+            updateWake()
+        }
     }
 
     /// Reach the host, or give up after a while.
@@ -546,6 +559,7 @@ final class CallController {
         audio.muted = false
         speaker = false
         audioActive = false
+        answering = false
         wakeArmed = true
         wakeSent = false
         showsScreen = false
@@ -664,6 +678,8 @@ final class CallController {
     /// mic come with the CallKit call's route.
     private static func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
+        if CallAudio.usesMicrophone, session.category == .playAndRecord, session.mode == .voiceChat,
+           session.categoryOptions.contains(.allowBluetoothHFP) { return }   // already (set while ringing)
         if CallAudio.usesMicrophone {
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
         } else {

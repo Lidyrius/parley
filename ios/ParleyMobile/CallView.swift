@@ -90,9 +90,9 @@ struct CallView: View {
                 Waveform(mood: look.mood, color: look.color, paused: reduceMotion) { call.level(at: $0) }
                     .frame(height: 96)
                     .padding(.horizontal, 8)
-                    .scaleEffect(x: 1, y: call.phase == .ringing ? 0.05 : 1)
-                    .opacity(call.phase == .ringing ? 0 : 1)
-                    .animation(.spring(response: 0.7, dampingFraction: 0.85).delay(0.15), value: call.phase == .ringing)
+                    .scaleEffect(x: 1, y: call.isRinging ? 0.05 : 1)
+                    .opacity(call.isRinging ? 0 : 1)
+                    .animation(.spring(response: 0.7, dampingFraction: 0.85).delay(0.15), value: call.isRinging)
                     .accessibilityHidden(true)
                 Group {
                     // The line stays readable while Parley listens (an app opened late still shows it).
@@ -105,7 +105,7 @@ struct CallView: View {
                 .frame(minHeight: 72, alignment: .top)
                 .padding(.top, 18)
                 Spacer(minLength: 20)
-                if call.phase == .ringing {
+                if call.isRinging {
                     // Can't talk now: put it off a little, or call back later yourself.
                     HStack(spacing: 8) {
                         laterButton("In 1 Min.", after: 60, call)
@@ -150,7 +150,7 @@ struct CallView: View {
     private func identity(_ call: CallController, look: CallLook, name: String) -> some View {
         VStack(spacing: 18) {
             // Ringing: the picked motion around the ring; answered, it draws back in (the morph).
-            RingingStage(style: Appearance.shared.ringStyle, color: look.color, active: call.phase == .ringing,
+            RingingStage(style: Appearance.shared.ringStyle, color: look.color, active: call.isRinging,
                          ring: 140, paused: reduceMotion) {
                 ParticleOrb(style: Appearance.shared.orbStyle, color: look.color, size: 210, paused: reduceMotion) {
                     Double(call.level(at: $0))
@@ -305,7 +305,7 @@ struct CallView: View {
     /// "Ablehnen" becomes "Stumm", and "Lautsprecher" grows in between.
     private func controls(_ call: CallController) -> some View {
         Group {
-            if call.phase == .ringing {
+            if call.isRinging {
                 HStack(spacing: 72) {
                     CallControl(title: "Ablehnen", symbol: "phone.down.fill", style: .end) { call.hangUp() }
                         .matchedGeometryEffect(id: "left", in: controlSpace)
@@ -326,7 +326,7 @@ struct CallView: View {
                 }
             }
         }
-        .animation(.spring(response: 0.6, dampingFraction: 0.82), value: call.phase == .ringing)
+        .animation(.spring(response: 0.6, dampingFraction: 0.82), value: call.isRinging)
     }
 }
 
