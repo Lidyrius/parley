@@ -465,6 +465,17 @@ public sealed class Delivery
             Log.Write($"dispatch: {dir} → pending (no session started)");
             return DispatchResult.Pending;
         }
+        // A start here that hasn't shown up yet (watched until up, ≤ 10 min — e.g. hanging at a
+        // question past the 2-min guard): no second session beside it. ponytail: macOS also looks
+        // for its `claude … /parley:voice` process in the folder; Windows can't read another
+        // process's cwd cheaply.
+        bool onTheWay;
+        lock (_starting) onTheWay = !forNew && _starting.ContainsKey(dir);
+        if (onTheWay)
+        {
+            Log.Write($"dispatch: {dir} → pending (a start there is still on the way — no second session)");
+            return DispatchResult.Started;
+        }
         lock (_started)
         {
             if (_started.TryGetValue(key, out var at) && DateTime.UtcNow - at < RestartAfter)
