@@ -49,6 +49,13 @@ struct StartWatch {
         return last
     }
 
+    // Claude Code's own "Is this a project you created or one you trust?" with "No, exit" chosen.
+    // Sir's rule: a folder Parley starts a session in is trusted — so the answer is ↓ + Enter.
+    static func trustDialog(_ screen: String) -> Bool {
+        screen.contains("Yes, I trust this folder") && screen.contains("❯ No, exit")
+    }
+    static let trustKeys = "\u{1b}[B"   // arrow down; typing it adds the Enter
+
     // What the Zentrale gets when a start still hangs.
     static func note(cwd: String, screen: String, seconds: Int) -> String {
         let shown = screen.isEmpty ? "(nichts lesbar)" : screen
@@ -105,5 +112,40 @@ enum TerminalTabs {
         p.waitUntilExit()
         guard p.terminationStatus == 0 else { return nil }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines)
+    }
+}
+
+// Sir's rule for Parley's starts: the folder is trusted. Claude Code keeps that answer per folder
+// in ~/.claude.json (projects[<dir>].hasTrustDialogAccepted) — set it before the start, so the
+// dialog (default: "No, exit") never comes up. Read right before the write and replaced
+// atomically: running sessions rewrite the file too.
+enum ClaudeTrust {
+    static let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
+
+    // true = the flag was set now (false: already trusted, or no readable config — then the
+    // start check answers the dialog).
+    @discardableResult
+    static func accept(_ dir: String, file: URL = file) -> Bool {
+        guard let data = try? Data(contentsOf: file),
+              var config = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        var projects = config["projects"] as? [String: Any] ?? [:]
+        var entry = projects[dir] as? [String: Any] ?? [:]
+        guard entry["hasTrustDialogAccepted"] as? Bool != true else { return false }
+        entry["hasTrustDialogAccepted"] = true
+        projects[dir] = entry
+        config["projects"] = projects
+        guard let out = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .withoutEscapingSlashes]) else { return false }
+        let tmp = file.deletingLastPathComponent().appendingPathComponent(".claude.json.parley-\(UUID().uuidString)")
+        do {
+            try out.write(to: tmp)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
+            _ = try FileManager.default.replaceItemAt(file, withItemAt: tmp)
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            Log.write("trust: could not mark \(dir) as trusted (\(error.localizedDescription))")
+            return false
+        }
+        Log.write("trust: \(dir) marked as trusted for Claude Code (Sir's rule for Parley's starts)")
+        return true
     }
 }

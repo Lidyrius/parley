@@ -396,6 +396,12 @@ final class ControlServer: @unchecked Sendable {
         if case .some(.some(let s)) = read { text = s }
         let screen = StartWatch.tail(text)
         startWatch.update(cwd) { $0.screen = screen }
+        if let tty, StartWatch.trustDialog(screen), !e.answered.contains("trust") {
+            startWatch.update(cwd) { $0.answered.insert("trust") }
+            Log.write("start: \"Yes, I trust this folder\" in \(cwd) (Sir's rule)")
+            DispatchQueue.global(qos: .utility).async { _ = type(StartWatch.trustKeys, tty) }
+            return
+        }
         if let tty, let question = StartWatch.defaultNo(screen), !e.answered.contains(question) {
             startWatch.update(cwd) { $0.answered.insert(question) }
             Log.write("start: answered \"n\" to \"\(question)\" in \(cwd)")

@@ -262,6 +262,7 @@ public static class SessionStarter
 
     public static bool Start(string dir, string? resume = null)
     {
+        ClaudeTrust.Accept(dir);   // no "trust this folder?" in Parley's starts (Sir's rule)
         try
         {
             var wt = new ProcessStartInfo("wt.exe") { UseShellExecute = false };
@@ -564,5 +565,47 @@ public sealed class Delivery
         return result == DispatchResult.Failed
             ? "Das konnte ich leider nicht anstoßen, Sir."
             : Zentrale.TakeOver[Random.Shared.Next(Zentrale.TakeOver.Length)];
+    }
+}
+
+// Sir's rule for Parley's starts (as macOS StartWatch.swift ClaudeTrust): the folder is trusted.
+// Claude Code keeps that answer per folder in %USERPROFILE%\.claude.json
+// (projects[<dir>].hasTrustDialogAccepted) — set it before the start, so its dialog (default:
+// "No, exit") never comes up; Windows can't answer it in the window. The key is the folder with
+// forward slashes, as Claude Code writes it; the backslash form is set too, to be sure.
+public static class ClaudeTrust
+{
+    public static string File => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude.json");
+
+    public static bool Accept(string dir, string? file = null)
+    {
+        file ??= File;
+        try
+        {
+            if (!System.IO.File.Exists(file)) return false;
+            if (System.Text.Json.Nodes.JsonNode.Parse(System.IO.File.ReadAllText(file)) is not System.Text.Json.Nodes.JsonObject config) return false;
+            var projects = config["projects"] as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+            var changed = false;
+            foreach (var key in new[] { dir.Replace('\\', '/'), dir }.Distinct())
+            {
+                var entry = projects[key] as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                if (entry["hasTrustDialogAccepted"]?.GetValue<bool>() == true) continue;
+                entry["hasTrustDialogAccepted"] = true;
+                projects[key] = entry;
+                changed = true;
+            }
+            if (!changed) return false;
+            config["projects"] = projects;
+            var tmp = file + ".parley-" + Guid.NewGuid().ToString("N");
+            System.IO.File.WriteAllText(tmp, config.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            System.IO.File.Move(tmp, file, overwrite: true);
+            Log.Write($"trust: {dir} marked as trusted for Claude Code (Sir's rule for Parley's starts)");
+            return true;
+        }
+        catch (Exception e)
+        {
+            Log.Write($"trust: could not mark {dir} as trusted ({e.Message})");
+            return false;
+        }
     }
 }

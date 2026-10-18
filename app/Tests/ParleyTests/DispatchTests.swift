@@ -87,6 +87,38 @@ final class DispatchTests: XCTestCase {
         waitFor { !self.server.handle(HTTPRequest(method: "GET", path: "/starting", body: Data())).1.contains(self.dir + "\"") }
     }
 
+    func testStartCheckTrustsTheFolderInClaudesDialog() {
+        final class Tab: @unchecked Sendable { let lock = NSLock(); var typed: [String] = [] }
+        let tab = Tab()
+        server.starter = { [unowned self] folder, _, done in self.starts.append(folder); done("/dev/ttys050") }
+        server.tabScreen = { _ in " Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel" }
+        server.tabType = { text, _ in tab.lock.withLock { tab.typed.append(text) }; return true }
+        _ = dispatch("Baue X")
+        server.startCheckNow()
+        waitFor { tab.lock.withLock { tab.typed } == [StartWatch.trustKeys] }
+        server.startCheckNow()
+        Thread.sleep(forTimeInterval: 0.2)
+        XCTAssertEqual(tab.lock.withLock { tab.typed }.count, 1)                 // once
+    }
+
+    func testClaudeTrustMarksTheFolderAndKeepsTheRest() throws {
+        let file = URL(fileURLWithPath: dir).appendingPathComponent(".claude.json")
+        try #"{"numStartups":902,"projects":{"/a":{"allowedTools":[],"hasTrustDialogAccepted":false}},"x":"y/z"}"#
+            .write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertTrue(ClaudeTrust.accept("/a", file: file))
+        XCTAssertTrue(ClaudeTrust.accept("/new", file: file))
+        XCTAssertFalse(ClaudeTrust.accept("/a", file: file))                       // already trusted
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let projects = try XCTUnwrap(obj["projects"] as? [String: [String: Any]])
+        XCTAssertEqual(projects["/a"]?["hasTrustDialogAccepted"] as? Bool, true)
+        XCTAssertNotNil(projects["/a"]?["allowedTools"])
+        XCTAssertEqual(projects["/new"]?["hasTrustDialogAccepted"] as? Bool, true)
+        XCTAssertEqual(obj["numStartups"] as? Int, 902)
+        XCTAssertEqual(obj["x"] as? String, "y/z")
+        XCTAssertFalse(ClaudeTrust.accept("/b", file: file.appendingPathExtension("missing")))   // no config: left alone
+        XCTAssertFalse(StartWatch.trustDialog("❯ Yes, I trust this folder\n  No, exit"))       // already on yes
+    }
+
     func testDefaultNoSpotsOnlyQuestionsWhoseDefaultIsNo() {
         XCTAssertEqual(StartWatch.defaultNo("x\nAdd 'gta-6' to Gas Town? [y/N/never] "), "Add 'gta-6' to Gas Town? [y/N/never]")
         XCTAssertNotNil(StartWatch.defaultNo("Overwrite? (y/N)"))
