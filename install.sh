@@ -74,9 +74,11 @@ rm -f "$context_tmp"
 # 2. install the app bundle: prefer a prebuilt release (no Xcode); build only as fallback.
 APP="$HOME/Applications/Parley.app"
 REPO_SLUG="${PARLEY_REPO:-}"; REPO_SLUG="${REPO_SLUG#https://github.com/}"; REPO_SLUG="${REPO_SLUG:-Lidyrius/parley}"
-REL_URL="https://github.com/${REPO_SLUG}/releases/latest/download/Parley.app.zip"
+# The newest release that carries the Mac app ("latest" may be a Windows win-v* release).
+REL_URL="$(curl -fsSL "https://api.github.com/repos/${REPO_SLUG}/releases" 2>/dev/null \
+  | jq -r '[.[] | select(.draft | not) | .assets[] | select(.name == "Parley.app.zip")][0].browser_download_url // empty' 2>/dev/null)"
 REL_ZIP="$(mktemp -d)/Parley.app.zip"
-if curl -fsSL "$REL_URL" -o "$REL_ZIP" 2>/dev/null && [ -s "$REL_ZIP" ]; then
+if [ -n "$REL_URL" ] && curl -fsSL "$REL_URL" -o "$REL_ZIP" 2>/dev/null && [ -s "$REL_ZIP" ]; then
   info "Installiere fertige Parley.app (kein Build nötig)"
   rm -rf "$APP"; mkdir -p "$HOME/Applications"
   ditto -x -k "$REL_ZIP" "$HOME/Applications"

@@ -121,6 +121,22 @@ always know which one is talking. These announcements are pre-rendered per proje
 phrasings, your voice + language) and cached; with a single project running, nothing is
 prepended.
 
+### Phone (Android, iPhone)
+
+The phone app shows your sessions, their history, and takes updates as calls while you're away
+from the computer. Phone and computer meet on a small relay ([`relay/`](relay/README.md)):
+
+1. **Relay:** deploy your own (free Cloudflare plan, `cd relay && npm install && npx wrangler deploy`),
+   or use the relay URL of someone who runs one — rooms are separate, each with its own secret.
+2. Add it to `credentials.json` (macOS `~/Library/Application Support/Parley/`, Windows
+   `%APPDATA%\Parley\`): `"relayUrl": "https://parley-relay.<account>.workers.dev"`.
+3. Menu-bar / tray app → **iPhone verbinden…** opens a QR code in the browser.
+4. **Android:** install `Parley-Android-*.apk` from the
+   [releases](https://github.com/Lidyrius/parley/releases) (allow installs from that source),
+   open it and scan the code. Turn on **Unterwegs** to get updates as calls; switch off battery
+   optimisation for Parley in its settings so the connection survives. More in
+   [`android/README.md`](android/README.md).
+
 ## Uninstall
 
 ```bash
