@@ -1,16 +1,16 @@
 import SwiftUI
 
-/// The main screen: the mod's `/parley` overview (design C) on the phone.
+/// The main screen (design C2, docs/design/screens/ios/01-uebersicht): status and switches in one
+/// row, today's figures as one card, the sessions as a grid or a list — a tap opens a sheet.
 struct OverviewView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var expanded: Set<String>
     @State private var showsSettings = false
-
-    init(expanded: Set<String> = []) {
-        _expanded = State(initialValue: expanded)
-    }
+    /// The session whose sheet is open.
+    @State private var detail: Session?
+    /// Raster (default) or Liste, remembered.
+    @AppStorage("sessionsAsList") private var asList = false
 
     var body: some View {
         @Bindable var model = model
@@ -23,7 +23,9 @@ struct OverviewView: View {
                         CallFailureBanner(text: failure) { model.call.failure = nil }
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    CallParleyButton(call: model.call, canCall: relay.canSend, action: model.callParley)
+                    if model.call.isBusy {
+                        CallParleyButton(call: model.call, canCall: relay.canSend, action: model.callParley)
+                    }
                     content(relay)
                 }
                 .animation(.snappy, value: model.call.failure)
@@ -43,6 +45,12 @@ struct OverviewView: View {
                 try? await Task.sleep(for: .milliseconds(600))
             }
             .sheet(isPresented: $showsSettings) { SettingsView() }
+            .sheet(item: $detail) { d in
+                let live = relay.snapshot?.sessions.first { $0.id == d.id } ?? d
+                SessionSheet(session: live, skew: relay.skew,
+                             openHistory: { show(d.id, compose: false) },
+                             message: { show(d.id, compose: true) })
+            }
             .navigationDestination(for: String.self) { SessionView(id: $0) }
         }
     }
@@ -68,7 +76,8 @@ struct OverviewView: View {
             }
         case .connected, .connecting:
             if let snapshot = relay.snapshot {
-                sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend, resume: model.resume)
+                if let today = snapshot.today { TodayCard(today: today) }
+                sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend)
                 if !snapshot.reminders.isEmpty { RemindersCard(list: snapshot.reminders, skew: relay.skew) }
             } else {
                 HStack(spacing: 10) {
@@ -82,25 +91,30 @@ struct OverviewView: View {
     }
 
     @ViewBuilder
-    private func sessions(_ list: [Session], skew: Double, canSend: Bool, resume: @escaping (String) -> Void) -> some View {
-        if list.isEmpty {
-            Notice(title: "Keine Sessions", symbol: "waveform",
-                   text: "Sobald eine Claude-Code- oder Codex-Session über Parley spricht, erscheint sie hier.")
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Sessions").font(.title3.bold())
-                    Text("\(list.filter { $0.state != .stopped }.count) aktiv").foregroundStyle(.secondary)
+    private func sessions(_ list: [Session], skew: Double, canSend: Bool) -> some View {
+        let actions = SessionActions(open: { detail = $0 }, resume: model.resume, callBack: model.callParley, canSend: canSend)
+        VStack(alignment: .leading, spacing: 12) {
+            SessionsHead(count: list.filter { $0.state != .stopped }.count, asList: $asList,
+                         canCall: canSend || model.demo, inCall: model.call.isBusy) {
+                if model.call.isBusy { model.call.showsScreen = true } else { model.callParley() }
+            }
+            if list.isEmpty {
+                Notice(title: "Keine Sessions", symbol: "waveform",
+                       text: "Sobald eine Claude-Code- oder Codex-Session über Parley spricht, erscheint sie hier.")
+            } else if asList {
+                VStack(spacing: 0) {
+                    ForEach(Array(list.enumerated()), id: \.element.id) { i, s in
+                        if i > 0 { Divider().padding(.leading, 54) }
+                        SessionRow(session: s, skew: skew, actions: actions)
+                    }
                 }
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .background(CardBackground())
+            } else {
                 Grid(horizontalSpacing: 12, verticalSpacing: 12) {
                     ForEach(rows(list)) { row in
                         GridRow(alignment: .top) {
-                            let opened = row.items.contains { expanded.contains($0.id) }
-                            ForEach(row.items) { s in
-                                SessionCard(session: s, skew: skew, canResume: canSend, fillsRow: !opened,
-                                            isExpanded: binding(s.id), onResume: { resume(s.id) },
-                                            onOpen: { model.open(session: s.id) }, onCallBack: { model.callParley() })
-                            }
+                            ForEach(row.items) { s in SessionTile(session: s, skew: skew, actions: actions) }
                             ForEach(row.items.count..<columns, id: \.self) { _ in
                                 Color.clear.gridCellUnsizedAxes(.vertical)
                             }
@@ -109,9 +123,20 @@ struct OverviewView: View {
                 }
             }
         }
+        .animation(.snappy, value: asList)
     }
 
-    /// Two tiles a row like the mod; one at accessibility text sizes, three on wide screens.
+    /// The sheet's "Verlauf öffnen" / "Nachricht": the session view (with the keyboard for a message).
+    private func show(_ id: String, compose: Bool) {
+        detail = nil
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))   // let the sheet go first
+            if compose { model.compose = id }
+            model.open(session: id)
+        }
+    }
+
+    /// Two cards a row; one at accessibility text sizes, three on wide screens.
     private var columns: Int {
         typeSize.isAccessibilitySize ? 1 : sizeClass == .regular ? 3 : 2
     }
@@ -124,10 +149,109 @@ struct OverviewView: View {
     private func rows(_ list: [Session]) -> [Row] {
         stride(from: 0, to: list.count, by: columns).map { Row(items: Array(list[$0..<min($0 + columns, list.count)])) }
     }
+}
 
-    private func binding(_ id: String) -> Binding<Bool> {
-        Binding(get: { expanded.contains(id) },
-                set: { if $0 { expanded.insert(id) } else { expanded.remove(id) } })
+/// "Sessions 7", the grid / list switch, and "Anrufen".
+private struct SessionsHead: View {
+    let count: Int
+    @Binding var asList: Bool
+    let canCall: Bool
+    let inCall: Bool
+    let call: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Sessions").font(.title3.bold())
+                Text("\(count)").font(.title3).foregroundStyle(.secondary).monospacedDigit()
+            }
+            HStack(spacing: 2) {
+                choice("square.grid.2x2.fill", "Raster", on: !asList) { asList = false }
+                choice("list.bullet", "Liste", on: asList) { asList = true }
+            }
+            .padding(3)
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+            Spacer(minLength: 8)
+            Button(action: call) {
+                Label(inCall ? "Zum Anruf" : "Anrufen", systemImage: "phone.fill")
+                    .labelStyle(.titleOnly)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.onAccent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(Theme.claude))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canCall)
+            .opacity(canCall ? 1 : 0.45)
+            .accessibilityLabel(inCall ? "Zum Anruf" : "Parley anrufen")
+        }
+    }
+
+    private func choice(_ symbol: String, _ name: String, on: Bool, _ pick: @escaping () -> Void) -> some View {
+        Button(action: pick) {
+            Image(systemName: symbol)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(on ? .primary : .secondary)
+                .frame(width: 30, height: 24)
+                .background(Capsule().fill(on ? Color(light: 0xFFFFFF, dark: 0x48484A) : .clear)
+                    .shadow(color: .black.opacity(on ? 0.08 : 0), radius: 2, y: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(name)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// Today's figures as one card: cost · updates · spoken, then the 5-h limit and the week as bars.
+private struct TodayCard: View {
+    let today: Today
+
+    var body: some View {
+        let limits = Self.limits(today)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                figure(Fmt.money(today.costUsd), "Kosten heute", .leading)
+                Spacer(minLength: 8)
+                figure("\(today.turns)", "Updates", .leading)
+                Spacer(minLength: 8)
+                figure("\(Int((today.spokenSeconds / 60).rounded())) min", "gesprochen", .trailing)
+            }
+            if !limits.isEmpty {
+                VStack(spacing: 7) {
+                    ForEach(limits, id: \.name) { l in
+                        HStack(spacing: 10) {
+                            Text(l.name).font(.footnote).foregroundStyle(.secondary).frame(width: 64, alignment: .leading)
+                            ProgressBar(fraction: l.percent / 100, color: Theme.claude)
+                            Text(Fmt.percent(l.percent)).font(.footnote.weight(.medium)).monospacedDigit()
+                                .frame(width: 44, alignment: .trailing)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(CardBackground())
+    }
+
+    private func figure(_ value: String, _ label: String, _ align: HorizontalAlignment) -> some View {
+        VStack(alignment: align, spacing: 1) {
+            Text(value).font(.title2.bold()).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+            Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "5-h-Limit" and "Woche", as the host reports them.
+    static func limits(_ d: Today) -> [(name: String, percent: Double)] {
+        let names = ["five_hour": "5-h-Limit", "seven_day": "Woche"]
+        return d.rateLimits.compactMap { r in
+            guard let name = r.kind.flatMap({ names[$0] }), let p = r.percentUsed else { return nil }
+            return (name, p)
+        }
     }
 }
 
@@ -176,7 +300,7 @@ struct RemindersCard: View {
     }
 }
 
-/// Connection pill, the Unterwegs-Modus switch, and today's totals ("**$13.61** Kosten · …").
+/// The connection pill ("Verbunden") and the Unterwegs / Stumm switches, in one row.
 private struct StatusHeader: View {
     let relay: Relay
     @Binding var away: Bool
@@ -184,38 +308,31 @@ private struct StatusHeader: View {
 
     var body: some View {
         let status = relay.status
-        VStack(alignment: .leading, spacing: 10) {
-            // Side by side; stacked when large text no longer fits one line.
-            ViewThatFits(in: .horizontal) {
+        // One row (with both switches ~360 of 370 pt); stacked when large text no longer fits.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                pill(status)
+                Spacer(minLength: 4)
+                awayToggle
+                if away { silentToggle }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                pill(status)
                 HStack(spacing: 8) {
-                    pill(status)
-                    Spacer(minLength: 8)
                     awayToggle
                     if away { silentToggle }
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    pill(status)
-                    HStack(spacing: 8) {
-                        awayToggle
-                        if away { silentToggle }
-                    }
-                }
-            }
-
-            if let today = relay.snapshot?.today, status == .connected || status == .connecting {
-                Text(Self.line(today))
-                    .font(.subheadline)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
     private func pill(_ status: ConnectionStatus) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             Circle().fill(status.color).frame(width: 8, height: 8)
-            Text(status.label).font(.subheadline.weight(.semibold))
+            Text(status == .connected ? "Verbunden" : status.label).font(.subheadline.weight(.semibold))
         }
-        .padding(.horizontal, 12)
+        .fixedSize()   // never squeezed: too narrow → the second row
+        .padding(.horizontal, 11)
         .padding(.vertical, 6)
         .background(Capsule().fill(status.color.opacity(0.14)))
         .accessibilityElement(children: .combine)
@@ -235,17 +352,6 @@ private struct StatusHeader: View {
         }
         .toggleStyle(PillToggleStyle())
         .accessibilityHint("Statt eines Anrufs kommt eine Mitteilung, du antwortest schriftlich")
-    }
-
-    /// Breaks only between the pairs: each value stays glued to its label.
-    static func line(_ today: Today) -> AttributedString {
-        var out = AttributedString.run("Heute   ", .secondary)
-        for (i, f) in Fmt.todayParts(today).enumerated() {
-            if i > 0 { out += .run("  ·  ", .secondary) }
-            out += .run(f.value.replacingOccurrences(of: " ", with: "\u{00A0}"), bold: true)
-            out += .run("\u{00A0}" + f.label, .secondary)
-        }
-        return out
     }
 }
 
@@ -385,9 +491,11 @@ struct PillToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button { configuration.isOn.toggle() } label: {
             configuration.label
+                .labelStyle(Tight())
+                .fixedSize()
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(configuration.isOn ? .white : .secondary)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 11)
                 .padding(.vertical, 6)
                 .background(Capsule().fill(configuration.isOn ? Theme.claude : Theme.card))
                 .overlay(Capsule().strokeBorder(configuration.isOn ? .clear : Theme.stroke))
@@ -398,5 +506,12 @@ struct PillToggleStyle: ToggleStyle {
         .sensoryFeedback(.selection, trigger: configuration.isOn)
         .accessibilityValue(configuration.isOn ? "an" : "aus")
         .accessibilityAddTraits(.isToggle)
+    }
+
+    /// Symbol and word close together: status, Unterwegs and Stumm fit one row (~360 of 370 pt).
+    private struct Tight: LabelStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            HStack(spacing: 5) { configuration.icon; configuration.title }
+        }
     }
 }

@@ -1,163 +1,396 @@
 import SwiftUI
 
-/// One session tile (design C): ring, name, "state · time"; details behind a chevron;
-/// "Fortsetzen" as the tile's one action.
-struct SessionCard: View {
+// The overview's sessions (design C2, docs/design/screens/ios/01-uebersicht): a two-column grid
+// of equally tall cards, or a list with one row per session. A card says its state only through
+// symbol, colour and at most one action; tapping it opens a sheet with the details.
+
+/// The one action a session offers on the overview.
+enum SessionAction: Equatable {
+    case callBack(now: Bool)   // its call was put off: "Rückrufen" (waits for you) / "Jetzt anrufen"
+    case resume                // "Fortsetzen"
+
+    init?(_ s: Session) {
+        if let cb = s.callback { self = .callBack(now: cb != 0); return }
+        guard s.canResume else { return nil }
+        self = .resume
+    }
+
+    var title: String {
+        switch self {
+        case .callBack(let now): now ? "Jetzt anrufen" : "Rückrufen"
+        case .resume: "Fortsetzen"
+        }
+    }
+}
+
+extension Fmt {
+    /// The card's corner time: "0:13" (since), "4:07" (a pause: left), "vor 3 min" (stopped).
+    static func cornerTime(_ s: Session, at: Double) -> String {
+        if s.state == .waiting, let until = s.until { return clock(until - at) }
+        if s.state == .stopped { return "vor \(max(1, Int(((at - s.since) / 60_000).rounded()))) min" }
+        return clock(at - s.since)
+    }
+
+    /// The state as the card says it — a put-off call first: "wartet auf Rückruf", "ruft in 0:42 an".
+    static func cardState(_ s: Session, at: Double) -> String {
+        if let cb = s.callback { return cb == 0 ? "wartet auf Rückruf" : "ruft in \(clock(max(0, cb - at))) an" }
+        return stateLabel(s)
+    }
+}
+
+@MainActor
+private func stateInk(_ s: Session) -> Color {
+    if s.callback != nil { return SessionState.waiting.ink }
+    return s.state == .stopped ? .secondary : s.state.ink
+}
+
+/// The callbacks a tile needs.
+struct SessionActions {
+    var open: (Session) -> Void            // the details sheet
+    var resume: (String) -> Void
+    var callBack: () -> Void
+    var canSend: Bool
+
+    @MainActor func perform(_ a: SessionAction, _ s: Session) {
+        switch a {
+        case .callBack: callBack()
+        case .resume: resume(s.id)
+        }
+    }
+}
+
+/// A grid card: symbol + time, the last line (or a small waveform while it speaks), name, state,
+/// and at most one action. All cards are equally tall.
+struct SessionTile: View {
     let session: Session
     let skew: Double
-    let canResume: Bool
-    /// Stretch to the row's height (tidy rows); off next to an expanded tile.
-    var fillsRow = true
-    @Binding var isExpanded: Bool
-    let onResume: () -> Void
-    var onOpen: () -> Void = {}
-    /// Its call was put off: "Rückrufen" / "Jetzt anrufen" calls Parley.
-    var onCallBack: () -> Void = {}
-    @State private var resumeTaps = 0
-    @ScaledMetric(relativeTo: .headline) private var ringSize: CGFloat = 40
+    let actions: SessionActions
+    // Tall enough for the fullest card (a two-line quote and an action): every card the same.
+    @ScaledMetric(relativeTo: .body) private var height: CGFloat = 184
+    @ScaledMetric(relativeTo: .headline) private var ring: CGFloat = 30
 
     var body: some View {
-        // The timers tick once a second on the host's clock.
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let at = context.date.ms + skew
-            VStack(alignment: .leading, spacing: 12) {
-                header(at)
-                if isExpanded { details(at).transition(.opacity.combined(with: .move(edge: .top))) }
-                if let cb = session.callback {
-                    callBack(cb, at: at)
-                } else if session.canResume {
-                    resumeButton
+            VStack(alignment: .leading, spacing: 8) {
+                Button { actions.open(session) } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(alignment: .top) {
+                            RingView(session: session, skew: skew, size: ring)
+                            Spacer(minLength: 4)
+                            Text(Fmt.cornerTime(session, at: at))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Spacer(minLength: 8)
+                        if session.isLive {
+                            MiniWave(color: session.state.color).frame(height: 22).padding(.bottom, 6)
+                        } else if let line = session.stats?.lastLine, !line.isEmpty {
+                            Text("„\(line)“")
+                                .font(.footnote)
+                                .italic()
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .padding(.bottom, 6)
+                        }
+                        Text(session.name)
+                            .font(.headline)
+                            .foregroundStyle(session.state == .stopped ? .secondary : .primary)
+                            .lineLimit(1)
+                        Text(Fmt.cardState(session, at: at))
+                            .font(.subheadline)
+                            .foregroundStyle(stateInk(session))
+                            .lineLimit(1)
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(session.name), \(Fmt.cardState(session, at: at)), \(Fmt.cornerTime(session, at: at))")
+                .accessibilityHint("Details öffnen")
+                if let action = SessionAction(session) {
+                    ActionButton(action: action, enabled: actions.canSend) { actions.perform(action, session) }
                 }
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: fillsRow ? .infinity : nil, alignment: .topLeading)
-        .background(background)
-        .sensoryFeedback(.impact(weight: .medium), trigger: resumeTaps)
+        .frame(maxWidth: .infinity, minHeight: height, maxHeight: .infinity, alignment: .topLeading)
+        .background(CardBackground(live: session.voice))
     }
+}
 
-    private var isOff: Bool { session.state == .stopped }
+/// A list row: symbol, name and state, time; the last line in one line; an action only when needed.
+struct SessionRow: View {
+    let session: Session
+    let skew: Double
+    let actions: SessionActions
+    @ScaledMetric(relativeTo: .headline) private var ring: CGFloat = 28
 
-    // The tile opens the session's history; the chevron (its own button) shows the details.
-    private func header(_ at: Double) -> some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    RingView(session: session, skew: skew, size: ringSize)
-                    Spacer(minLength: 0)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(session.name)
-                        .font(.headline)
-                        .foregroundStyle(isOff ? .secondary : .primary)
-                        .lineLimit(1)
-                    // "state · time" on one line like the mod; on a narrow tile the time drops below.
-                    ViewThatFits(in: .horizontal) {
-                        Text(stateText + .run(" · " + Fmt.timer(session, at: at), .secondary))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(stateText)
-                            Text(Fmt.timer(session, at: at)).foregroundStyle(.secondary)
-                        }
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let at = context.date.ms + skew
+            HStack(alignment: .top, spacing: 12) {
+                RingView(session: session, skew: skew, size: ring)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(session.name)
+                            .font(.headline)
+                            .foregroundStyle(session.state == .stopped ? .secondary : .primary)
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                        Text(Fmt.cardState(session, at: at))
+                            .font(.subheadline)
+                            .foregroundStyle(stateInk(session))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(Fmt.cornerTime(session, at: at))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
-                    .font(.subheadline)
-                    .monospacedDigit()
+                    if session.isLive {
+                        MiniWave(color: session.state.color).frame(width: 96, height: 16)
+                    } else if let line = session.stats?.lastLine, !line.isEmpty {
+                        Text("„\(line)“")
+                            .font(.subheadline)
+                            .italic()
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if let action = SessionAction(session) {
+                        ActionButton(action: action, enabled: actions.canSend) { actions.perform(action, session) }
+                            .padding(.top, 2)
+                    }
                 }
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(session.voice ? Theme.claude.opacity(0.08) : .clear)
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(session.name), \(Fmt.stateLabel(session)), \(Fmt.timer(session, at: at))")
-        .accessibilityHint("Verlauf öffnen")
-        .overlay(alignment: .topTrailing) {
-            if session.stats != nil {
-                Button {
-                    withAnimation(.snappy) { isExpanded.toggle() }
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                        .padding(10)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(-6)
-                .accessibilityLabel(isExpanded ? "Details ausblenden" : "Details anzeigen")
-            }
+            .onTapGesture { actions.open(session) }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(session.name), \(Fmt.cardState(session, at: at)), \(Fmt.cornerTime(session, at: at))")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Details öffnen")
         }
     }
+}
 
-    private var stateText: AttributedString {
-        .run(Fmt.stateLabel(session), isOff ? .secondary : session.state.ink)
-    }
+/// The card's one action: a small filled capsule in the accent.
+private struct ActionButton: View {
+    let action: SessionAction
+    let enabled: Bool
+    let perform: () -> Void
+    @State private var taps = 0
 
-    private func details(_ at: Double) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider().padding(.bottom, 2)
-            ForEach(Fmt.facts(session, at: at), id: \.label) { fact in
-                HStack(alignment: .firstTextBaseline) {
-                    Text(fact.label).foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    Text(fact.value).monospacedDigit().multilineTextAlignment(.trailing)
-                }
-            }
-            if !session.tasks.isEmpty {
-                Text(session.tasks.map { "◍ " + $0.description }.joined(separator: "\n"))
-                    .foregroundStyle(SessionState.background.ink)
-                    .padding(.top, 2)
-            }
-            if let line = session.stats?.lastLine, !line.isEmpty {
-                Text("„\(line)“")
-                    .italic()
-                    .foregroundStyle(.secondary)
-                    .lineLimit(4)
-                    .padding(.top, 2)
-            }
-        }
-        .font(.footnote)
-    }
-
-    /// A put-off call: waiting for your call back (0), or Parley rings again soon.
-    private func callBack(_ cb: Double, at: Double) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(cb == 0 ? "wartet auf deinen Rückruf" : "ruft dich in \(Fmt.clock(max(0, cb - at))) an")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(SessionState.speaking.ink)
-                .monospacedDigit()
-            Button(action: onCallBack) {
-                Label(cb == 0 ? "Rückrufen" : "Jetzt anrufen", systemImage: "phone.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.onAccent)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.claude)
-        }
-    }
-
-    private var resumeButton: some View {
+    var body: some View {
         Button {
-            resumeTaps += 1
-            onResume()
+            taps += 1
+            perform()
         } label: {
-            Label("Fortsetzen", systemImage: "play.fill")
+            Text(action.title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.onAccent)
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Theme.claude))
+                .contentShape(Capsule())
         }
-        .buttonStyle(.borderedProminent)
-        .tint(Theme.claude)
-        .disabled(!canResume)
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+        .sensoryFeedback(.impact(weight: .medium), trigger: taps)
+    }
+}
+
+/// A card's surface: tinted and outlined in the accent while the session holds the voice.
+struct CardBackground: View {
+    var live = false
+    var radius: CGFloat = 20
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        shape
+            .fill(Theme.card)
+            .overlay(shape.fill(Theme.claude.opacity(live ? 0.10 : 0)))
+            .overlay(shape.strokeBorder(live ? Theme.claude.opacity(0.55) : Theme.stroke, lineWidth: 1))
+    }
+}
+
+/// A small speech-like waveform for a speaking session (still under Reduce Motion).
+struct MiniWave: View {
+    let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let bars = 15
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+            let t = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
+            GeometryReader { geo in
+                let w = geo.size.width / CGFloat(bars)
+                HStack(alignment: .center, spacing: w * 0.45) {
+                    ForEach(0..<bars, id: \.self) { i in
+                        let phase = Double(i) * 0.9
+                        let level = 0.25 + 0.75 * abs(sin(t * 5.3 + phase) * sin(t * 2.1 + phase * 0.6))
+                        Capsule()
+                            .fill(color)
+                            .frame(width: w * 0.55, height: max(3, geo.size.height * level))
+                    }
+                }
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Tapping a card: the session's details in a sheet — figures, the agent's task, what it said
+/// last, and the way to its history or a message.
+struct SessionSheet: View {
+    let session: Session
+    let skew: Double
+    let openHistory: () -> Void
+    let message: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let at = context.date.ms + skew
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .center, spacing: 14) {
+                        RingView(session: session, skew: skew, size: 46)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.name).font(.title2.bold()).lineLimit(1)
+                            Text(Fmt.cardState(session, at: at) + " · " + Fmt.timer(session, at: at))
+                                .font(.subheadline)
+                                .foregroundStyle(stateInk(session))
+                                .monospacedDigit()
+                        }
+                        Spacer(minLength: 8)
+                        Button { dismiss() } label: {
+                            Image(systemName: "xmark")
+                                .font(.headline)
+                                .foregroundStyle(Theme.claude)
+                                .frame(width: 40, height: 40)
+                                .background(Circle().fill(Theme.card))
+                                .overlay(Circle().strokeBorder(Theme.stroke))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Schließen")
+                    }
+                    if !session.tasks.isEmpty {
+                        Box(title: "Agent") {
+                            Text(session.tasks.map(\.description).joined(separator: "\n"))
+                                .font(.body)
+                                .foregroundStyle(SessionState.background.ink)
+                        }
+                    }
+                    if let st = session.stats {
+                        let figures = Self.figures(st, at: at)
+                        Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+                            ForEach(Array(stride(from: 0, to: figures.count, by: 2)), id: \.self) { i in
+                                GridRow {
+                                    figures[i]
+                                    if i + 1 < figures.count { figures[i + 1] } else { Color.clear.gridCellUnsizedAxes(.vertical) }
+                                }
+                            }
+                        }
+                    }
+                    if let line = session.stats?.lastLine, !line.isEmpty {
+                        Box(title: "Zuletzt gesagt") {
+                            Text("„\(line)“").font(.body).italic()
+                        }
+                    }
+                    HStack(spacing: 12) {
+                        Button(action: openHistory) {
+                            Text("Verlauf öffnen")
+                                .font(.headline)
+                                .foregroundStyle(Theme.onAccent)
+                                .frame(maxWidth: .infinity, minHeight: 50)
+                                .background(Capsule().fill(Theme.claude))
+                        }
+                        Button(action: message) {
+                            Text("Nachricht")
+                                .font(.headline)
+                                .foregroundStyle(Theme.claude)
+                                .frame(maxWidth: .infinity, minHeight: 50)
+                                .background(Capsule().fill(Theme.claude.opacity(0.14)))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                }
+                .padding(20)
+            }
+        }
+        .background(Theme.background)
+        // Tall enough for the figures, the last line and both buttons; pull up for the rest.
+        .presentationDetents([.fraction(0.74), .large])
+        .presentationDragIndicator(.visible)
     }
 
-    private var background: some View {
-        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-        return shape
-            .fill(Theme.card)
-            .overlay(shape.fill(Theme.claude.opacity(session.voice ? 0.10 : 0)))
-            .overlay(shape.strokeBorder(session.voice ? Theme.claude.opacity(0.55) : Theme.stroke, lineWidth: 1))
+    /// Laufzeit, Kosten, Updates · Antworten, Kontext (with its bar) — those the host reports.
+    private static func figures(_ st: Stats, at: Double) -> [Figure] {
+        var out: [Figure] = []
+        if let started = st.startedAt { out.append(Figure(value: Fmt.span(at - started), label: "Laufzeit")) }
+        if let cost = st.costUsd { out.append(Figure(value: Fmt.money(cost), label: "Kosten")) }
+        out.append(Figure(value: "\(st.turns) · \(st.replies)", label: "Updates · Antworten"))
+        if let ctx = st.contextPercent { out.append(Figure(value: Fmt.percent(ctx), label: "Kontext", bar: ctx / 100)) }
+        return out
+    }
+
+    private struct Box<Content: View>: View {
+        let title: String
+        @ViewBuilder var content: () -> Content
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title.uppercased()).font(.footnote).foregroundStyle(.secondary)
+                content()
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(CardBackground(radius: 18))
+        }
+    }
+
+    private struct Figure: View {
+        let value: String
+        let label: String
+        var bar: Double?
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(value).font(.title2.bold()).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                if let bar { ProgressBar(fraction: bar, color: SessionState.background.color) }
+                Text(label).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(CardBackground(radius: 18))
+        }
+    }
+}
+
+/// A slim bar for a share (context, the limits).
+struct ProgressBar: View {
+    let fraction: Double
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.08))
+                Capsule().fill(color).frame(width: geo.size.width * min(1, max(0, fraction)))
+            }
+        }
+        .frame(height: 6)
+        .accessibilityHidden(true)
     }
 }
 

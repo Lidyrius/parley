@@ -112,6 +112,8 @@ final class AppModel {
     }
     /// The open session (navigation path; a tapped notification sets it).
     var path: [String] = []
+    /// The overview's sheet asked for "Nachricht": that session view opens with the keyboard up.
+    var compose: String?
     /// v3: each session's history as last received, its images, and messages typed but not yet seen in it.
     private(set) var histories: [String: [ChatItem]] = [:]
     private(set) var images: [String: UIImage] = [:]
@@ -427,7 +429,7 @@ struct RootView: View {
         @Bindable var call = model.call
         Group {
             if model.isPaired {
-                OverviewView(expanded: model.demo ? Demo.expanded : [])
+                OverviewView()
             } else {
                 PairingView()
             }

@@ -23,6 +23,19 @@ struct FormatTests {
         #expect(Fmt.timer(Session(id: "p", state: .waiting, since: at - 10_000), at: at) == "seit 0:10")
     }
 
+    /// The overview's cards (design C2): corner time, state wording, the one action.
+    @Test func cards() {
+        let at = 1_000_000.0
+        #expect(Fmt.cornerTime(Session(id: "a", state: .working, since: at - 138_000), at: at) == "2:18")
+        #expect(Fmt.cornerTime(Session(id: "a", state: .waiting, since: at - 60_000, until: at + 247_000), at: at) == "4:07")
+        #expect(Fmt.cornerTime(Session(id: "a", state: .stopped, since: at - 180_000), at: at) == "vor 3 min")
+        #expect(Fmt.cardState(Session(id: "a", state: .queued, callback: 0), at: at) == "wartet auf Rückruf")
+        #expect(Fmt.cardState(Session(id: "a", state: .queued, callback: at + 42_000), at: at) == "ruft in 0:42 an")
+        #expect(SessionAction(Session(id: "a", state: .queued, callback: 0)) == .callBack(now: false))
+        #expect(SessionAction(Session(id: "a", state: .parked)) == .resume)
+        #expect(SessionAction(Session(id: "a", state: .working)) == nil)
+    }
+
     @Test func spans() {
         #expect(Fmt.span(0) == "0 min")
         #expect(Fmt.span(59 * 60_000) == "59 min")

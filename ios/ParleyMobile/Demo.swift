@@ -4,7 +4,6 @@ import SwiftUI
 /// `-demo`: a built-in `sessions` frame (every state, a countdown, a background agent) for
 /// screenshots and UI work without a relay. It goes through the real decoder.
 enum Demo {
-    static let expanded: Set<String> = ["demo-relay"]
 
     /// `-demoCall <state>`: the call screen without a call, for screenshots.
     enum CallState: String, CaseIterable, Sendable {

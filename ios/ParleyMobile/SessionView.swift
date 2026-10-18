@@ -18,6 +18,7 @@ struct SessionView: View {
     @State private var keep: String?
     @State private var atBottom = true
     @State private var copied: String?
+    @FocusState private var typing: Bool
     @State private var voice = AVSpeechSynthesizer()
     @ScaledMetric(relativeTo: .subheadline) private var toolSize: CGFloat = 14.5   // Claude's tool lines run a touch smaller
 
@@ -111,6 +112,13 @@ struct SessionView: View {
         .safeAreaInset(edge: .bottom) { inputBar(session) }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar(session) }
+        .task {
+            // Opened for "Nachricht" (the overview's sheet): the keyboard comes up at once.
+            guard model.compose == id else { return }
+            model.compose = nil
+            try? await Task.sleep(for: .milliseconds(400))
+            typing = true
+        }
         .task(id: id) {
             while !Task.isCancelled {
                 model.loadHistory(id)
@@ -450,6 +458,7 @@ struct SessionView: View {
         let canSend = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (model.relay.canSend || model.demo)
         return VStack(alignment: .leading, spacing: 12) {
             TextField("Nachricht an \(session?.name ?? "die Session")", text: $draft, axis: .vertical)
+                .focused($typing)
                 .lineLimit(1...6)
             HStack(spacing: 10) {
                 if let session {
