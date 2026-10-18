@@ -67,6 +67,15 @@ announcement "Update zu …", and the `label` of its queued turn). Names survive
   dispatch takes the instruction and the name.
 - With `name` and `resume`: that session gets the name (now, or once it shows up).
 
+### Start check: `GET /starting`, `POST /starting/answer` (local, the Zentrale)
+After a dispatch starts a session, the host watches its terminal until the session shows up
+(macOS: the Terminal tab; Windows can't read another console). A question whose default is No
+(`[y/N]`, `(y/N)`, `[y/N/never]`) gets `n` at once. A start still not up after 90 s is handed to
+the Zentrale as an instruction with the tab's last lines.
+- `GET /starting` → `{"starting":[{"cwd","seconds","screen","readable"}]}` — the starts on the way.
+- `POST /starting/answer` `{"cwd","text"}` → types the one-line `text` and Enter into that start's
+  tab: `200 {"ok":true}` · `404` no start on the way there · `409` tab gone · `501` Windows.
+
 ### `POST /rename`
 ```json
 { "id": "<session id>", "name": "Literally Apps SEO" }   // "" or null → back to the project's label

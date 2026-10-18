@@ -345,6 +345,12 @@ final class SessionRegistry {
         return here.first.map { ($0.id, false) }
     }
 
+    // A session in `cwd` that showed up at or after `since` (a start has arrived).
+    func seen(inFolder cwd: String, since: Date) -> Bool {
+        refresh()
+        return entries.values.contains { $0.cwd == cwd && $0.firstSeen >= since.addingTimeInterval(-2) }
+    }
+
     // Session `id` if it runs (not stopped) — the same shape as session(inFolder:).
     func alive(_ id: String) -> (id: String, reachable: Bool)? {
         refresh()
