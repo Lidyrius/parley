@@ -141,7 +141,8 @@ final class AppModel {
         silent = !demo && SharedState.silent
         Appearance.shared.publishColors()
         call.ensureRelay = { [weak self] in self?.dialIfIdle() }
-        call.onEnded = { [weak self] in self?.callEnded() }
+        call.onEnded = { [weak self] in self?.resumeOnConnect = nil; self?.callEnded() }
+        call.onConnected = { [weak self] in self?.connected() }
         call.onDeclined = { [weak self] label in self?.offerLater(label) }
         call.onSubtitle = { [weak self] line in
             guard let self else { return }
@@ -182,6 +183,23 @@ final class AppModel {
     var isPaired: Bool { demo || pairing != nil }
 
     /// "Parley anrufen" in the app.
+    /// "Fortsetzen": Sir starts it, so (Unterwegs) he starts the call too — it connects at once,
+    /// nothing to answer — and the resume goes to the host once the call is up; the host voices
+    /// it there instead of ringing. At the desk (or in a call already) it goes out at once.
+    @ObservationIgnored private var resumeOnConnect: String?
+
+    func resume(_ id: String) {
+        guard away, !demo, call.phase == .none else { relay.resume(id); return }
+        resumeOnConnect = id
+        callParley()
+    }
+
+    private func connected() {
+        guard let id = resumeOnConnect else { return }
+        resumeOnConnect = nil
+        relay.resume(id)
+    }
+
     func callParley() {
         Task {
             if !demo { await CallController.requestPermissions() }

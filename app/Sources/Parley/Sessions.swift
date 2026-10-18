@@ -25,6 +25,7 @@ final class SessionRegistry {
         var queued = false             // a /turn (or resume dialog) waits in the queue
         var waitUntil: Date?           // "Warte X Minuten": the hook sleeps until then
         var afterWait = false          // its turn comes after Sir's "Warte X Minuten": rings at once
+        var waitResume: String?        // what the hook injects when the wait is over (Fortsetzen: now)
         var callbackAt: Date?          // its call was put off: rings again then (distantFuture = Sir calls back)
         var closedAt: Date?            // POST /close ended it: a dying mod's last presence is ignored
         var parked = false             // answered with park; its hook polls /wake
@@ -136,6 +137,7 @@ final class SessionRegistry {
             e.queued = false
             e.afterWait = false
             e.waitUntil = reply.waitSeconds > 0 ? t.addingTimeInterval(TimeInterval(reply.waitSeconds)) : nil
+            e.waitResume = reply.waitSeconds > 0 ? reply.resume : nil
             e.parked = reply.park
             e.wakeAt = reply.park ? t : nil
             e.injectedAt = nil
@@ -206,8 +208,20 @@ final class SessionRegistry {
     // Parked, or idle / with work in the background and a live mod (it submits the instruction;
     // Claude Code takes a prompt while its background agents run). A Codex session (no
     // presence) is only resumable while parked.
+    // A timer ("Warte X Minuten") whose hook polls /wake: Fortsetzen ends it early.
     private static func resumable(_ e: Entry) -> Bool {
         e.state == "parked" || (["idle", "background"].contains(e.state) && e.presenceAt != nil)
+            || (e.state == "waiting" && e.parked && e.waitResume != nil)
+    }
+
+    /// Fortsetzen during Sir's timer: the wait is over now — what the session continues with
+    /// (nil when it isn't waiting).
+    func endWait(_ id: String) -> String? {
+        refresh()
+        // Only while its hook polls /wake (it picks the text up there); an older hook just sleeps.
+        guard let e = entries[id], e.state == "waiting", e.parked, let resume = e.waitResume else { return nil }
+        update(id) { e, _ in e.waitUntil = nil; e.waitResume = nil }
+        return "[Parley] Sir hat die Wartezeit mit „Fortsetzen“ vorzeitig beendet.\n\n" + resume
     }
 
     // Resumable sessions for the menu / tray and the voice resume command.

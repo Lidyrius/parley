@@ -269,6 +269,22 @@ final class DispatchTests: XCTestCase {
         XCTAssertEqual(again.label(of: "s1"), "Eigener Name")
     }
 
+    // Sir's timer ("Warte drei Minuten"): its hook polls /wake meanwhile; Fortsetzen ends it now.
+    func testFortsetzenEndsSirsTimerEarly() throws {
+        server.receiveTurn(turn("w1")) { _ in }
+        server.replyProvider = { _, _ in }
+        reg.finished(id: "w1", reply: TurnReply(transcript: "", park: false, waitSeconds: 180,
+                                                  resume: "[Parley] Die Wartezeit ist vorbei. Fahre fort."))
+        let wake = #"{"session_id":"w1","cwd":"\#(dir)","project":"neu","tmux_pane":"","label":"Neu"}"#
+        XCTAssertTrue(post("/wake", wake).1.contains(#""transcript":"""#))         // still waiting
+        XCTAssertEqual(try state("w1"), "waiting")
+        XCTAssertTrue(reg.canResume("w1"))
+        XCTAssertEqual(post("/resume", #"{"id":"w1"}"#).0, 200)                    // Fortsetzen
+        let woke = post("/wake", wake).1
+        XCTAssertTrue(woke.contains("vorzeitig beendet") && woke.contains("Fahre fort"), woke)
+        XCTAssertNotEqual(try state("w1"), "waiting")
+    }
+
     func testResumeRejectsUnknownOrUnsafeIds() throws {
         _ = try pastSession("aaaa-1111", title: "Rechnungen")
         XCTAssertEqual(post("/dispatch", #"{"resume":"bbbb-2222"}"#).0, 404)

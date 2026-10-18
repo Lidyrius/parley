@@ -164,7 +164,7 @@ public sealed class TurnPipeline
             return ("", false, 0, "");
         }
         var synth = GoogleTts.Synthesize(turn.Speak, config);
-        await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
+        await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn), callBack: false);
         if (PhoneCall.Away && !PhoneCall.Active)
         {
             Log.Write("Unterwegs, phone not reached → permission left to the screen");
@@ -403,10 +403,19 @@ public sealed class TurnPipeline
     // Beep → record (pill + VAD) → transcribe (min-audio guard): one listening pass.
     /// Rings (Unterwegs), and follows the phone's "not now": rings again after the delay, or
     /// waits up to 30 min for Sir's own call (the tile offers "Rückrufen").
-    private async Task<(bool reached, bool calledBack)> ReachPhone(string label, string session)
+    /// `callBack`: a call Sir didn't take counts as "Ich rufe zurück" too (not for a permission
+    /// prompt — its hook gives up after two minutes). As macOS.
+    private async Task<(bool reached, bool calledBack)> ReachPhone(string label, string session, bool callBack = true)
     {
         if (Ring is null) return (PhoneCall.Active, false);
-        var outcome = await Ring(label);
+        async Task<RingOutcome> RingOnce()
+        {
+            var o = await Ring!(label);
+            if (o.Kind != RingKind.Missed || !callBack) return o;
+            Log.Write("phone: not answered → waits for Sir's call back");
+            return new RingOutcome(RingKind.Later);
+        }
+        var outcome = await RingOnce();
         var calledBack = false;
         while (outcome.Kind == RingKind.Later)
         {
@@ -416,7 +425,7 @@ public sealed class TurnPipeline
                 SetCallback?.Invoke(session, at);
                 while (DateTime.UtcNow < at && !PhoneCall.Active) await Task.Delay(250);
                 SetCallback?.Invoke(session, null);
-                outcome = PhoneCall.Active ? new RingOutcome(RingKind.Answered) : await Ring(label);
+                outcome = PhoneCall.Active ? new RingOutcome(RingKind.Answered) : await RingOnce();
             }
             else
             {

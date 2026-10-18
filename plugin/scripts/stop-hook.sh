@@ -148,11 +148,26 @@ inject() {
     '{decision:"block", reason:$r, systemMessage:"🎙️ Parley: Sprachantwort eingespeist"}'
   exit 0
 }
-# "Warte X Minuten" — the app asked us to pause, then continue. Sleep, then inject the
-# resume prompt so Claude picks up on its own. (hooks.json timeout must exceed the wait.)
+# /wake payload: the parked loop below, and the wait.
+wpayload="$(jq -n \
+  --arg session_id "$session_id" --arg cwd "$cwd" --arg project "$project" \
+  --arg tmux_pane "${TMUX_PANE:-}" --arg label "$label" \
+  '{session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, label:$label}')"
+
+# "Warte X Minuten" — the app asked us to pause, then continue. Wait, then inject the resume
+# prompt so Claude picks up on its own. Meanwhile poll /wake: Sir's "Fortsetzen" ends the wait
+# early (the app hands back what to continue with). (hooks.json timeout must exceed the wait.)
 if [ "${wait_s:-0}" -gt 0 ] 2>/dev/null; then
   resume="$(printf '%s' "$resp" | jq -r '.resume // ""' 2>/dev/null || true)"
-  sleep "$wait_s"
+  until_s=$(( $(date +%s) + wait_s ))
+  while [ "$(date +%s)" -lt "$until_s" ]; do
+    wresp="$(curl -fsS --max-time 10 -X POST "http://${HOST}:${PORT}/wake" \
+      -H 'Content-Type: application/json' -d "$wpayload" 2>/dev/null)" || wresp=""
+    wtext="$(printf '%s' "$wresp" | jq -r '.transcript // ""' 2>/dev/null || true)"
+    wtext="$(printf '%s' "$wtext" | perl -0777 -pe 's/^\s+|\s+$//g')"
+    [ -n "$wtext" ] && inject "$wtext"
+    sleep 3
+  done
   inject "$resume"
 fi
 
@@ -167,10 +182,6 @@ fi
 # (by voice from another session, or the tray/menu), /wake hands back the next
 # instruction, which we inject as the next turn. A curl failure means the app is gone ->
 # end. hooks.json timeout caps the total park window.
-wpayload="$(jq -n \
-  --arg session_id "$session_id" --arg cwd "$cwd" --arg project "$project" \
-  --arg tmux_pane "${TMUX_PANE:-}" --arg label "$label" \
-  '{session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, label:$label}')"
 while true; do
   wresp="$(curl -fsS --max-time 20 -X POST "http://${HOST}:${PORT}/wake" \
     -H 'Content-Type: application/json' -d "$wpayload" 2>/dev/null)" || finish

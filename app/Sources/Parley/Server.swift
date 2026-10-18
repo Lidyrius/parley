@@ -377,9 +377,13 @@ final class ControlServer: @unchecked Sendable {
 
     // MARK: - resuming sessions (menu, voice command, POST /resume)
 
-    // Resume without a dialog (menu / voice command). Unknown ids are a no-op.
+    // Resume without a dialog (menu / voice command). Unknown ids are a no-op. During Sir's
+    // timer the session continues with what the wait would have given it.
     func resume(id: String, instruction: String) {
-        queue.async { self.deliver(id, instruction) }
+        queue.async {
+            let early = self.sessions.endWait(id)
+            self.deliver(id, instruction == Self.resumeInstruction ? early ?? instruction : instruction)
+        }
     }
 
     // Hand an instruction to a session: a parked hook picks it up on its next /wake poll
@@ -410,8 +414,14 @@ final class ControlServer: @unchecked Sendable {
 
     // POST /resume and the relay's `resume` frame (docs/IPHONE.md): the voice dialog for a
     // resumable session. On `queue`; false = unknown or not resumable.
+    // During Sir's timer: no dialog — the wait ends now and the session reports when it is done.
     private func startResume(_ id: String) -> Bool {
         guard sessions.canResume(id) else { return false }
+        if let text = sessions.endWait(id) {
+            Log.write("resume: \(sessions.label(of: id) ?? id) — Sir ends the wait early")
+            deliver(id, text)
+            return true
+        }
         enqueueResume(id)
         return true
     }

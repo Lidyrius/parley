@@ -143,7 +143,7 @@ struct SessionView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if let session, session.canResume {
-                    Button { model.relay.resume(id) } label: { Label("Fortsetzen", systemImage: "play.fill") }
+                    Button { model.resume(id) } label: { Label("Fortsetzen", systemImage: "play.fill") }
                 }
                 Button { model.loadHistory(id) } label: { Label("Neu laden", systemImage: "arrow.clockwise") }
                 if let last = model.histories[id]?.last(where: { $0.kind == .assistant })?.text {

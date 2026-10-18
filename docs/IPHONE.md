@@ -290,7 +290,15 @@ on by default):
 - **Unterwegs by itself:** the phone's Focus filter (on with a Focus, off when it ends), the
   Shortcuts actions (CarPlay, leaving home), and on the host "Unterwegs, wenn der Mac / PC
   gesperrt ist" (locked ≥ 1 min; off by default) — the phone's own choice stays its own.
-- **Fortsetzen** also for sessions with work in the background (Claude Code takes a prompt then).
+- **Fortsetzen** also for sessions with work in the background (Claude Code takes a prompt then),
+  and during Sir's own timer ("ruf mich in drei Minuten zurück"): the Stop hook polls `/wake` while
+  it waits, so Fortsetzen ends the wait at once — the session continues with what the wait would
+  have given it (no dialog) and reports when done. Pressed in the app while Unterwegs, Fortsetzen
+  starts the call from the phone (nothing to answer) and sends `resume` once it is connected; the
+  host voices it into that call instead of ringing.
+- **A call Sir doesn't take** counts as "Ich rufe zurück": the line waits up to 30 min for his call
+  (the tile offers "Rückrufen"), then "Danke für Ihren Rückruf, Sir." — except a permission
+  prompt, whose hook gives up after two minutes.
 - **Wiedervorlage:** the Zentrale turns "erinnere Shirts morgen um neun …" into `POST /remind`
   (`to`, `text`, one of `at` / `in` / `after`; no `to` = for Sir); `GET /remind` lists,
   `POST /remind/cancel {id}` removes. The host keeps them in `reminders.json` and checks every

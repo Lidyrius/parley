@@ -48,6 +48,8 @@ final class CallController {
     /// Dial the relay if it is idle (the app may have been woken in the background).
     @ObservationIgnored var ensureRelay: () -> Void = {}
     @ObservationIgnored var onEnded: () -> Void = {}
+    /// The call is up (`call start` sent): what waited for it goes to the host now.
+    @ObservationIgnored var onConnected: () -> Void = {}
     /// A ringing call declined on the lock screen (no "later" buttons there): the label it was for.
     @ObservationIgnored var onDeclined: (String?) -> Void = { _ in }
     /// The subtitle line spoken now, on change (nil = none any more): the Live Activity shows it.
@@ -469,6 +471,7 @@ final class CallController {
             phase = .active(since: .now)
             if outgoing, let uuid { provider?.reportOutgoingCall(with: uuid, connectedAt: .now) }
             updateWake()
+            onConnected()
         }
     }
 

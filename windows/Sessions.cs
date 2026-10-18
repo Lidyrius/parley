@@ -26,6 +26,7 @@ public sealed class SessionRegistry
         public bool Queued;               // a /turn (or resume dialog) waits at the gate
         public DateTime? WaitUntil;       // "Warte X Minuten": the hook sleeps until then
         public bool AfterWait;            // its turn comes after Sir's "Warte X Minuten": rings at once
+        public string? WaitResume;        // what the hook injects when the wait is over (Fortsetzen: now)
         public DateTime? CallbackAt;      // its call was put off: rings again then (MaxValue = Sir calls back)
         public DateTime? ClosedAt;        // POST /close ended it: a dying mod's last presence is ignored
         public bool Parked;               // answered with park; its hook polls /wake
@@ -150,7 +151,7 @@ public sealed class SessionRegistry
     }
 
     // The turn's reply went back to the hook: wait, park, inject a transcript, or end.
-    public void Finished(string id, string transcript, bool park, int waitSeconds)
+    public void Finished(string id, string transcript, bool park, int waitSeconds, string resume = "")
     {
         lock (_gate)
         {
@@ -161,6 +162,7 @@ public sealed class SessionRegistry
                 e.Queued = false;
                 e.AfterWait = false;
                 e.WaitUntil = waitSeconds > 0 ? t.AddSeconds(waitSeconds) : null;
+                e.WaitResume = waitSeconds > 0 ? resume : null;
                 e.Parked = park;
                 e.WakeAt = park ? t : null;
                 e.InjectedAt = null;
@@ -244,8 +246,26 @@ public sealed class SessionRegistry
 
     // Parked, or idle / with work in the background and a live mod (it submits the instruction;
     // Claude Code takes a prompt while its background agents run). As macOS.
+    // A timer ("Warte X Minuten") whose hook polls /wake: Fortsetzen ends it early.
     private static bool Resumable(Entry e) =>
-        e.State == "parked" || (e.State is "idle" or "background" && e.PresenceAt is not null);
+        e.State == "parked" || (e.State is "idle" or "background" && e.PresenceAt is not null)
+        || (e.State == "waiting" && e.Parked && e.WaitResume is not null);
+
+    /// Fortsetzen during Sir's timer: the wait is over now — what the session continues with
+    /// (null when it isn't waiting). As macOS.
+    public string? EndWait(string id)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            // Only while its hook polls /wake (it picks the text up there); an older hook just sleeps.
+            if (!_entries.TryGetValue(id, out var e) || e.State != "waiting" || !e.Parked || e.WaitResume is not { } resume) return null;
+            e.WaitUntil = null;
+            e.WaitResume = null;
+            Refresh();
+            return "[Parley] Sir hat die Wartezeit mit „Fortsetzen“ vorzeitig beendet.\n\n" + resume;
+        }
+    }
 
     // Resumable sessions for the tray and the voice resume command.
     public List<Server.ParkedInfo> ResumableList()

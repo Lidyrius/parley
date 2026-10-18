@@ -157,7 +157,7 @@ public sealed class Server
                 }
                 finally
                 {
-                    Sessions.Finished(id, r.transcript, r.park, r.wait);
+                    Sessions.Finished(id, r.transcript, r.park, r.wait, r.resume);
                     _turnGate.Release();
                 }
                 await Respond(ctx, 200, TurnJson(r.transcript, r.park, r.wait, r.resume));
@@ -507,7 +507,12 @@ public sealed class Server
     // ---- resuming sessions (tray, voice command, POST /resume) ------------------------
 
     // Resume without a dialog (tray / voice command). Unknown ids are a no-op.
-    public void Resume(string id, string instruction) => Deliver(id, instruction);
+    // During Sir's timer the session continues with what the wait would have given it.
+    public void Resume(string id, string instruction)
+    {
+        var early = Sessions.EndWait(id);
+        Deliver(id, instruction == ResumeInstruction ? early ?? instruction : instruction);
+    }
 
     // Hand an instruction to a session: a parked hook picks it up on its next /wake poll
     // (≤3 s) and injects it as the next turn; an idle session's mod gets it as the reply to
@@ -529,6 +534,13 @@ public sealed class Server
     // resumable session. False = unknown or not resumable (atomic: a double click gets false).
     public bool StartResume(string id)
     {
+        // During Sir's timer: no dialog — the wait ends now and the session reports when done.
+        if (id.Length > 0 && Sessions.EndWait(id) is { } early)
+        {
+            Log.Write($"resume: {id} — Sir ends the wait early");
+            Deliver(id, early);
+            return true;
+        }
         if (id.Length == 0 || !Sessions.TryQueueResume(id)) return false;
         _ = Task.Run(() => RunResumeDialog(id));
         return true;

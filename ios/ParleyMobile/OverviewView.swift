@@ -68,7 +68,7 @@ struct OverviewView: View {
             }
         case .connected, .connecting:
             if let snapshot = relay.snapshot {
-                sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend, resume: relay.resume)
+                sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend, resume: model.resume)
                 if !snapshot.reminders.isEmpty { RemindersCard(list: snapshot.reminders, skew: relay.skew) }
             } else {
                 HStack(spacing: 10) {

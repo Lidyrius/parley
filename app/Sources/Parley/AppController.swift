@@ -694,8 +694,16 @@ final class AppController: ObservableObject {
 
     /// Rings, and follows the phone's "not now": rings again after the delay, or waits up to
     /// 30 min for Sir's own call (the tile offers "Rückrufen"). `key`: the menu row to mark waiting.
-    private func reachPhone(label: String, session: String, key: String?) async -> Reach {
-        var outcome = await ringPhone(label: label)
+    /// `callBack`: a call Sir didn't take counts as "Ich rufe zurück" too (not for a permission
+    /// prompt — its hook gives up after two minutes).
+    private func reachPhone(label: String, session: String, key: String?, callBack: Bool = true) async -> Reach {
+        func ring() async -> RingOutcome {
+            let o = await ringPhone(label: label)
+            guard o == .missed, callBack else { return o }
+            Log.write("phone: not answered → waits for Sir's call back")
+            return .later(nil)
+        }
+        var outcome = await ring()
         var calledBack = false
         while case .later(let after) = outcome {
             if let key { setStatus(key, "waiting") }
@@ -704,7 +712,7 @@ final class AppController: ObservableObject {
                 server.setCallback(session, at: at)
                 while Date() < at, !phone.callActive, !Task.isCancelled { try? await Task.sleep(nanoseconds: 250_000_000) }
                 server.setCallback(session, at: nil)
-                outcome = phone.callActive ? .answered : await ringPhone(label: label)
+                outcome = phone.callActive ? .answered : await ring()
             } else {
                 server.setCallback(session, at: .distantFuture)
                 calledBack = await phone.waitForCall(timeout: Self.callBackWait)
@@ -806,7 +814,7 @@ final class AppController: ObservableObject {
         resumeGen += 1
         let ringing = shouldRing
         if effectivelyMuted && !phone.callActive && !ringing { Log.write("muted → permission left to the screen"); return none }
-        if ringing { _ = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: nil) }
+        if ringing { _ = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: nil, callBack: false) }
         if effectivelyMuted && !phone.callActive { return none }
         if phone.away && !phone.callActive { Log.write("Unterwegs, phone not reached → permission left to the screen"); return none }
         await ackTask?.value
