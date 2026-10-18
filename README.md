@@ -123,19 +123,60 @@ prepended.
 
 ### Phone (Android, iPhone)
 
-The phone app shows your sessions, their history, and takes updates as calls while you're away
-from the computer. Phone and computer meet on a small relay ([`relay/`](relay/README.md)):
+The phone app shows your sessions and their history, lets you write to a session, and takes
+updates as **calls** while you're away from the computer. Phone and computer never talk
+directly: both dial out to a small **relay** ([`relay/`](relay/README.md)), so no port is opened
+and no VPN is needed. Setup takes about ten minutes, once.
 
-1. **Relay:** deploy your own (free Cloudflare plan, `cd relay && npm install && npx wrangler deploy`),
-   or use the relay URL of someone who runs one — rooms are separate, each with its own secret.
-2. Add it to `credentials.json` (macOS `~/Library/Application Support/Parley/`, Windows
-   `%APPDATA%\Parley\`): `"relayUrl": "https://parley-relay.<account>.workers.dev"`.
-3. Menu-bar / tray app → **iPhone verbinden…** opens a QR code in the browser.
-4. **Android:** install `Parley-Android-*.apk` from the
-   [releases](https://github.com/Lidyrius/parley/releases) (allow installs from that source),
-   open it and scan the code. Turn on **Unterwegs** to get updates as calls; switch off battery
-   optimisation for Parley in its settings so the connection survives. More in
-   [`android/README.md`](android/README.md).
+**1. Run a relay** (skip if someone gives you a relay address — rooms are separate, each with
+its own secret). It runs in your own [Cloudflare](https://dash.cloudflare.com/sign-up) account
+on the free plan; you need [Node.js](https://nodejs.org) on the computer:
+
+```bash
+git clone https://github.com/Lidyrius/parley && cd parley/relay
+npm install
+npx wrangler login     # opens the browser: sign in to Cloudflare, allow access
+npx wrangler deploy    # prints https://parley-relay.<your-subdomain>.workers.dev
+```
+
+Open the printed address in a browser: it should say `parley relay ok`.
+
+**2. Tell Parley the relay address.** Add the key `relayUrl` to the JSON object in
+`credentials.json` — no restart needed (macOS `~/Library/Application Support/Parley/credentials.json`, Windows
+`%APPDATA%\Parley\credentials.json`):
+
+```json
+"relayUrl": "https://parley-relay.<your-subdomain>.workers.dev",
+```
+
+or on macOS in one go:
+
+```bash
+F=~/Library/Application\ Support/Parley/credentials.json
+jq '.relayUrl = "https://parley-relay.<your-subdomain>.workers.dev"' "$F" > "$F.tmp" && mv "$F.tmp" "$F" && chmod 600 "$F"
+```
+
+**3. Install the phone app.**
+- **Android:** download `Parley-Android-*.apk` from the
+  [releases](https://github.com/Lidyrius/parley/releases) on the phone, open it and allow
+  installing apps from that source (Android asks once).
+- **iPhone:** TestFlight, by invitation only for now.
+
+**4. Pair.** In the menu-bar / tray app choose **iPhone verbinden…** (it works for Android too):
+the browser shows a QR code. In the phone app tap **QR-Code scannen** and scan it — or copy the
+`parley://pair?…` link and paste it into the app. The header turns to **Verbunden** and your
+sessions appear. Allow the microphone and notifications when the app asks.
+
+**5. Calls on the go.** Turn on **Unterwegs** in the app: from then on Parley rings the phone
+instead of speaking at the computer. On Android, also open the app's **Einstellungen** and
+- tap **Akku-Optimierung ausschalten**, so Android doesn't cut the connection, and
+- (Android 14+) tap **Anrufe auf dem Sperrbildschirm erlauben**, so a call shows full screen.
+
+Without Unterwegs you can still call Parley yourself (**Anrufen**), read the history and write
+to a session. More about the Android app: [`android/README.md`](android/README.md).
+
+**Privacy:** the relay forwards everything between computer and phone (session names, text,
+call audio) and can see it. Run your own, or use one only from someone you trust.
 
 ## Uninstall
 
