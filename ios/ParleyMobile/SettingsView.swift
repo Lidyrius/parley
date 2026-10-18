@@ -31,32 +31,45 @@ struct SettingsView: View {
                         Text("Demo-Modus: Beispieldaten, keine Verbindung.").foregroundStyle(.secondary)
                     }
                 }
-                Section {
+                Section("Unterwegs") {
                     Toggle(isOn: $model.away) {
-                        Label("Unterwegs-Modus", systemImage: "car.fill")
+                        RowLabel("Unterwegs-Modus", "Updates klingeln als Anruf auf dem iPhone", symbol: "car.fill")
                     }
                     Toggle(isOn: $model.silent) {
-                        Label("Stumm", systemImage: "bell.slash.fill")
+                        RowLabel("Stumm", "Statt Anruf eine Mitteilung – schriftlich antworten", symbol: "bell.slash.fill")
                     }
                     .disabled(!model.away)
+                    NavigationLink {
+                        FocusHelp()
+                    } label: {
+                        RowLabel("Automatisch mit Fokus", "„Fahren“ schaltet Unterwegs ein", symbol: "moon.fill")
+                    }
+                }
+                Section {
                     Toggle(isOn: $speakerByDefault) {
-                        Label("Lautsprecher beim Anrufstart", systemImage: "speaker.wave.2.fill")
+                        RowLabel("Lautsprecher", "AirPods und Auto bleiben, wie sie sind", symbol: "speaker.wave.2.fill")
                     }
                     Toggle(isOn: $autoHangUp) {
-                        Label("Nach dem Gespräch auflegen", systemImage: "phone.down.circle")
+                        RowLabel("Danach auflegen", "Musik läuft gleich weiter", symbol: "phone.down.circle")
                     }
                     Toggle(isOn: $bargeIn) {
-                        Label("Parley unterbrechen", systemImage: "hand.raised")
+                        RowLabel("Unterbrechen", "Reden oder „Stopp“ – Parley hört zu", symbol: "hand.raised")
                     }
-                    Picker(selection: $model.roundSeconds) {
-                        ForEach(AppModel.roundChoices, id: \.self) { Text(Self.roundLabel($0)).tag($0) }
-                    } label: {
-                        Label("Fragerunde", systemImage: "rectangle.stack.badge.person.crop")
+                    // The value stays on the right (a Form picker would drop it under a two-line label).
+                    HStack {
+                        RowLabel("Fragerunde", "Updates sammeln, solange andere arbeiten", symbol: "rectangle.stack.badge.person.crop")
+                        Spacer(minLength: 8)
+                        Picker("Fragerunde", selection: $model.roundSeconds) {
+                            ForEach(AppModel.roundChoices, id: \.self) { Text(Self.roundLabel($0)).tag($0) }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
                     }
                 } header: {
                     Text("Anrufe")
                 } footer: {
-                    Text("Unterwegs klingeln Updates als Anruf auf diesem iPhone, statt auf dem Mac gesprochen zu werden. Mit „Stumm“ kommt stattdessen eine Mitteilung; tippe darauf und antworte schriftlich. Anrufe starten auf dem Lautsprecher (AirPods und Auto bleiben, wie sie sind). „Nach dem Gespräch auflegen“: Hat Parley zu Ende gesprochen, legt es sofort auf – gut, wenn danach wieder Musik laufen soll. Aus, bleibt Parley dran und du redest einfach weiter. Anrufen geht jederzeit mit „Hey Siri, Parley anrufen“ – auch in CarPlay. Während des Anrufs holst du Parley mit „Hey Parley“. „Parley unterbrechen“: Fang einfach an zu reden, während Parley spricht (oder sag „Stopp“) – Parley verstummt sofort und hört zu. „Fragerunde“: Nach einem Anruf wartet ein neues Update so lange auf die anderen, solange noch eine Session arbeitet – dann kommt alles in einem Anruf. Arbeitet keine andere, klingelt es sofort; dein eigener Rückruf-Timer wartet nie. Automatisch: Einstellungen → Fokus → z. B. „Fahren“ → Fokusfilter → Parley schaltet Unterwegs mit dem Fokus ein und aus; oder in Kurzbefehle → Automation (CarPlay verbunden, Zuhause verlassen) die Aktion „Unterwegs“.")
+                    Text("„Hey Siri, Parley anrufen“ geht jederzeit, auch in CarPlay.")
                 }
                 Section("Darstellung") {
                     AppIconRow(selection: $appIcon)
@@ -651,3 +664,63 @@ private struct AppIconRow: View {
     }
 }
 
+
+/// A settings row that explains itself: the title, and under it one short line (design A,
+/// docs/design/screens/ios/10-einstellungen). The line wraps at large text sizes.
+private struct RowLabel: View {
+    let title: String
+    let detail: String
+    let symbol: String
+
+    init(_ title: String, _ detail: String, symbol: String) {
+        self.title = title
+        self.detail = detail
+        self.symbol = symbol
+    }
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        } icon: {
+            Image(systemName: symbol)
+        }
+    }
+}
+
+/// "Automatisch mit Fokus": how Unterwegs turns itself on and off — a Focus filter, or a
+/// Shortcuts automation.
+private struct FocusHelp: View {
+    var body: some View {
+        Form {
+            Section {
+                step(1, "Öffne die iPhone-Einstellungen → Fokus und wähle einen Fokus, z. B. „Fahren“.")
+                step(2, "Tippe unten auf „Fokusfilter hinzufügen“ und wähle Parley.")
+                step(3, "Schalte „Unterwegs“ ein. Ab jetzt geht Parley mit dem Fokus in den Unterwegs-Modus und wieder heraus.")
+            } header: {
+                Text("Mit einem Fokus")
+            }
+            Section {
+                step(1, "Öffne Kurzbefehle → Automation und lege eine neue an, z. B. „CarPlay verbunden“ oder „Zuhause verlassen“.")
+                step(2, "Füge die Aktion „Unterwegs“ von Parley hinzu und wähle Ein oder Aus.")
+            } header: {
+                Text("Oder mit Kurzbefehlen")
+            }
+        }
+        .navigationTitle("Automatisch mit Fokus")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func step(_ n: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("\(n)")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.onAccent)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Theme.claude))
+            Text(text)
+        }
+    }
+}
