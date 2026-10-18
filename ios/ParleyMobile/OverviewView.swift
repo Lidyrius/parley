@@ -65,8 +65,8 @@ struct OverviewView: View {
             Notice(title: "Mac noch nicht verbunden", symbol: "laptopcomputer",
                    text: "Parley auf dem Mac hat sich noch nicht beim Relay gemeldet. Öffne Parley auf dem Mac – die Verbindung entsteht dann von selbst.")
         case .rejected:
-            Notice(title: "Kopplung abgelehnt", symbol: "lock.slash",
-                   text: "Das Relay kennt den Schlüssel dieses iPhones nicht. Wähle in Parley auf dem Mac „iPhone verbinden…“ und koppele neu.") {
+            Notice(title: "Bitte neu koppeln", symbol: "lock.slash",
+                   text: "Das Relay hat die Kopplung abgelehnt, oder sie stammt aus einer älteren Version. Wähle in Parley auf dem Mac „Handy verbinden…“ und koppele neu.") {
                 Button("Neu koppeln") { model.unpair() }.buttonStyle(.borderedProminent)
             }
         case .unreachable:

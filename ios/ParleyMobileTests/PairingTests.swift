@@ -18,6 +18,21 @@ struct PairingTests {
         #expect(p.socketURL.absoluteString == "wss://relay.example.com/v1/room/\(room)?role=phone")
     }
 
+    @Test func takesTheEndToEndKey() throws {
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        #expect(try Pairing.parse(link() + "&e=" + key).key == key)
+        #expect(try Pairing.parse(link()).key == nil)                       // an older host: in the clear
+        #expect(throws: PairingError.badSecret) { try Pairing.parse(link() + "&e=short") }
+    }
+
+    @Test func opensTheSharedVectorAndSpotsAnOutdatedPairing() throws {
+        let seal = try #require(RelaySeal(key: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"))
+        let wire = #"{"t":"say","e":"AAECAwQFBgcICQoLRwLXgg3JAhv2Y+Opi8sLDPr0qxaZH31GGhTUpzFLdNd5ZIzGjalz9BjLXZDH2UJ/vAoW9W/YqTFMX6pJ"}"#
+        #expect(seal.open(text: wire)?.json == #"{"t":"say","id":"s1","text":"hallo"}"#)
+        #expect(Relay.isSealed(wire))
+        #expect(!Relay.isSealed(#"{"t":"peer","host":true}"#))
+    }
+
     @Test func keepsPortAndBasePath() throws {
         let p = try Pairing.parse(link(u: "https%3A%2F%2Frelay.example.com%3A8443%2Fparley%2F"))
         #expect(p.socketURL.absoluteString == "wss://relay.example.com:8443/parley/v1/room/\(room)?role=phone")

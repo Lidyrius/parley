@@ -13,6 +13,9 @@ JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./gradl
 Demo ohne Relay (Screenshots): `adb shell am start -n de.developaway.parley.android/de.developaway.parley.MainActivity --es demo overview`
 (`session`, `incoming`, `connecting`, `speaking`, `listening`, `idle`).
 
+Verbindung wie beim iPhone: über das öffentliche Relay (Standard) oder ein eigenes, Ende-zu-Ende
+verschlüsselt (Schlüssel im QR-Code, `docs/IPHONE.md` → v5). Eine Kopplung von vor v5 → neu koppeln.
+
 Anders als auf dem iPhone:
 
 - **Klingeln nur mit „Unterwegs“:** kein Push (FCM) — ein Vordergrund-Dienst hält die

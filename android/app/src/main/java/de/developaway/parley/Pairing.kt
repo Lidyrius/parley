@@ -4,8 +4,11 @@ import android.content.Context
 import android.net.Uri
 import org.json.JSONObject
 
-/** What the host's QR code carries (docs/IPHONE.md → Pairing): the relay, the room, its secret. */
-data class Pairing(val relay: String, val room: String, val secret: String) {
+/**
+ * What the host's QR code carries (docs/IPHONE.md → Pairing): the relay, the room, its secret,
+ * and the end-to-end key (v5; null from an older host — then frames go in the clear).
+ */
+data class Pairing(val relay: String, val room: String, val secret: String, val key: String? = null) {
 
     /** `wss://<relay>/v1/room/<room>?role=phone` (relay protocol v1). A base path is kept. */
     val socketURL: String
@@ -39,7 +42,9 @@ data class Pairing(val relay: String, val room: String, val secret: String) {
             if (room == null || !isBase64URL(room, 16..64)) throw Invalid("Die Raum-ID im Link ist ungültig.")
             val secret = u.getQueryParameter("k")
             if (secret == null || !isBase64URL(secret, 16..128)) throw Invalid("Der Schlüssel im Link fehlt oder ist ungültig.")
-            return Pairing(relay, room, secret)
+            val key = u.getQueryParameter("e")
+            if (key != null && !isBase64URL(key, 43..43)) throw Invalid("Der Schlüssel im Link fehlt oder ist ungültig.")
+            return Pairing(relay, room, secret, key)
         }
 
         private fun isBase64URL(s: String, length: IntRange) =
@@ -49,11 +54,11 @@ data class Pairing(val relay: String, val room: String, val secret: String) {
         private fun prefs(c: Context) = c.getSharedPreferences("pairing", Context.MODE_PRIVATE)
 
         fun load(c: Context): Pairing? = prefs(c).getString("relay", null)?.let { s ->
-            runCatching { JSONObject(s).let { Pairing(it.getString("relay"), it.getString("room"), it.getString("secret")) } }.getOrNull()
+            runCatching { JSONObject(s).let { Pairing(it.getString("relay"), it.getString("room"), it.getString("secret"), it.optString("key").ifEmpty { null }) } }.getOrNull()
         }
 
         fun save(c: Context, p: Pairing) {
-            val s = JSONObject().put("relay", p.relay).put("room", p.room).put("secret", p.secret).toString()
+            val s = JSONObject().put("relay", p.relay).put("room", p.room).put("secret", p.secret).put("key", p.key ?: "").toString()
             prefs(c).edit().putString("relay", s).apply()
         }
 

@@ -67,7 +67,7 @@ fun PairingScreen(m: AppModel, scan: () -> Unit, error: String?, setError: (Stri
         Text("Alle Sessions deines Macs im Blick – und mit einem Tipp fortgesetzt.", fontSize = 17.sp, color = c.secondary, textAlign = TextAlign.Center)
         Spacer(Modifier.height(28.dp))
         Column(Modifier.fillMaxWidth().card(c).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            listOf("Öffne Parley auf dem Mac.", "Wähle im Menü „iPhone verbinden…“.", "Scanne den QR-Code – oder füge den Link hier ein.")
+            listOf("Öffne Parley auf dem Mac.", "Wähle im Menü „Handy verbinden…“.", "Scanne den QR-Code – oder füge den Link hier ein.")
                 .forEachIndexed { i, s ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(30.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {

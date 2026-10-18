@@ -49,3 +49,27 @@ class ProtocolTest {
         assertEquals(480, CallAudio.upsample(ShortArray(320) { 100 }).size)
     }
 }
+
+class SealTest {
+    private val key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"   // bytes 0…31
+
+    @Test fun opensTheSharedVector() {
+        val seal = Seal.of(key)!!
+        val wire = """{"t":"say","e":"AAECAwQFBgcICQoLRwLXgg3JAhv2Y+Opi8sLDPr0qxaZH31GGhTUpzFLdNd5ZIzGjalz9BjLXZDH2UJ/vAoW9W/YqTFMX6pJ"}"""
+        assertEquals("""{"t":"say","id":"s1","text":"hallo"}""", seal.openText(wire))
+        val bin = java.util.Base64.getDecoder().decode("AAECAwQFBgcICQoLRwLXgg3JAhuMQ5SP9BVPlzF+XIBK4Zk6Q12WHA==")
+        assertEquals(listOf<Byte>(1, 2, 3, 4), seal.openBinary(bin)!!.toList())
+    }
+
+    @Test fun roundTripsAndRefusesTampering() {
+        val seal = Seal.of(key)!!
+        val wire = seal.text("""{"t":"resume","id":"s1"}""")!!
+        assertEquals("resume", JSONObject(wire).getString("t"))
+        assertEquals("""{"t":"resume","id":"s1"}""", seal.openText(wire))
+        assertEquals(null, seal.openText(wire.replace("\"resume\"", "\"say\"")))          // type swapped
+        assertEquals(null, Seal.of("AQECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")!!.openText(wire))   // other key
+        assertTrue(Seal.isSealed(wire))
+        assertTrue(!Seal.isSealed("""{"t":"peer","host":true}"""))
+        assertEquals(listOf<Byte>(5, 6), seal.openBinary(seal.binary(byteArrayOf(5, 6)))!!.toList())
+    }
+}

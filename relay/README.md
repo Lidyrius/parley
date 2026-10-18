@@ -6,7 +6,9 @@ computer opens no port and the phone needs no VPN. One Durable Object per pairin
 room's claim (`sha256` of its secret) and the latest `sessions` frame; everything else is relayed
 as-is. Protocol and pairing: [`docs/IPHONE.md`](../docs/IPHONE.md).
 
-It runs in your own Cloudflare account and fits the Workers free plan (SQLite-backed Durable
+Parley uses a public instance by default (`https://parley-relay.sydney-d51.workers.dev`); every
+frame is end-to-end encrypted, so the relay never sees content (`docs/IPHONE.md` → v5). Your own
+runs in your Cloudflare account and fits the Workers free plan (SQLite-backed Durable
 Objects, WebSocket hibernation, `ping`/`pong` answered without waking the object).
 
 ## Deploy
@@ -19,7 +21,7 @@ npx wrangler deploy
 ```
 
 `wrangler deploy` prints the Worker's URL, `https://parley-relay.<your-subdomain>.workers.dev`.
-Put that into the Parley app's settings as `relayUrl`, then use "iPhone verbinden…" in the app's
+Put that into the Parley app's settings as `relayUrl`, then use "Handy verbinden…" in the app's
 menu to pair the phone.
 
 ## Endpoints

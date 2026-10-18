@@ -18,7 +18,8 @@ targets:
     platform: iOS
     # AppIcons: Icon Composer files — AppIcon (Porzellan · Indigo) and the alternates Sir picks in
     # the settings (setAlternateIconName).
-    sources: [ParleyMobile, Shared, AppIcons]
+    # Seal.swift: the end-to-end encryption, one file shared with the Mac app (docs/IPHONE.md → v5).
+    sources: [ParleyMobile, Shared, AppIcons, ../app/Sources/Parley/Seal.swift]
     dependencies:
       - target: ParleyWidgets
     info:

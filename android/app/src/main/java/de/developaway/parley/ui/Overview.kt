@@ -147,8 +147,8 @@ private fun Content(m: AppModel, c: Colors, open: (String) -> Unit) {
             "Parley auf dem Mac ist gerade nicht mit dem Relay verbunden. Sobald er wieder online ist, erscheinen hier deine Sessions.")
         ConnectionStatus.unknownRoom -> Notice(c, Icons.Filled.Laptop, "Mac noch nicht verbunden",
             "Parley auf dem Mac hat sich noch nicht beim Relay gemeldet. Öffne Parley auf dem Mac – die Verbindung entsteht dann von selbst.")
-        ConnectionStatus.rejected -> Notice(c, Icons.Filled.Lock, "Kopplung abgelehnt",
-            "Das Relay kennt den Schlüssel dieses Telefons nicht. Wähle in Parley auf dem Mac „iPhone verbinden…“ und koppele neu.") {
+        ConnectionStatus.rejected -> Notice(c, Icons.Filled.Lock, "Bitte neu koppeln",
+            "Das Relay hat die Kopplung abgelehnt, oder sie stammt aus einer älteren Version. Wähle in Parley auf dem Mac „Handy verbinden…“ und koppele neu.") {
             Capsule("Neu koppeln", c) { m.unpair() }
         }
         ConnectionStatus.unreachable -> Notice(c, Icons.Filled.WifiOff, "Keine Verbindung",

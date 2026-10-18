@@ -1,11 +1,13 @@
 import Foundation
 import Security
 
-/// What the host's QR code carries (docs/IPHONE.md → Pairing): the relay, the room, its secret.
+/// What the host's QR code carries (docs/IPHONE.md → Pairing): the relay, the room, its secret,
+/// and the end-to-end key (v5; nil from an older host — then frames go in the clear).
 struct Pairing: Codable, Equatable, Sendable {
     let relay: URL
     let room: String
     let secret: String
+    var key: String? = nil
 
     /// `wss://<relay>/v1/room/<room>?role=phone` (relay protocol v1). A base path is kept.
     var socketURL: URL {
@@ -34,7 +36,8 @@ struct Pairing: Codable, Equatable, Sendable {
         guard let u = q["u"], let relay = URL(string: u), isRelay(relay) else { throw .badRelay }
         guard let room = q["r"], isBase64URL(room, 16...64) else { throw .badRoom }
         guard let secret = q["k"], isBase64URL(secret, 16...128) else { throw .badSecret }
-        return Pairing(relay: relay, room: room, secret: secret)
+        if let key = q["e"], !isBase64URL(key, 43...43) { throw .badSecret }
+        return Pairing(relay: relay, room: room, secret: secret, key: q["e"])
     }
 
     private static func isRelay(_ url: URL) -> Bool {

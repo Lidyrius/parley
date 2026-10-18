@@ -40,6 +40,9 @@ class Relay(private val scope: CoroutineScope, private val device: String) {
     var snapshot by mutableStateOf<Snapshot?>(null); private set
     /** Host clock minus phone clock (ms): timers count on the host's clock. */
     var skew by mutableStateOf(0.0); private set
+    /** The host seals its frames (v5) but this pairing has no key (paired before): pair again. */
+    var outdatedPairing by mutableStateOf(false); private set
+    @Volatile private var seal: Seal? = null
 
     var onOpened: () -> Unit = {}
     var onClosed: () -> Unit = {}
@@ -53,13 +56,15 @@ class Relay(private val scope: CoroutineScope, private val device: String) {
     @Volatile private var lastHeard = 0L
     private var bestSkew: Double? = null
 
-    val status: ConnectionStatus get() = status(link, hostOnline, failure)
+    val status: ConnectionStatus get() = if (outdatedPairing) ConnectionStatus.rejected else status(link, hostOnline, failure)
     val canSend: Boolean get() = link == Link.connected && hostOnline == true
     fun hostNow(): Double = System.currentTimeMillis() + skew
 
     fun use(p: Pairing) {
         disconnect()
         pairing = p
+        seal = Seal.of(p.key)
+        outdatedPairing = false
         snapshot = null
         failure = null
     }
@@ -96,15 +101,20 @@ class Relay(private val scope: CoroutineScope, private val device: String) {
     fun forget() {
         disconnect()
         pairing = null
+        seal = null
+        outdatedPairing = false
         snapshot = null
         failure = null
     }
 
     /** Dropped when no socket is open: everything sent is a user action or state resent on open. */
-    fun send(text: String) { if (link == Link.connected) socket?.send(text) }
+    fun send(text: String) { if (link == Link.connected) sealed(text)?.let { socket?.send(it) } }
 
     /** From the mic thread. */
-    fun sendAudio(frame: ByteArray) { socket?.send(frame.toByteString()) }
+    fun sendAudio(frame: ByteArray) { socket?.send((seal?.binary(frame) ?: frame).toByteString()) }
+
+    /** End-to-end (docs/IPHONE.md → v5): sealed with the pairing's key; null = not sent (never in the clear with a key). */
+    private fun sealed(text: String): String? = seal?.let { it.text(text) } ?: text.takeIf { seal == null }
 
     /** Capped backoff (1 s → 30 s); a socket that was open starts over at 1 s. */
     private suspend fun run(p: Pairing) {
@@ -124,7 +134,7 @@ class Relay(private val scope: CoroutineScope, private val device: String) {
         val ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 lastHeard = System.currentTimeMillis()
-                webSocket.send(Outgoing.hello(device))
+                sealed(Outgoing.hello(device))?.let { webSocket.send(it) }
                 scope.launch {
                     if (socket !== webSocket) return@launch
                     opened = true
@@ -137,13 +147,20 @@ class Relay(private val scope: CoroutineScope, private val device: String) {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 lastHeard = System.currentTimeMillis()
                 if (text == "pong") return
-                val frame = Frames.parse(text)
+                val s = seal
+                val json = when {
+                    s != null -> s.openText(text) ?: text.takeIf { Frames.parse(it) is Incoming.Peer }   // the relay's own `peer`
+                    Seal.isSealed(text) -> { scope.launch { outdatedPairing = true }; null }
+                    else -> text
+                } ?: return
+                val frame = Frames.parse(json)
                 scope.launch { if (socket === webSocket) apply(frame) }
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                 lastHeard = System.currentTimeMillis()
-                onAudio(bytes.toByteArray())
+                val data = bytes.toByteArray()
+                (seal?.let { it.openBinary(data) } ?: data.takeIf { seal == null })?.let(onAudio)
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null) }

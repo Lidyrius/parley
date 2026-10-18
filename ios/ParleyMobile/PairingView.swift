@@ -23,7 +23,7 @@ struct PairingView: View {
 
                 VStack(alignment: .leading, spacing: 14) {
                     Step(n: 1, text: "Öffne Parley auf dem Mac.")
-                    Step(n: 2, text: "Wähle im Menü „iPhone\u{00A0}verbinden…\u{2060}“.")  // keeps the menu name in one piece
+                    Step(n: 2, text: "Wähle im Menü „Handy\u{00A0}verbinden…\u{2060}“.")  // keeps the menu name in one piece
                     Step(n: 3, text: "Scanne den QR-Code – oder füge den Link hier ein.")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
