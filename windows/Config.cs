@@ -21,6 +21,7 @@ public sealed class Config
     public string RelayUrl { get; init; } = "";      // iPhone relay base URL (docs/IPHONE.md); empty = no iPhone connection
     public string RelayRoom { get; init; } = "";     // the relay room (16 random bytes, base64url), created on first pairing
     public string RelaySecret { get; init; } = "";   // the room's secret (32 random bytes, base64url)
+    public string RelayKey { get; init; } = "";      // end-to-end key (32 random bytes, base64url): only in the QR code
     // iPhone protocol v2 (docs/IPHONE.md): the Zentrale's folder, where it creates projects, the
     // APNs key for ringing, and what the phone told us (VoIP token, Unterwegs-Modus).
     public string ZentraleDir { get; init; } = DefaultZentraleDir;
@@ -97,6 +98,7 @@ public sealed class Config
                 RelayUrl = S("relayUrl"),
                 RelayRoom = S("relayRoom"),
                 RelaySecret = S("relaySecret"),
+                RelayKey = S("relayKey"),
                 ZentraleDir = Or("zentraleDir", DefaultZentraleDir),
                 ProjectsDir = Or("projectsDir", DefaultProjectsDir),
                 ApnsKeyId = S("apnsKeyId").Trim(),

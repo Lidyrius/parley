@@ -6,26 +6,29 @@ import Security
 // to the phones in the room, takes a phone's `resume` down the POST /resume path, and carries the
 // call: `call`/`wake`/`push`/`away` text frames in, `audio`/`ring` out, PCM audio as binary frames.
 
-// The relay settings in credentials.json. relayUrl empty = the feature is off.
+// The relay settings in credentials.json. relayUrl empty = the public relay.
 struct RelayConfig: Equatable {
     var url: String       // relay base URL, normalized (no trailing slash)
     var room: String      // 16 random bytes, base64url
     var secret: String    // 32 random bytes, base64url — the relay keeps only its sha256
+    var key: String       // 32 random bytes, base64url — end-to-end key, never sent to the relay
 
-    init(url: String, room: String, secret: String) {
+    init(url: String, room: String, secret: String, key: String = "") {
         self.url = RelayLink.normalize(url)
         self.room = room
         self.secret = secret
+        self.key = key
     }
 
     var isComplete: Bool { RelayLink.socketBase(url) != nil && !room.isEmpty && !secret.isEmpty }
 
     static func load() -> RelayConfig {
-        RelayConfig(url: Keychain.get(.relayUrl) ?? "", room: Keychain.get(.relayRoom) ?? "",
-                    secret: Keychain.get(.relaySecret) ?? "")
+        let url = Keychain.get(.relayUrl) ?? ""
+        return RelayConfig(url: url.isEmpty ? RelayLink.publicRelay : url, room: Keychain.get(.relayRoom) ?? "",
+                           secret: Keychain.get(.relaySecret) ?? "", key: Keychain.get(.relayKey) ?? "")
     }
 
-    // "iPhone verbinden…": nil while no (http/https) relayUrl is set; else the settings, with
+    // "Handy verbinden…": nil without a usable (http/https) relayUrl; else the settings, with
     // room + secret created once — together, since a room is claimed by its first secret.
     static func pair() -> RelayConfig? {
         var c = load()
@@ -37,6 +40,16 @@ struct RelayConfig: Equatable {
             Keychain.set(c.secret, for: .relaySecret)
             Log.write("relay: created room + secret for pairing")
         }
+        return c.withKey()
+    }
+
+    // The end-to-end key, created once. A room paired before v5 gets one here: its phone pairs again.
+    func withKey() -> RelayConfig {
+        guard isComplete, key.isEmpty else { return self }
+        var c = self
+        c.key = RelayLink.token(bytes: 32)
+        Keychain.set(c.key, for: .relayKey)
+        Log.write("relay: created the end-to-end key — the phone has to pair again")
         return c
     }
 }
@@ -57,9 +70,12 @@ enum RelayLink {
         return u
     }
 
-    // parley://pair?u=<relay>&r=<room>&k=<secret> — what the iPhone scans.
+    // The relay everyone can use (end-to-end encrypted); `relayUrl` points at your own instead.
+    static let publicRelay = "https://parley-relay.sydney-d51.workers.dev"
+
+    // parley://pair?u=<relay>&r=<room>&k=<secret>&e=<key> — what the phone scans.
     static func pairing(_ c: RelayConfig) -> String {
-        "parley://pair?u=\(encode(c.url))&r=\(encode(c.room))&k=\(encode(c.secret))"
+        "parley://pair?u=\(encode(c.url))&r=\(encode(c.room))&k=\(encode(c.secret))" + (c.key.isEmpty ? "" : "&e=\(encode(c.key))")
     }
 
     // <relay>/pair#<pairing link>: the relay's page draws the QR code from the fragment, which
@@ -288,6 +304,9 @@ final class RelayClient: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var lastPing = Date.distantPast
     private var lastInbound = Date.distantPast
+    // End-to-end (docs/IPHONE.md → v5): nil only for a config without a key (tests).
+    private let seal: RelaySeal?
+    private var replay = ReplayGuard()
 
     // nil unless the config is complete (http(s) relayUrl, room, secret).
     init?(config: RelayConfig, sessions: @escaping @Sendable () -> String,
@@ -300,6 +319,7 @@ final class RelayClient: @unchecked Sendable {
         var req = URLRequest(url: url)
         req.setValue("Bearer \(config.secret)", forHTTPHeaderField: "Authorization")
         self.config = config
+        self.seal = RelaySeal(key: config.key)
         self.request = req
         self.sessions = sessions
         self.resume = resume
@@ -388,13 +408,13 @@ final class RelayClient: @unchecked Sendable {
                     self.lastInbound = self.now()
                     switch message {
                     case .text(let text):
-                        switch RelayFrame.parse(text) {
+                        switch self.unseal(text).flatMap(RelayFrame.parse) {
                         case .resume(let id)?: self.resume(id)
                         case let event?: self.onEvent?(event)
                         case nil: break
                         }
                     case .binary(let data):
-                        if !data.isEmpty, data.count <= RelayFrame.maxBinary { self.onAudio?(data) }
+                        if !data.isEmpty, data.count <= RelayFrame.maxBinary, let audio = self.unseal(data) { self.onAudio?(audio) }
                     }
                     self.receive(s, gen)
                 case .failure(let error):
@@ -406,12 +426,37 @@ final class RelayClient: @unchecked Sendable {
 
     private func send(_ text: String) {
         guard let s = socket else { return }
-        s.send(text, completion: sent(generation))
+        if let seal, text != "ping" {
+            guard let sealed = seal.text(text, at: now()) else { return }   // never in the clear
+            s.send(sealed, completion: sent(generation))
+        } else {
+            s.send(text, completion: sent(generation))
+        }
     }
 
     private func send(data: Data) {
         guard let s = socket else { return }
-        s.send(data: data, completion: sent(generation))
+        if let seal {
+            guard let sealed = seal.binary(data, at: now()) else { return }
+            s.send(data: sealed, completion: sent(generation))
+        } else {
+            s.send(data: data, completion: sent(generation))
+        }
+    }
+
+    // A phone's frame, opened: only sealed, fresh, first-seen frames count — a relay that
+    // replays or forges one gets nothing in (a `say` or an utterance would reach a session).
+    private func unseal(_ text: String) -> String? {
+        guard let seal else { return text }
+        guard text != "pong", let (json, at, nonce) = seal.open(text: text),
+              replay.accept(at: at, nonce: nonce, now: now()) else { return nil }
+        return json
+    }
+
+    private func unseal(_ data: Data) -> Data? {
+        guard let seal else { return data }
+        guard let (audio, at, nonce) = seal.open(binary: data), replay.accept(at: at, nonce: nonce, now: now()) else { return nil }
+        return audio
     }
 
     private func sent(_ gen: Int) -> @Sendable ((any Error)?) -> Void {

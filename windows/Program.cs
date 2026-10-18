@@ -90,7 +90,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         menu.Items.Add(icons);
         // iPhone (docs/IPHONE.md): pairing opens the relay's QR page; the status line is set on open.
-        var pair = new ToolStripMenuItem("iPhone verbinden…");
+        var pair = new ToolStripMenuItem("Handy verbinden…");
         pair.Click += (_, _) => PairIPhone();
         menu.Items.Add(pair);
         menu.Items.Add(_relayStatus);
@@ -293,7 +293,7 @@ internal sealed class TrayApp : ApplicationContext
         finally { Volatile.Write(ref _activityTicking, 0); }
     }
 
-    // "iPhone verbinden…": with a relay configured, make sure room + secret exist, connect, and
+    // "Handy verbinden…": with a relay configured, make sure room + secret exist, connect, and
     // open the relay's pairing page (QR code) in the browser; without one, say how to set it.
     private void PairIPhone()
     {
@@ -307,7 +307,7 @@ internal sealed class TrayApp : ApplicationContext
     // Connect to the relay when it is configured (launch, pairing); a no-op on unchanged settings.
     private void StartRelay()
     {
-        var config = RelayConfig.Load();
+        var config = RelayConfig.Load().WithKey();
         if (_relay is not null && _relay.Config == config) return;
         _relay?.Stop();
         _relay = RelayClient.Create(config, () => _server.Sessions.Json(), OnPhone, PhoneCall.OnAudio);
@@ -439,7 +439,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         var answer = MessageBox.Show(
             "Fürs iPhone braucht Parley die Adresse deines Relays. Trag sie in credentials.json ein, z. B. " +
-            "\"relayUrl\": \"https://parley-relay.<konto>.workers.dev\", und wähle dann erneut „iPhone verbinden…“.\n\n" +
+            "\"relayUrl\": \"https://parley-relay.<konto>.workers.dev\", und wähle dann erneut „Handy verbinden…“.\n\n" +
             Config.CredentialsPath + "\n\nOrdner jetzt öffnen?",
             "Relay nicht eingerichtet", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
         if (answer != DialogResult.Yes) return;

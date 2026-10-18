@@ -18,7 +18,7 @@ enum Transcript {
 
     static let maxItems = 60
     static let maxText = 2500
-    static let maxFrame = 200 * 1024     // relay limit is 256 KB
+    static let maxFrame = 180 * 1024     // relay limit 256 KB; sealed (v5, base64) a frame grows by a third
     static let tailBytes = 3 << 20
 
     static var projects: URL {

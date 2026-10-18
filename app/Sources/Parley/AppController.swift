@@ -1351,7 +1351,7 @@ final class AppController: ObservableObject {
 
     // MARK: - iPhone relay (docs/IPHONE.md)
 
-    // "iPhone verbinden…": with a relay configured, make sure room + secret exist, connect, and
+    // "Handy verbinden…": with a relay configured, make sure room + secret exist, connect, and
     // open the relay's pairing page (QR code) in the browser; without one, say how to set it.
     func pairIPhone() {
         guard let config = RelayConfig.pair(), let page = RelayLink.pairPage(config) else {
@@ -1364,7 +1364,7 @@ final class AppController: ObservableObject {
 
     // Connect to the relay when it is configured (launch, pairing); a no-op on unchanged settings.
     func startRelay() {
-        let config = RelayConfig.load()
+        let config = RelayConfig.load().withKey()
         guard relay?.config != config else { return }
         stopRelay()
         let server = self.server
@@ -1401,7 +1401,7 @@ final class AppController: ObservableObject {
         alert.informativeText = """
             Fürs iPhone braucht Parley die Adresse deines Relays. Trag sie in credentials.json ein, \
             z. B. "relayUrl": "https://parley-relay.<konto>.workers.dev", und wähle dann erneut \
-            „iPhone verbinden…“.
+            „Handy verbinden…“.
 
             \(Keychain.fileURL.path)
             """

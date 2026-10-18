@@ -58,7 +58,7 @@ struct MenuBarView: View {
                 }
 
                 Divider()
-                Button("iPhone verbinden…") { controller.pairIPhone() }
+                Button("Handy verbinden…") { controller.pairIPhone() }
                 if let up = controller.relayConnected {
                     Text(up ? "iPhone: verbunden mit Relay" : "iPhone: Relay nicht erreichbar")
                         .font(.caption2).foregroundStyle(.secondary)

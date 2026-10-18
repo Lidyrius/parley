@@ -30,6 +30,7 @@ enum Keychain {
         case relayUrl       // iPhone relay base URL (docs/IPHONE.md); empty = no iPhone connection
         case relayRoom      // the relay room (16 random bytes, base64url), created on first pairing
         case relaySecret    // the room's secret (32 random bytes, base64url)
+        case relayKey       // end-to-end key (32 random bytes, base64url): only in the QR code, never to the relay
         case phonePushToken // the iPhone's VoIP push token (hex), from its `push` frame
         case phonePushEnv   // "production" | "development" (APNs host)
         case phoneAway      // "1" = Unterwegs-Modus on (the phone's `away` frame): updates ring the phone

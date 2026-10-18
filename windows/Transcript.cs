@@ -25,7 +25,7 @@ public static class Transcript
 
     public const int MaxItems = 60;
     public const int MaxText = 2500;
-    public const int MaxFrame = 200 * 1024;     // relay limit is 256 KB
+    public const int MaxFrame = 180 * 1024;     // relay limit 256 KB; sealed (v5, base64) a frame grows by a third
     public const int TailBytes = 3 << 20;
 
     private static readonly JsonSerializerOptions Json = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };

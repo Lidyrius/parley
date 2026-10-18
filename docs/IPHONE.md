@@ -30,14 +30,17 @@ iOS limits: no always-on background wake word for third-party apps. Hands-free s
 
 ## Pairing
 
-The host (Parley app) creates, once, a room id (16 random bytes) and a secret (32 random
-bytes), both base64url without padding, and keeps them with its settings. The pairing link is
+The host (Parley app) creates, once, a room id (16 random bytes), a secret (32 random bytes)
+and an encryption key (32 random bytes), all base64url without padding, and keeps them with its
+settings. The pairing link is
 
 ```
-parley://pair?u=<relay base URL, percent-encoded>&r=<room>&k=<secret>
+parley://pair?u=<relay base URL, percent-encoded>&r=<room>&k=<secret>&e=<key>
 ```
 
-"iPhone verbinden…" in the app's menu opens `https://<relay>/pair#<pairing link, percent-encoded>`
+Without a `relayUrl` setting the host uses the public relay `https://parley-relay.sydney-d51.workers.dev`.
+
+"Handy verbinden…" in the app's menu opens `https://<relay>/pair#<pairing link, percent-encoded>`
 in the browser: the relay serves a static page that draws the link as a QR code **from the URL
 fragment**, so the secret never reaches the relay in a request. The iPhone app scans it (or the
 system camera opens it through the `parley://` URL scheme) and stores it in the Keychain.
@@ -70,9 +73,30 @@ Unknown types are ignored by every side (forward compatible). The relay forwards
 to all phones and phone messages to the host; it inspects only `t` and keeps only the latest
 `sessions` frame.
 
-Trust: the relay runs in your own Cloudflare account and sees message contents (session names,
-last spoken lines) over TLS. End-to-end encryption with a key derived from the secret is planned
-together with audio (stage 2).
+Trust: the relay sees only who talks to which room, the frame types and their sizes — every
+frame's content is end-to-end encrypted (below), so a public relay can neither read nor forge it.
+
+### End-to-end encryption (v5)
+
+Every frame between host and phone is sealed with **AES-256-GCM** under the pairing key `e`, which
+travels only in the QR code (the URL fragment) and never to the relay. Exempt: `ping` / `pong` and
+the relay's own `peer` frame.
+
+- **Sealed bytes:** 12-byte random nonce ‖ ciphertext ‖ 16-byte tag. The plaintext is the
+  sender's clock (8 bytes, big-endian epoch ms) followed by the payload.
+- **Text frame:** payload = the frame's UTF-8 JSON. On the wire `{"t":"<its t>","e":"<sealed,
+  base64>"}` — `t` stays readable so the relay can keep the latest `sessions` frame. Associated
+  data `parley1/text/<t>`; the opened JSON must carry the same `t`.
+- **Binary frame (audio):** the sealed bytes; associated data `parley1/bin`.
+- **Host** accepts from phones only frames that open, whose clock is within 2 minutes of its own
+  and whose nonce it hasn't seen in that window (no replay of a `say` or an utterance).
+- **Phone** accepts any frame that opens (the relay replays the latest `sessions` on purpose).
+  A frame with `e` it cannot open (no key: paired before v5) means: pair again.
+
+Test vector (key = bytes 0…31, nonce = bytes 0…11, clock 1760000000000):
+`{"t":"say","id":"s1","text":"hallo"}` with `parley1/text/say` seals to
+`AAECAwQFBgcICQoLRwLXgg3JAhv2Y+Opi8sLDPr0qxaZH31GGhTUpzFLdNd5ZIzGjalz9BjLXZDH2UJ/vAoW9W/YqTFMX6pJ`;
+bytes `01 02 03 04` with `parley1/bin` to `AAECAwQFBgcICQoLRwLXgg3JAhuMQ5SP9BVPlzF+XIBK4Zk6Q12WHA==`.
 
 ## Protocol v2 — calls, wake word, routing, push, permissions (stages 2–5)
 

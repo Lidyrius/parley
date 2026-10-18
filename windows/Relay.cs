@@ -11,40 +11,54 @@ namespace Parley;
 // the POST /resume path, and carries the v2 call: binary audio frames both ways, the phone's
 // `call` / `wake` / `push` / `away`, and the host's `audio` / `ring`.
 
-// The relay settings in credentials.json. relayUrl empty = the feature is off.
+// The relay settings in credentials.json. relayUrl empty = the public relay.
 public sealed record RelayConfig
 {
-    public RelayConfig(string url, string room, string secret)
+    public RelayConfig(string url, string room, string secret, string key = "")
     {
         Url = RelayLink.Normalize(url);
         Room = room;
         Secret = secret;
+        Key = key;
     }
 
     public string Url { get; }      // relay base URL, normalized (no trailing slash)
     public string Room { get; }     // 16 random bytes, base64url
     public string Secret { get; }   // 32 random bytes, base64url — the relay keeps only its sha256
+    public string Key { get; }      // 32 random bytes, base64url — end-to-end key, never sent to the relay
 
     public bool IsComplete => RelayLink.SocketBase(Url) is not null && Room.Length > 0 && Secret.Length > 0;
 
     public static RelayConfig Load()
     {
         var c = Config.Load();
-        return new RelayConfig(c.RelayUrl, c.RelayRoom, c.RelaySecret);
+        return new RelayConfig(c.RelayUrl.Length > 0 ? c.RelayUrl : RelayLink.PublicRelay, c.RelayRoom, c.RelaySecret, c.RelayKey);
     }
 
-    // "iPhone verbinden…": null while no (http/https) relayUrl is set; else the settings, with
+    // "Handy verbinden…": null without a usable (http/https) relayUrl; else the settings, with
     // room + secret created once — together, since a room is claimed by its first secret.
     public static RelayConfig? Pair()
     {
         var c = Load();
         if (RelayLink.SocketBase(c.Url) is null) return null;
-        if (c.IsComplete) return c;
-        var paired = new RelayConfig(c.Url, RelayLink.Token(16), RelayLink.Token(32));
-        if (!Config.Merge(new Dictionary<string, string> { ["relayRoom"] = paired.Room, ["relaySecret"] = paired.Secret }))
-            return null;
-        Log.Write("relay: created room + secret for pairing");
-        return paired;
+        if (!c.IsComplete)
+        {
+            c = new RelayConfig(c.Url, RelayLink.Token(16), RelayLink.Token(32));
+            if (!Config.Merge(new Dictionary<string, string> { ["relayRoom"] = c.Room, ["relaySecret"] = c.Secret }))
+                return null;
+            Log.Write("relay: created room + secret for pairing");
+        }
+        return c.WithKey();
+    }
+
+    // The end-to-end key, created once. A room paired before v5 gets one here: its phone pairs again.
+    public RelayConfig WithKey()
+    {
+        if (!IsComplete || Key.Length > 0) return this;
+        var c = new RelayConfig(Url, Room, Secret, RelayLink.Token(32));
+        if (!Config.Merge(new Dictionary<string, string> { ["relayKey"] = c.Key })) return this;
+        Log.Write("relay: created the end-to-end key — the phone has to pair again");
+        return c;
     }
 }
 
@@ -62,9 +76,12 @@ public static class RelayLink
         return u;
     }
 
-    // parley://pair?u=<relay>&r=<room>&k=<secret> — what the iPhone scans.
+    // The relay everyone can use (end-to-end encrypted); `relayUrl` points at your own instead.
+    public const string PublicRelay = "https://parley-relay.sydney-d51.workers.dev";
+
+    // parley://pair?u=<relay>&r=<room>&k=<secret>&e=<key> — what the phone scans.
     public static string Pairing(RelayConfig c) =>
-        $"parley://pair?u={Encode(c.Url)}&r={Encode(c.Room)}&k={Encode(c.Secret)}";
+        $"parley://pair?u={Encode(c.Url)}&r={Encode(c.Room)}&k={Encode(c.Secret)}" + (c.Key.Length > 0 ? $"&e={Encode(c.Key)}" : "");
 
     // <relay>/pair#<pairing link>: the relay's page draws the QR code from the fragment, which
     // the browser never sends — the secret never reaches the relay in a request. A plain string
@@ -256,10 +273,16 @@ public sealed class RelayClient
     private bool _connected;
     private ClientWebSocket? _ws;   // the live connection, for sends from outside the loop
     private long _lastInbound;   // UTC ticks of the last frame from the relay (receive loop → send loop)
+    // End-to-end (docs/IPHONE.md → v5): null only for a config without a key.
+    private readonly RelaySeal? _seal;
+    private readonly ReplayGuard _replay = new();
+
+    private static long NowMs => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     private RelayClient(RelayConfig config, Uri uri, Func<string> sessions, Action<PhoneMessage> phone, Action<byte[]>? audio)
     {
         Config = config;
+        _seal = RelaySeal.Create(config.Key);
         _uri = uri;
         _sessions = sessions;
         _phone = phone;
@@ -271,9 +294,14 @@ public sealed class RelayClient
     public static RelayClient? Create(RelayConfig config, Func<string> sessions, Action<PhoneMessage> phone, Action<byte[]>? audio = null) =>
         config.IsComplete && RelayLink.Socket(config) is { } uri ? new RelayClient(config, uri, sessions, phone, audio) : null;
 
-    public Task<bool> SendTextAsync(string text) => SendOutsideAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text);
+    public Task<bool> SendTextAsync(string text) =>
+        Sealed(text) is { } s ? SendOutsideAsync(Encoding.UTF8.GetBytes(s), WebSocketMessageType.Text) : Task.FromResult(false);
 
-    public Task<bool> SendAudioAsync(byte[] frame) => SendOutsideAsync(frame, WebSocketMessageType.Binary);
+    public Task<bool> SendAudioAsync(byte[] frame) =>
+        SendOutsideAsync(_seal?.Binary(frame, NowMs) ?? frame, WebSocketMessageType.Binary);
+
+    // Never in the clear with a key: a frame that can't be sealed isn't sent.
+    private string? Sealed(string text) => _seal is null ? text : _seal.Text(text, NowMs);
 
     // A send from the call (audio, `audio`, `ring`): false when not connected or it failed — the
     // connection loop notices a dead link on its own.
@@ -368,8 +396,9 @@ public sealed class RelayClient
                     await SendLockedAsync(ws, Encoding.UTF8.GetBytes("ping"), WebSocketMessageType.Text, ct);
                 }
                 var json = _sessions();
-                if (sync.Due(json, now) && RelayFrame.Sessions(json, new DateTimeOffset(now).ToUnixTimeMilliseconds()) is { } frame)
-                    await SendLockedAsync(ws, Encoding.UTF8.GetBytes(frame), WebSocketMessageType.Text, ct);
+                if (sync.Due(json, now) && RelayFrame.Sessions(json, new DateTimeOffset(now).ToUnixTimeMilliseconds()) is { } frame
+                    && Sealed(frame) is { } wire)
+                    await SendLockedAsync(ws, Encoding.UTF8.GetBytes(wire), WebSocketMessageType.Text, ct);
                 await Task.WhenAny(receive, Task.Delay(TickEvery, ct));
             }
         }
@@ -391,6 +420,20 @@ public sealed class RelayClient
         }
     }
 
+    // A phone's frame, opened: only sealed, fresh, first-seen frames count — a relay that
+    // replays or forges one gets nothing in (a `say` or an utterance would reach a session).
+    private string? Unseal(string text)
+    {
+        if (_seal is null) return text;
+        return text != "pong" && _seal.OpenText(text) is { } o && _replay.Accept(o.SentMs, o.Nonce, NowMs) ? o.Json : null;
+    }
+
+    private byte[]? Unseal(byte[] data)
+    {
+        if (_seal is null) return data;
+        return _seal.OpenBinary(data) is { } o && _replay.Accept(o.SentMs, o.Nonce, NowMs) ? o.Data : null;
+    }
+
     private async Task ReceiveLoopAsync(ClientWebSocket ws, CancellationToken ct)
     {
         var buffer = new byte[16 * 1024];
@@ -407,15 +450,16 @@ public sealed class RelayClient
             // A handler's failure must never end the connection.
             if (r.MessageType == WebSocketMessageType.Text)
             {
-                if (RelayFrame.Parse(Encoding.UTF8.GetString(frame.GetBuffer(), 0, (int)frame.Length)) is { } message)
+                if (Unseal(Encoding.UTF8.GetString(frame.GetBuffer(), 0, (int)frame.Length)) is { } text
+                    && RelayFrame.Parse(text) is { } message)
                 {
                     try { _phone(message); }
                     catch (Exception e) { Log.Write($"relay: {message.GetType().Name} failed: {e.Message}"); }
                 }
             }
-            else if (frame.Length <= MaxAudioFrame && _audio is not null)   // binary: the phone's mic (v2)
+            else if (frame.Length <= MaxAudioFrame && _audio is not null && Unseal(frame.ToArray()) is { } pcm)   // binary: the phone's mic (v2)
             {
-                try { _audio(frame.ToArray()); }
+                try { _audio(pcm); }
                 catch (Exception e) { Log.Write($"relay: audio frame failed: {e.Message}"); }
             }
             frame.SetLength(0);
