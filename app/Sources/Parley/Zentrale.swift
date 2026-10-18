@@ -106,6 +106,7 @@ enum SessionStarter {
 
     // `tab`: the new tab's tty once Terminal has it (nil if it couldn't be read).
     static func start(folder: String, resume: String? = nil, tab: @escaping @Sendable (String?) -> Void = { _ in }) {
+        ClaudeTrust.accept(folder)   // no "trust this folder?" in Parley's starts (Sir's rule)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = osascriptArguments(folder: folder, resume: resume)

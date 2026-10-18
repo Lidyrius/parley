@@ -116,6 +116,9 @@ jq -n --arg cwd "$dir" --arg task "$auftrag" '{cwd: $cwd, instruction: $task, st
 
 Parley beobachtet jede neu gestartete Session, bis sie da ist. Fragen der Shell mit „Nein“ als
 Standard (`[y/N]`, z. B. „Add '…' to Gas Town? [y/N/never]“) beantwortet Parley selbst mit `n`.
+Claude Codes „Is this a project you created or one you trust?“ kommt gar nicht erst: Parley
+markiert den Ordner vor dem Start als vertraut (Sirs Regel für alle Parley-Starts) und wählt
+„Yes, I trust this folder“, falls der Dialog doch erscheint.
 Hängt ein Start nach 90 s immer noch, bekommst du eine Nachricht **„[Parley · Start-Check] …“** mit
 den letzten Zeilen aus dem Terminal. Dann:
 
