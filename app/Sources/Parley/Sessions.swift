@@ -320,6 +320,16 @@ final class SessionRegistry {
 
     // The Wiedervorlagen, as /sessions lists them for the phone (the server keeps them current).
     var reminders: [Reminders.Row] = []
+    // The snapshots, likewise.
+    var snapshots: [Snapshots.Row] = []
+
+    // The sessions running now (not stopped, with a folder): what a snapshot keeps.
+    func live() -> [(id: String, label: String, cwd: String)] {
+        refresh()
+        return entries.values.filter { $0.state != "stopped" && !$0.cwd.isEmpty }
+            .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+            .map { ($0.id, $0.label, $0.cwd) }
+    }
 
     // An instruction can be handed to the session now: its parked hook polls /wake, or the mod
     // reports presence (and takes it with its next /presence).
@@ -396,11 +406,11 @@ final class SessionRegistry {
         let day = daily.snapshot()
         let today = Today(costUsd: (day.costUsd * 10_000).rounded() / 10_000, turns: day.turns,
                           spokenSeconds: Int(day.spokenSeconds.rounded()), rateLimits: rateLimits)
-        let data = try? JSONEncoder().encode(Wire(sessions: rows, today: today, reminders: reminders))
+        let data = try? JSONEncoder().encode(Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots))
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"sessions":[]}"#
     }
 
-    private struct Wire: Encodable { let sessions: [Row]; let today: Today; let reminders: [Reminders.Row] }
+    private struct Wire: Encodable { let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row] }
     private struct Today: Encodable { let costUsd: Double; let turns: Int; let spokenSeconds: Int; let rateLimits: [RateLimit] }
 
     private struct Row: Encodable {

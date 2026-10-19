@@ -43,6 +43,21 @@ struct MenuBarView: View {
                     }
                 }
 
+                Divider()
+                HStack {
+                    Label("Snapshots", systemImage: "square.on.square").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Aktuellen Stand sichern …") { controller.saveSnapshot() }.controlSize(.small)
+                }
+                ForEach(controller.snapshots, id: \.id) { s in
+                    HStack {
+                        Text(s.name).font(.callout)
+                        Text("\(s.sessions.count)").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Öffnen") { controller.openSnapshot(s.id) }.controlSize(.small)
+                    }
+                }
+
                 if let err = controller.lastError {
                     Text(err).font(.caption2).foregroundStyle(.red).lineLimit(2)
                 }

@@ -14,7 +14,7 @@ import Network
 // once at startup before start().
 final class ControlServer: @unchecked Sendable {
     private let port: NWEndpoint.Port
-    private let queue = DispatchQueue(label: "de.developaway.parley.server")
+    let queue = DispatchQueue(label: "de.developaway.parley.server")
     private var listener: NWListener?
 
     // UI notify when a turn starts being spoken (fired on the server queue).
@@ -60,12 +60,14 @@ final class ControlServer: @unchecked Sendable {
     // Wiedervorlagen (Reminders.swift): kept here, on the queue; nil file = not persisted (tests).
     var remindersFile: URL?
     private lazy var reminders: [Reminder] = Reminders.load(remindersFile)
+    var snapshotsFile: URL?   // nil in tests unless set
+    lazy var snapshots: [Snapshot] = Snapshots.load(snapshotsFile)
     // A Wiedervorlage was handed to a session (the app shows a notification).
     var onReminded: ((Reminder) -> Void)?
 
     // POST /permission holds the hook at most this long, then answers "ask".
     var permissionHold: TimeInterval = 110
-    private let now: () -> Date
+    let now: () -> Date
 
     // Parked (paused-but-resumable) sessions. Their Stop hook short-polls /wake; we hand
     // back a pending instruction to wake them — no keystrokes needed. Keyed by session key.
@@ -111,7 +113,10 @@ final class ControlServer: @unchecked Sendable {
         l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
         l.start(queue: queue)
         listener = l
-        queue.async { self.sessions.reminders = Reminders.rows(self.reminders) }
+        queue.async {
+            self.sessions.reminders = Reminders.rows(self.reminders)
+            self.sessions.snapshots = Snapshots.rows(self.snapshots)
+        }
     }
 
     private func accept(_ conn: NWConnection) {
@@ -307,7 +312,7 @@ final class ControlServer: @unchecked Sendable {
     // ponytail: the instruction still waits by folder; another idle session in the same folder
     // could take it first. Key it by session id if that ever bites. A session the app hasn't seen
     // since its start counts as new.
-    private func dispatchOnQueue(cwd raw: String, instruction: String, start: Bool, resume: String? = nil,
+    func dispatchOnQueue(cwd raw: String, instruction: String, start: Bool, resume: String? = nil,
                                  name rawName: String? = nil) -> DispatchResult {
         let cwd = Zentrale.normalize(raw)
         prunePending()
@@ -334,9 +339,10 @@ final class ControlServer: @unchecked Sendable {
             }
         }
         if forNew, let name { pending.addName(name, cwd: cwd, at: now()) }
-        let guardKey = forNew ? cwd + "\u{1}" + (name ?? "").lowercased() : cwd
+        // A resume is that one session: others starting in the folder (a snapshot opens several) don't stop it.
+        let guardKey = forNew ? cwd + "\u{1}" + (name ?? "").lowercased() : resume.map { cwd + "\u{2}" + $0 } ?? cwd
         if start, here == nil, startedAt[guardKey].map({ now().timeIntervalSince($0) >= Self.restartGuard }) ?? true,
-           forNew || !startOnTheWay(cwd) {
+           forNew || resume != nil || !startOnTheWay(cwd) {
             startedAt[guardKey] = now()
             let at = now()
             starter(cwd, resume) { [weak self] tty in
@@ -730,6 +736,8 @@ final class ControlServer: @unchecked Sendable {
             return (200, json)
         case ("GET", "/sessions"):
             return (200, sessions.json())
+        case (_, let p) where p == "/snapshots" || p.hasPrefix("/snapshots/"):
+            return snapshotRoute(req.method, p, req.body)
         case ("POST", "/dispatch"):
             // The Zentrale (or anything local) hands a task to a folder's session, starting one.
             guard let d = Contract.decodeDispatch(req.body) else {

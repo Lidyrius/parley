@@ -220,7 +220,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
                 return true
             }) else { return }
             log("phone: Sir interrupts — stopping the line")
-        case .history, .image, .say, .hello, .paletteSaved:
+        case .history, .image, .say, .hello, .paletteSaved, .snapshotSave, .snapshotOpen, .snapshotDelete:
             onChat?(event)
         case .resume:
             break
