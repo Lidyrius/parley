@@ -52,12 +52,13 @@ msg="$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' 2>/dev/null 
 parsed="$(printf '%s' "$msg" | perl -0777 -ne '
   my $m = $_;
   my $sepos = -1; while ($m =~ /<speak-end>/g) { $sepos = $-[0]; }
-  my $sppos = -1; while ($m =~ /<speak>/g)     { $sppos = $-[0]; }
+  # v7: <speak to="Max"> asks a guest of a shared session (docs/MULTIPLAYER.md).
+  my ($sppos, $to) = (-1, ""); while ($m =~ /<speak(?:\s+to="([^"<>]{0,40})")?>/g) { $sppos = $-[0]; $to = $1 // ""; }
   my ($text, $listen);
   if ($sepos >= 0 && $sepos > $sppos) {
     substr($m, $sepos) =~ /<speak-end>(.*?)(?:<\/speak-end>|\z)/s; $text = $1; $listen = "false";
   } elsif ($sppos >= 0) {
-    substr($m, $sppos) =~ /<speak>(.*?)(?:<\/speak>|\z)/s; $text = $1; $listen = "true";
+    substr($m, $sppos) =~ /<speak(?:\s+to="[^"<>]*")?>(.*?)(?:<\/speak>|\z)/s; $text = $1; $listen = "true";
   }
   # Predicted answers: the <reply on="…" [listen]>line</reply> lines directly ABOVE the
   # final tag (anywhere else they are prose). One per line: listen<TAB>on<TAB>line.
@@ -88,9 +89,13 @@ parsed="$(printf '%s' "$msg" | perl -0777 -ne '
     $text =~ s/<slide\b[^>]*>//g;
     $text =~ s/[ \t]{2,}/ /g;
   }
-  if (defined $text) { $text =~ s/^\s+|\s+$//g; print "$listen\n" . scalar(@r) . "\n" . join("", map { "$_\n" } @r) . scalar(@s) . "\n" . join("", map { "$_\n" } @s) . $text; }
+  $to = "" unless $listen eq "true";
+  $to =~ s/[\t\n]+/ /g;
+  if (defined $text) { $text =~ s/^\s+|\s+$//g; print "$listen\t$to\n" . scalar(@r) . "\n" . join("", map { "$_\n" } @r) . scalar(@s) . "\n" . join("", map { "$_\n" } @s) . $text; }
 ')"
-listen="$(printf '%s' "$parsed" | head -1)"
+first="$(printf '%s' "$parsed" | head -1)"
+listen="${first%%$'\t'*}"
+to="${first#*$'\t'}"; [ "$to" = "$first" ] && to=""
 nr="$(printf '%s' "$parsed" | sed -n 2p)"; nr="${nr:-0}"
 replies="$(printf '%s\n' "$parsed" | head -n $((2 + nr)) | tail -n +3 | jq -R -s -c \
   'split("\n") | map(select(length > 0) | split("\t") | {on: .[1], say: .[2], listen: (.[0] == "1")})')"
@@ -123,12 +128,14 @@ payload="$(jq -n \
   --arg tmux_pane "${TMUX_PANE:-}" \
   --arg speak "$speak" \
   --arg label "$label" \
+  --arg to "$to" \
   --argjson listen "$listen" \
   --argjson replies "${replies:-[]}" \
   --argjson slides "${slides:-[]}" \
   '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label, listen:$listen}
    + (if ($replies | length) > 0 then {replies:$replies} else {} end)
-   + (if ($slides | length) > 0 then {slides:$slides} else {} end)')"
+   + (if ($slides | length) > 0 then {slides:$slides} else {} end)
+   + (if $to != "" then {to:$to} else {} end)')"
 
 # Blocks while the turn is queued + spoken + recorded + transcribed. With many parallel
 # projects a turn can wait long in the queue before it is its turn to

@@ -24,17 +24,21 @@ const APP = 'http://127.0.0.1:8787' // ponytail: default port; read PARLEY_PORT 
 const LIVE: readonly Phase[] = ['speaking', 'listening', 'transcribing']
 
 // Same rule as plugin/scripts/stop-hook.sh: the LAST opening tag wins, its close optional.
-export function parseSpeak(msg: string): { text: string; listen: boolean } | null {
+export function parseSpeak(msg: string): { text: string; listen: boolean; to?: string } | null {
   const end = msg.lastIndexOf('<speak-end>')
-  const speak = msg.lastIndexOf('<speak>')
+  // v7: <speak to="Max"> asks a guest of a shared session, like stop-hook.sh.
+  const opens = [...msg.matchAll(/<speak(?:\s+to="([^"<>]{0,40})")?>/g)]
+  const last = opens.at(-1)
+  const speak = last?.index ?? -1
   if (end < 0 && speak < 0) return null
   const listen = speak > end
-  const open = listen ? '<speak>' : '<speak-end>'
+  const open = listen ? last![0] : '<speak-end>'
   const rest = msg.slice((listen ? speak : end) + open.length)
   const close = rest.indexOf(listen ? '</speak>' : '</speak-end>')
   if (!listen && close < 0) return null
   const text = (close < 0 ? rest : rest.slice(0, close)).trim()
-  return text ? { text, listen } : null
+  const to = listen ? last?.[1] : undefined
+  return text ? { text, listen, ...(to ? { to } : {}) } : null
 }
 
 // The app overlay's motion (RecordingHUD.swift): not a scrolling sample history but one

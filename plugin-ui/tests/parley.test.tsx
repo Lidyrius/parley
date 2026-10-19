@@ -13,6 +13,7 @@ test('parseSpeak takes the last tag, like stop-hook.sh', async () => {
   expect(parseSpeak('x `<speak-end>` y\n<speak>Hallo Sir.</speak>')).toEqual({ text: 'Hallo Sir.', listen: true })
   expect(parseSpeak('<speak>a</speak>\n<speak-end>Fertig.</speak-end>')).toEqual({ text: 'Fertig.', listen: false })
   expect(parseSpeak('<speak>offen ohne close')).toEqual({ text: 'offen ohne close', listen: true })
+  expect(parseSpeak('Text.\n<speak to="Max">Max, welche Variante?</speak>')).toEqual({ text: 'Max, welche Variante?', listen: true, to: 'Max' })
   expect(wave(3, 14, 1).length).toBe(14)
 })
 

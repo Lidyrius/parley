@@ -389,6 +389,7 @@ final class SessionRegistry {
     // GET /sessions — voice holder first, then alive sessions by label, stopped last.
     // The people a session is shared with (Shares.swift keeps it current): shown on its row.
     var shared: [String: [ShareTag]] = [:]
+    var asking: [String: String] = [:]          // a question waits for this guest (by session)
     struct ShareTag: Encodable, Equatable { let id, name, role: String }
 
     // `only`: a guest's view (Shares.swift) — that one session, nothing else of Sir's.
@@ -405,7 +406,7 @@ final class SessionRegistry {
                 until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil,
                 callback: e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) }, voice: e.id == activeId,
                 resumable: only == nil && resumable(e), tasks: e.tasks, host: only == nil ? DesktopSessions.resolve(cli: e.id, reported: e.host) : nil,
-                shared: shared[e.id] ?? [],
+                shared: shared[e.id] ?? [], asking: asking[e.id],
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
         }
@@ -430,8 +431,9 @@ final class SessionRegistry {
         let tasks: [BackgroundTask]
         let host: String?
         let shared: [ShareTag]
+        let asking: String?
         let stats: RowStats
-        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, stats }
+        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, asking, stats }
         func encode(to encoder: Encoder) throws {   // explicit: `until` must be null, not omitted
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(label, forKey: .label)
@@ -441,6 +443,7 @@ final class SessionRegistry {
             try c.encode(voice, forKey: .voice); try c.encode(resumable, forKey: .resumable)
             try c.encode(tasks, forKey: .tasks); try c.encode(host, forKey: .host)
             if !shared.isEmpty { try c.encode(shared, forKey: .shared) }
+            try c.encodeIfPresent(asking, forKey: .asking)
             try c.encode(stats, forKey: .stats)
         }
     }

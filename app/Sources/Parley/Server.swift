@@ -182,7 +182,32 @@ final class ControlServer: @unchecked Sendable {
             respond(reply)
             return
         }
+        // v7: <speak to="Max"> and Max is a guest of this session — the question goes to him
+        // (Shares.swift), not through Sir's voice; it comes back here if he doesn't answer.
+        if let to = turn.to, turn.wantsListen, let ask = askGuest,
+           let guest = sessions.shared[key]?.first(where: { $0.name.caseInsensitiveCompare(to) == .orderedSame }) {
+            sessions.asking[key] = guest.name
+            ask(guest.id, turn) { [weak self] reply in
+                self?.queue.async {
+                    self?.sessions.asking[key] = nil
+                    self?.sessions.finished(id: key, reply: reply)
+                    respond(reply)
+                }
+            }
+            return
+        }
         enqueueReply(turn, respond)
+    }
+
+    // v7: the share hub takes a guest's question (share id, turn, answer).
+    var askGuest: ((String, TurnPayload, @escaping (TurnReply) -> Void) -> Void)?
+
+    // v7: a guest's question that wasn't answered goes to Sir like any update.
+    func voiceForSir(_ turn: TurnPayload, respond: @escaping (TurnReply) -> Void) {
+        queue.async {
+            self.sessions.asking[Self.sessionKey(turn)] = nil
+            self.enqueueReply(turn, respond)
+        }
     }
 
     // MARK: - permission prompts (POST /permission)

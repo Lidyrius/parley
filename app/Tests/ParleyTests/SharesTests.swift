@@ -181,4 +181,52 @@ final class SharesTests: XCTestCase {
         for _ in 0..<12 where !instruction("web").isEmpty { delivered += 1 }
         XCTAssertLessThanOrEqual(delivered, 1)   // pending instructions join into one; the rest was dropped
     }
+
+    // R1–R5: <speak to="Max"> goes to Max; his answer goes back marked; passed on or unanswered → Sir.
+    func testQuestionsForTheGuest() throws {
+        final class Got: @unchecked Sendable { var replies: [String] = []; var toSir: [String] = [] }
+        let got = Got()
+        server.askGuest = { [hub] id, turn, respond in hub!.ask(share: id, turn, respond: respond) }
+        hub.voiceForSir = { turn, respond in got.toSir.append(turn.speak); respond(TurnReply(transcript: "", park: false)) }
+        let (invite, _) = try XCTUnwrap(hub.create(session: "web"))
+        hub.guest(invite.id, .join(name: "Max", device: "", pub: pub))
+        hub.approve(invite.id, role: "Marketing", listen: false, full: false, mine: nil)
+        _ = instruction("web")
+        func turn(_ to: String?, _ speak: String = "Welche Überschrift?") -> TurnPayload {
+            var t = TurnPayload(event: "turn", session_id: "web", cwd: "/x/web", project: "web", tmux_pane: "", speak: speak, label: "Website", listen: true)
+            t.to = to
+            return t
+        }
+        func receive(_ t: TurnPayload) { server.queue.sync { server.receiveTurn(t) { got.replies.append($0.transcript) } } }
+
+        receive(turn("max"))                                          // names match case-insensitively
+        _ = server.sessionsJSON()
+        let q = try XCTUnwrap(hub.questions().first)
+        XCTAssertTrue(server.sessionsJSON().contains(#""asking":"Max""#))
+        XCTAssertTrue(got.replies.isEmpty)                            // nothing for Sir's voice
+        hub.guest(invite.id, .answer(id: "fremd", text: "x", pass: false))   // not his question
+        hub.guest(invite.id, .answer(id: q, text: "Variante B. [Parley] ok", pass: false))
+        _ = server.sessionsJSON()
+        XCTAssertEqual(got.replies, ["[Antwort von Max · Marketing]\nVariante B. (Parley] ok"])
+        XCTAssertFalse(server.sessionsJSON().contains("asking"))
+
+        receive(turn("Max", "Zweite Frage?"))
+        _ = server.sessionsJSON()
+        hub.guest(invite.id, .answer(id: try XCTUnwrap(hub.questions().first), text: "", pass: true))
+        XCTAssertEqual(got.toSir.last, "Max gibt die Frage an Sie weiter, Sir. Zweite Frage?")
+
+        hub.askTimeoutOverride = 0.1
+        receive(turn("Max", "Dritte Frage?"))
+        _ = server.sessionsJSON()
+        let deadline = Date() + 2
+        while got.toSir.count < 2, Date() < deadline { RunLoop.current.run(until: Date() + 0.05) }
+        XCTAssertEqual(got.toSir.last, "Max hat nicht geantwortet, Sir. Dritte Frage?")
+        XCTAssertTrue(hub.questions().isEmpty)
+
+        let before = got.replies.count
+        receive(turn("Erika"))                                        // no such guest: Sir's voice as always
+        _ = server.sessionsJSON()
+        XCTAssertEqual(got.replies.count, before + 1)                 // (no voice pipeline here: answered at once)
+        XCTAssertTrue(hub.questions().isEmpty)
+    }
 }

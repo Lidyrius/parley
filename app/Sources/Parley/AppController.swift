@@ -23,6 +23,7 @@ final class AppController: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var parked: [ParkedInfo] = []   // resumable sessions: parked (hook polls /wake, or the mod)
     @Published var snapshots: [Snapshot] = []
+    @Published var shared: [Share] = []        // v7: sessions shared with a guest (the menu can end them)
     @Published var lastError: String?
     @Published var muted = false   // manual mute toggle (menu)
     @Published var relayConnected: Bool?   // iPhone relay: nil = not configured, else reachable
@@ -143,6 +144,13 @@ final class AppController: ObservableObject {
         let shares = self.shares
         shares.toSir = { [phone] in phone.reply($0) }
         shares.notify = { title, body in Task { @MainActor in Notifier.notify(title: title, body: body) } }
+        // v7: a guest's question (<speak to="Max">) goes to him; unanswered it comes back to Sir.
+        server.askGuest = { [shares] id, turn, respond in shares.ask(share: id, turn, respond: respond) }
+        shares.voiceForSir = { [server] turn, respond in server.voiceForSir(turn, respond: respond) }
+        let apns = self.apns
+        shares.push = { token, env, title, body, session in
+            Task.detached { _ = await apns.notify(token: token, env: env, title: title, body: body, session: session) }
+        }
         phone.onChat = { [phone, weak self] event in
             // An answer (typed, or tapped in the Live Activity) closes that session's question there.
             if case .say(let id, _) = event {
@@ -200,6 +208,7 @@ final class AppController: ObservableObject {
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickWatchdog() }
             self?.server.tickReminders()
+            self?.shares.tick()
         }
         let center = DistributedNotificationCenter.default()
         for (name, locked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
@@ -642,6 +651,7 @@ final class AppController: ObservableObject {
     func refreshResumable() {
         parked = server.resumableList()
         snapshots = server.snapshotList()
+        shared = shares.list().filter { $0.state != "invited" }
     }
 
     // The menu's Snapshots: open one, or keep the running sessions under a name Sir types.

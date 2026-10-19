@@ -58,6 +58,19 @@ struct MenuBarView: View {
                     }
                 }
 
+                if !controller.shared.isEmpty {
+                    Divider()
+                    Label("Geteilt", systemImage: "person.2").font(.caption).foregroundStyle(.secondary)
+                    ForEach(controller.shared, id: \.id) { s in
+                        HStack {
+                            Text("\(s.guest?.name ?? "Gast") · \(s.label)").font(.callout)
+                            if s.state == "asking" { Text("fragt an").font(.caption).foregroundStyle(.orange) }
+                            Spacer()
+                            Button("Entfernen") { controller.shares.remove(s.id); controller.refreshResumable() }.controlSize(.small)
+                        }
+                    }
+                }
+
                 if let err = controller.lastError {
                     Text(err).font(.caption2).foregroundStyle(.red).lineLimit(2)
                 }

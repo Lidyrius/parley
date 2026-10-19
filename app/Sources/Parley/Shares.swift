@@ -15,6 +15,8 @@ struct Share: Codable, Equatable {
         var listen = false      // "nur zuhören": reads, never writes
         var full = false        // also sees the history from before he joined
         var joined: Date?
+        var push: String?       // his notification token (hex) and its APNs environment
+        var env: String?
     }
     var id: String
     var session: String
@@ -121,9 +123,15 @@ enum Shares {
         shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data(share.utf8), sharedInfo: Data("parley-share-move".utf8), outputByteCount: 32)
     }
 
+    // A guest's answer to his question (R4): "[Antwort von Max · Marketing]\n…".
+    static func answerPrefix(_ g: Share.Guest) -> String {
+        "[Antwort von \(g.name)\(g.role.isEmpty ? "" : " · \(g.role)")]\n"
+    }
+
     static func author(_ text: String?) -> (String?, String?) {
-        guard let text, text.hasPrefix("[Nachricht von "), let end = text.firstIndex(of: "]") else { return (nil, text) }
-        let head = text[text.index(text.startIndex, offsetBy: 15)..<end]
+        guard let text, let start = ["[Nachricht von ", "[Antwort von "].first(where: { text.hasPrefix($0) }),
+              let end = text.firstIndex(of: "]") else { return (nil, text) }
+        let head = text[text.index(text.startIndex, offsetBy: start.count)..<end]
         let name = head.components(separatedBy: " · ")[0].trimmingCharacters(in: .whitespaces)
         let body = text[text.index(after: end)...].trimmingCharacters(in: .whitespacesAndNewlines)
         return (name.isEmpty ? nil : name, body)
@@ -165,6 +173,15 @@ enum Shares {
         return ControlServer.encode(Wire(share: s.id, pub: sealed.pub, box: sealed.box, role: s.guest?.role ?? "", listen: s.guest?.listen ?? false))
     }
 
+    // R3: a question for the guest, and its end (answered, passed on, or timed out).
+    static func askFrame(id: String, _ s: Share, _ turn: TurnPayload) -> String {
+        struct Wire: Encodable { let t = "ask"; let id, session, label, text: String; let replies: [String]; let seconds: Int }
+        return ControlServer.encode(Wire(id: id, session: s.session, label: s.label, text: turn.speak,
+                                         replies: (turn.replies ?? []).map(\.on), seconds: Int(ShareHub.askTimeout)))
+    }
+
+    static func askEnd(_ id: String) -> String { #"{"t":"ask-end","id":"\#(id)"}"# }
+
     static func notice(_ text: String) -> String {
         struct Wire: Encodable { let t = "notice"; let text: String }
         return ControlServer.encode(Wire(text: text))
@@ -187,6 +204,14 @@ final class ShareHub: @unchecked Sendable {
     private var clients: [String: RelayClient] = [:]
     private var said: [String: [Date]] = [:]   // S6: each guest's recent messages
     static let sayLimit = 10                    // … per minute
+    // R2–R5: questions waiting for a guest's answer, by question id.
+    private struct Ask { let share: String; let turn: TurnPayload; let respond: (TurnReply) -> Void; let timer: DispatchWorkItem }
+    private var asks: [String: Ask] = [:]
+    static let askTimeout: TimeInterval = 120
+    var askTimeoutOverride: TimeInterval?       // tests
+
+    var voiceForSir: ((TurnPayload, @escaping (TurnReply) -> Void) -> Void)?   // an unanswered one goes to Sir
+    var push: (@Sendable (_ token: String, _ env: String, _ title: String, _ body: String, _ session: String) -> Void)?
 
     var toSir: (@Sendable (String) -> Void)?              // a frame to Sir's phone
     var notify: (@Sendable (String, String) -> Void)?     // a notification on the Mac (title, body)
@@ -212,6 +237,8 @@ final class ShareHub: @unchecked Sendable {
     }
 
     func list() -> [Share] { queue.sync { shares } }
+    func tick() { queue.async { self.prune(); self.tag() } }   // B1: every 30 s (AppController)
+    func questions() -> [String] { queue.sync { Array(asks.keys) } }   // open questions (tests, menu)
 
     // MARK: Sir's side
 
@@ -259,6 +286,7 @@ final class ShareHub: @unchecked Sendable {
         queue.sync {
             guard let i = self.shares.firstIndex(where: { $0.id == id }) else { return }
             let s = self.shares.remove(at: i)
+            for (qid, a) in self.asks where a.share == id { self.end(qid, why: "\(s.guest?.name ?? "Der Gast") ist nicht mehr dabei") }
             self.clients[id]?.sendText(Shares.endFrame)
             let c = self.clients.removeValue(forKey: id)
             self.queue.asyncAfter(deadline: .now() + 2) { c?.stop() }
@@ -267,6 +295,47 @@ final class ShareHub: @unchecked Sendable {
             if s.state == "active" { self.server.deliverRouted(id: s.session, instruction: Shares.left(s)) }
             Log.write("share: \(s.guest?.name ?? "invite") removed from \(s.label)")
         }
+    }
+
+    // MARK: questions for a guest (R2–R5)
+
+    func ask(share id: String, _ turn: TurnPayload, respond: @escaping (TurnReply) -> Void) {
+        queue.async {
+            guard let s = self.shares.first(where: { $0.id == id && $0.state == "active" }), let g = s.guest,
+                  let client = self.clients[id] else {
+                self.voiceForSir?(Self.toSir(turn, why: nil), respond)
+                return
+            }
+            let qid = RelayLink.token(bytes: 9)
+            let timer = DispatchWorkItem { [weak self] in self?.end(qid, why: "\(g.name) hat nicht geantwortet") }
+            self.asks[qid] = Ask(share: id, turn: turn, respond: respond, timer: timer)
+            self.queue.asyncAfter(deadline: .now() + (self.askTimeoutOverride ?? Self.askTimeout), execute: timer)
+            client.sendText(Shares.askFrame(id: qid, s, turn))
+            if let token = g.push { self.push?(token, g.env ?? "production", "Rückfrage · \(s.label)", turn.speak, s.session) }
+            Log.write("share: question for \(g.name) in \(s.label)")
+        }
+    }
+
+    // Answered, passed on or timed out: the question ends at the guest; unanswered, Sir gets it.
+    private func end(_ qid: String, answer: String? = nil, why: String? = nil) {
+        guard let a = asks.removeValue(forKey: qid) else { return }
+        a.timer.cancel()
+        clients[a.share]?.sendText(Shares.askEnd(qid))
+        let g = shares.first { $0.id == a.share }?.guest
+        if let answer, let g {
+            Log.write("share: \(g.name) answered (\(answer.count) chars)")
+            a.respond(TurnReply(transcript: Shares.answerPrefix(g) + Shares.defuse(answer), park: false))
+        } else {
+            Log.write("share: question goes to Sir — \(why ?? "no guest")")
+            voiceForSir?(Self.toSir(a.turn, why: why), a.respond)
+        }
+    }
+
+    private static func toSir(_ turn: TurnPayload, why: String?) -> TurnPayload {
+        var t = turn
+        t.to = nil
+        if let why { t.speak = "\(why), Sir. " + turn.speak }
+        return t
     }
 
     // MARK: the guest's side
@@ -318,6 +387,18 @@ final class ShareHub: @unchecked Sendable {
                 self.said[id] = recent + [self.now()]
                 Log.write("share: \(g.name) wrote in \(s.label) (\(text.count) chars)")
                 self.server.deliverRouted(id: sid, instruction: Shares.prefix(g) + Shares.defuse(text))
+            case .answer(let qid, let text, let pass) where s.state == "active" && self.asks[qid]?.share == id:
+                let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if pass || t.isEmpty {
+                    self.end(qid, why: "\(s.guest?.name ?? "Der Gast") gibt die Frage an Sie weiter")
+                } else {
+                    self.end(qid, answer: String(t.prefix(8000)))
+                }
+            case .alert(let token, let env) where s.state == "active":
+                guard let i = self.shares.firstIndex(where: { $0.id == id }) else { return }
+                self.shares[i].guest?.push = token
+                self.shares[i].guest?.env = env
+                self.store()
             default:
                 break   // anything else (calls, resume, Sir's own controls) isn't a guest's
             }

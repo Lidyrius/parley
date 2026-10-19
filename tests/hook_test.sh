@@ -154,4 +154,18 @@ wait "$srv" 2>/dev/null || true
   || fail "slides: $(jq -c '.slides' < "$bodyfile")"
 echo "PASS: slide markers"
 
+# --- Test 9: <speak to="Max"> asks a guest (v7) -> payload.to; a plain <speak> has none ---
+start_listener
+in9='{"last_assistant_message":"Zwei Varianten.\n<reply on=\"A\">Gut.</reply>\n<speak to=\"Max\">Max, welche Überschrift nehmen wir?</speak>","cwd":"/tmp/p","session_id":"s9"}'
+printf '%s' "$in9" | PARLEY_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+[ "$(jq -r '.to' < "$bodyfile")" = "Max" ] || fail "to: $(jq -c . < "$bodyfile")"
+[ "$(jq -r '.speak' < "$bodyfile")" = "Max, welche Überschrift nehmen wir?" ] || fail "speak to: $(jq -r '.speak' < "$bodyfile")"
+[ "$(jq -c '.replies' < "$bodyfile")" = '[{"on":"A","say":"Gut.","listen":false}]' ] || fail "replies with to: $(jq -c '.replies' < "$bodyfile")"
+start_listener
+printf '%s' "$in1" | PARLEY_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+[ "$(jq -r 'has("to")' < "$bodyfile")" = "false" ] || fail "unexpected to key"
+echo "PASS: speak to a guest"
+
 echo "ALL HOOK TESTS PASSED"

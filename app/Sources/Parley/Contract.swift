@@ -13,6 +13,7 @@ struct TurnPayload: Codable, Equatable {
     var listen: Bool?     // false = speak-only (no mic/pill); nil/true = speak + listen
     var replies: [Reply]? // predicted answers (<reply on="…">), each with its spoken reaction
     var slides: [SlideSpec]?   // <slide …/> markers for a phone call (docs/CALL-SLIDES.md)
+    var to: String? = nil      // v7: <speak to="Max"> — a guest of the shared session is asked
 
     var spokenLabel: String { (label?.isEmpty == false ? label : nil) ?? project }
     var wantsListen: Bool { listen ?? true }
