@@ -152,6 +152,26 @@ to a session. More about the Android app: [`android/README.md`](android/README.m
 in the QR code, never to the relay; the relay sees that a room is in use and how much, not what.
 It also can't slip a message into your sessions. Details: [`docs/IPHONE.md`](docs/IPHONE.md).
 
+#### Sharing a session (Multiplayer)
+
+Share one session with someone else — a colleague for the marketing questions, a client who
+should follow along. In the phone app open the session and tap **Teilen …**: you get a one-time
+link (QR code or share sheet), valid for 24 hours. The other person opens it in their Parley app
+(no computer needed), types their name and waits. You see **"Max möchte beitreten"** with a
+four-digit check code that is also on their screen, give them a role ("Marketing und Rückfragen"),
+choose **Lesen und schreiben** or **Nur zuhören**, and let them in.
+
+From then on they see only that session (its history from the moment they joined, unless you
+allow more), can write into it — every message shows who wrote it — and get the session's
+questions for their role: the session addresses them with `<speak to="Max">`, their phone shows
+a **Rückfrage**, and their answer goes back marked with their name. Not answered within two
+minutes, or passed on, the question comes to you as usual. Approvals for commands and files
+always stay with you. Remove them any time in the app or the menu bar / tray (**Geteilt**).
+
+Security: the invite carries its own room and key; when you let the guest in, both move to a
+fresh room whose key is sealed to the guest's phone alone (ECDH P-256), so the link is useless
+afterwards — also to anyone who saw it. Details: [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md).
+
 #### Your own relay instead (optional)
 
 Rather not share infrastructure? Run the relay ([`relay/`](relay/README.md)) in your own

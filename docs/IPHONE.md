@@ -354,3 +354,38 @@ opens them again in one go. The host keeps them in `snapshots.json` (app data, b
   `POST /snapshots/open {id}`, `POST /snapshots/delete {id}`.
 - Starts go through `/dispatch` (same start check); several sessions resumed in one folder each
   start — the per-folder "one start at a time" guard applies to new sessions only.
+
+## Protocol v7 — shared sessions (Multiplayer)
+
+Sir shares one session with a guest (docs/MULTIPLAYER.md). Each share is its own relay room with
+its own secret and end-to-end key; the host keeps one more connection per share (role `host`),
+the guest's phone dials it as `phone`. The relay needs nothing new.
+
+- **Owner (Sir's phone ↔ host, his own room):** `{"t":"share","op":"create","id":<session>}` →
+  host `{"t":"share","id":<share>,"session","link"}` with
+  `link = parley://join?u=<relay>&r=<room>&k=<secret>&e=<key>&s=<session label>&h=<host name>`
+  (one-time, 24 h). A guest asks → host `{"t":"join","id","session","label","name","device","code"}`;
+  Sir answers `{"t":"share","op":"approve","id","role","listen","full","mine"}` or
+  `{"t":"share","op":"remove","id"}` (also to end an active share). Rows in `/sessions` carry
+  `shared: [{id, name, role}]` and `asking: <name>` while a question waits for that guest.
+- **Guest (his phone ↔ host, the share's room):** on open `{"t":"join","name","device","pub"}` —
+  `pub` = a fresh P-256 public key (x9.63, base64url). One join per link; Sir decides on the first.
+  Both sides show `code` = SHA-256(pub as UTF-8), first 4 bytes big-endian mod 10000 (4 digits).
+  After Sir's yes the host sends `{"t":"move","share","pub","box","role","listen"}`: `box` =
+  AES-GCM (nonce‖ciphertext‖tag, base64url) of `{"r","k","e"}` — the fresh room — under
+  HKDF-SHA256(ECDH(host key, guest key), salt = share id, info = "parley-share-move", 32 bytes).
+  Only the invited phone can open it; the invite room is abandoned.
+- **In the share room** the host sends only that session's row (`sessions`, nothing of Sir's day,
+  reminders or snapshots) and answers `history` (from the guest's joining on unless `full`),
+  `image` and `say` for that session only (`say` ≤ 10/min, delivered as
+  `[Nachricht von <name> · <role>]\n<text>` with markers defused). `{"t":"push","kind":"alert",…}`
+  gives his notification token. `{"t":"notice","text"}` tells him something (update needed, too many
+  messages); `{"t":"share-end"}` ends the share (he deletes its keys).
+- **Questions:** the Stop hook sends `to` for `<speak to="Max">`. If Max is a (non-listening) guest
+  of that session the host sends him `{"t":"ask","id","session","label","text","replies","seconds":120}`
+  (+ an alert push; resent when he reconnects); he answers `{"t":"answer","id","text"}` → the
+  session gets `[Antwort von Max · <role>]\n<text>`, or `{"t":"answer","id","pass":true}`. Passed on,
+  unanswered after 120 s, or he is gone → the turn goes to Sir's voice like any update, prefixed
+  "Max hat nicht geantwortet, Sir." / "Max gibt die Frage an Sie weiter, Sir."; `{"t":"ask-end","id"}`
+  closes it on his phone.
+- History items carry `by: <name>` for a guest's message or answer (parsed from those prefixes).
