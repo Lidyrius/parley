@@ -94,6 +94,12 @@ struct ApproveJoinView: View {
                         Avatar(name: request.name, size: 56)
                         Text("\(request.name) möchte beitreten").font(.title2.bold()).multilineTextAlignment(.center)
                         Text("Session „\(request.label)“ · über Ihren Link").font(.subheadline).foregroundStyle(.secondary)
+                        if let code = request.code {
+                            Label("\(request.device.map { $0.isEmpty ? "" : $0 + " · " } ?? "")Prüfcode \(code)", systemImage: "checkmark.shield")
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(SessionState.idle.ink)
+                            Text("Derselbe Code steht auf dem Handy des Gastes.").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 6)
@@ -216,6 +222,9 @@ struct GuestSection: View {
                                 Text("Warte, bis \(g.host.isEmpty ? "der Gastgeber" : g.host) Sie hereinlässt …")
                                     .font(.subheadline).foregroundStyle(.secondary)
                             }
+                            Label("Prüfcode \(g.code)", systemImage: "checkmark.shield")
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(SessionState.idle.ink)
                         } else if let s = sessions.first {
                             Button { open(s.id) } label: {
                                 HStack(spacing: 12) {

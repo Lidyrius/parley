@@ -52,13 +52,16 @@ struct JoinRequest: Identifiable, Equatable, Sendable, Decodable {
     var session: String
     var label: String
     var name: String
+    var device: String? = nil
+    var code: String? = nil         // four digits the guest sees too (from his key)
 }
 
 /// v7: Sir let the guest in — the fresh room he moves to, and what he may do (`move` frame).
+/// The fresh room is sealed to the guest's own key: `pub` is the host's half, `box` the room.
 struct ShareMove: Equatable, Sendable, Decodable {
-    var r: String
-    var k: String
-    var e: String
+    var share: String
+    var pub: String
+    var box: String
     var role: String?
     var listen: Bool?
 }
@@ -219,6 +222,8 @@ enum Frame: Equatable, Sendable {
     /// v7: Sir let us in — move to the fresh room (guest side); the share is over.
     case shareMove(ShareMove)
     case shareEnd
+    /// v7: a short message from the host for this phone (e.g. too many messages).
+    case notice(String)
     /// v6: the host opened snapshot `id` — what became of each session.
     case snapshotOpened(id: String, results: [SnapshotResult])
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
@@ -258,6 +263,9 @@ enum Frame: Equatable, Sendable {
             guard let w = try? decoder.decode(ShareMove.self, from: data) else { return .other(head.t) }
             return .shareMove(w)
         case "share-end": return .shareEnd
+        case "notice":
+            guard let w = try? decoder.decode(NoticeWire.self, from: data) else { return .other(head.t) }
+            return .notice(w.text)
         case "snapshot":
             guard let w = try? decoder.decode(SnapshotWire.self, from: data) else { return .other(head.t) }
             return .snapshotOpened(id: w.id, results: w.results.items)
@@ -277,6 +285,7 @@ enum Frame: Equatable, Sendable {
     private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
     private struct ShareLinkWire: Decodable { let id: String; let session: String; let link: String }
+    private struct NoticeWire: Decodable { let text: String }
     private struct SnapshotWire: Decodable { let id: String; let results: Lossy<SnapshotResult> }
     /// `{"t":"palette","name","note","alwaysDark","colors":{role:["#light","#dark"]}}` — every role
     /// present, else no palette.
@@ -379,7 +388,9 @@ enum Outgoing {
         encode(["t": .s("share"), "op": .s("approve"), "id": .s(id), "role": .s(role), "listen": .b(listen), "full": .b(full), "mine": .s(mine)])
     }
     static func shareRemove(id: String) -> String { encode(["t": .s("share"), "op": .s("remove"), "id": .s(id)]) }
-    static func join(name: String) -> String { encode(["t": .s("join"), "name": .s(name)]) }
+    static func join(name: String, device: String, pub: String) -> String {
+        encode(["t": .s("join"), "name": .s(name), "device": .s(device), "pub": .s(pub)])
+    }
     /// Can't talk now (on the ringing screen): ring again in `after` s, or nil = I'll call back.
     static func later(after: Int?) -> String {
         after.map { encode(["t": .s("later"), "after": .i($0)]) } ?? encode(["t": .s("later")])

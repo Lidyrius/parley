@@ -149,8 +149,8 @@ enum RelayFrame {
             return f["kind"] as? String == "alert" ? .alert(token: token.lowercased(), env: env) : .push(token: token.lowercased(), env: env)
         case "hello":
             return .hello
-        case "join":   // v7: a guest on a share's room says who he is
-            return .join(name: f["name"] as? String ?? "")
+        case "join":   // v7: a guest on a share's room says who he is, with his share key
+            return .join(name: f["name"] as? String ?? "", device: f["device"] as? String ?? "", pub: f["pub"] as? String ?? "")
         case "share":  // v7: Sir shares a session, lets a guest in, ends a share
             let id = f["id"] as? String ?? ""
             guard !id.isEmpty else { return nil }
@@ -266,7 +266,7 @@ enum PhoneEvent: Equatable, Sendable {
     case shareCreate(session: String)
     case shareApprove(id: String, role: String, listen: Bool, full: Bool, mine: String?)
     case shareRemove(String)
-    case join(name: String)
+    case join(name: String, device: String, pub: String)
 }
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never

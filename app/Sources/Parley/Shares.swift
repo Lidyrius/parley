@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // Shared sessions (docs/IPHONE.md → v7, docs/design/screens/ios/60-multiplayer): Sir shares one
@@ -8,6 +9,8 @@ import Foundation
 struct Share: Codable, Equatable {
     struct Guest: Codable, Equatable {
         var name: String
+        var device = ""         // what the guest's phone calls itself
+        var pub = ""            // his share key (P-256, x9.63, base64url): the move is sealed to it
         var role = ""
         var listen = false      // "nur zuhören": reads, never writes
         var full = false        // also sees the history from before he joined
@@ -77,6 +80,47 @@ enum Shares {
         "[Nachricht von \(g.name)\(g.role.isEmpty ? "" : " · \(g.role)")]\n"
     }
 
+    // S4: a guest can't pose as Parley, as Sir or as another guest — the markers in his text are
+    // defused, and a name is one plain line.
+    static func defuse(_ text: String) -> String {
+        var t = text
+        for (a, b) in [("[Parley", "(Parley"), ("[Nachricht von", "(Nachricht von"), ("[Antwort von", "(Antwort von"),
+                       ("<speak", "‹speak"), ("</speak", "‹/speak")] {
+            t = t.replacingOccurrences(of: a, with: b, options: .caseInsensitive)
+        }
+        return t
+    }
+
+    static func cleanName(_ raw: String) -> String {
+        let kept = raw.unicodeScalars.filter { !CharacterSet.newlines.contains($0) && !"[]<>(){}·".unicodeScalars.contains($0) }
+        let name = String(String.UnicodeScalarView(kept)).trimmingCharacters(in: .whitespaces).prefix(40)
+        return name.isEmpty ? "Gast" : String(name)
+    }
+
+    // S3: four digits both sides see (the guest's join screen, Sir's approval) — from his key.
+    static func code(_ pub: String) -> String {
+        let d = SHA256.hash(data: Data(pub.utf8))
+        let n = d.prefix(4).reduce(0) { $0 << 8 | UInt32($1) } % 10_000
+        return String(format: "%04u", n)
+    }
+
+    // S1: the fresh room only for the invited guest — sealed (ECDH P-256 + HKDF-SHA256 → AES-GCM)
+    // to the key he sent with his join. Others in the invite room can't open it.
+    static func sealMove(_ s: Share, to pub: String) -> (pub: String, box: String)? {
+        guard let raw = RelaySeal.base64url(pub), let theirs = try? P256.KeyAgreement.PublicKey(x963Representation: raw) else { return nil }
+        let mine = P256.KeyAgreement.PrivateKey()
+        guard let shared = try? mine.sharedSecretFromKeyAgreement(with: theirs) else { return nil }
+        let key = moveKey(shared, share: s.id)
+        struct Room: Encodable { let r, k, e: String }
+        guard let plain = try? JSONEncoder().encode(Room(r: s.room, k: s.secret, e: s.key)),
+              let box = try? AES.GCM.seal(plain, using: key).combined else { return nil }
+        return (RelayLink.base64url(mine.publicKey.x963Representation), RelayLink.base64url(box))
+    }
+
+    static func moveKey(_ shared: SharedSecret, share: String) -> SymmetricKey {
+        shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data(share.utf8), sharedInfo: Data("parley-share-move".utf8), outputByteCount: 32)
+    }
+
     static func author(_ text: String?) -> (String?, String?) {
         guard let text, text.hasPrefix("[Nachricht von "), let end = text.firstIndex(of: "]") else { return (nil, text) }
         let head = text[text.index(text.startIndex, offsetBy: 15)..<end]
@@ -109,14 +153,21 @@ enum Shares {
     }
 
     static func askFrame(_ s: Share) -> String {
-        struct Wire: Encodable { let t = "join"; let id, session, label, name: String }
-        return ControlServer.encode(Wire(id: s.id, session: s.session, label: s.label, name: s.guest?.name ?? ""))
+        struct Wire: Encodable { let t = "join"; let id, session, label, name, device, code: String }
+        return ControlServer.encode(Wire(id: s.id, session: s.session, label: s.label, name: s.guest?.name ?? "",
+                                         device: s.guest?.device ?? "", code: Shares.code(s.guest?.pub ?? "")))
     }
 
-    // Frames to the guest: move to a fresh room (after Sir's yes), the share is over.
-    static func moveFrame(_ s: Share) -> String {
-        struct Wire: Encodable { let t = "move"; let r, k, e: String; let role: String; let listen: Bool }
-        return ControlServer.encode(Wire(r: s.room, k: s.secret, e: s.key, role: s.guest?.role ?? "", listen: s.guest?.listen ?? false))
+    // Frames to the guest: move to a fresh room (after Sir's yes, sealed to him), the share's id
+    // (his answers name it), the share is over, a short notice.
+    static func moveFrame(_ s: Share, sealed: (pub: String, box: String)) -> String {
+        struct Wire: Encodable { let t = "move"; let share, pub, box, role: String; let listen: Bool }
+        return ControlServer.encode(Wire(share: s.id, pub: sealed.pub, box: sealed.box, role: s.guest?.role ?? "", listen: s.guest?.listen ?? false))
+    }
+
+    static func notice(_ text: String) -> String {
+        struct Wire: Encodable { let t = "notice"; let text: String }
+        return ControlServer.encode(Wire(text: text))
     }
 
     static let endFrame = #"{"t":"share-end"}"#
@@ -134,6 +185,8 @@ final class ShareHub: @unchecked Sendable {
     private let relayURL: () -> String
     private var shares: [Share]
     private var clients: [String: RelayClient] = [:]
+    private var said: [String: [Date]] = [:]   // S6: each guest's recent messages
+    static let sayLimit = 10                    // … per minute
 
     var toSir: (@Sendable (String) -> Void)?              // a frame to Sir's phone
     var notify: (@Sendable (String, String) -> Void)?     // a notification on the Mac (title, body)
@@ -180,7 +233,7 @@ final class ShareHub: @unchecked Sendable {
     func approve(_ id: String, role: String, listen: Bool, full: Bool, mine: String?) {
         queue.sync {
             guard let i = self.shares.firstIndex(where: { $0.id == id }), self.shares[i].state == "asking",
-                  let old = self.clients[id] else { return }
+                  let old = self.clients[id], let pub = self.shares[i].guest?.pub, !pub.isEmpty else { return }
             var s = self.shares[i]
             s.guest?.role = role.trimmingCharacters(in: .whitespacesAndNewlines)
             s.guest?.listen = listen
@@ -189,10 +242,11 @@ final class ShareHub: @unchecked Sendable {
             s.mine = mine?.trimmingCharacters(in: .whitespacesAndNewlines)
             s.state = "active"
             Shares.room(&s)
+            guard let sealed = Shares.sealMove(s, to: pub) else { Log.write("share: the guest's key is unusable"); return }
             self.shares[i] = s
             self.store()
             self.open(s)                                  // claims the new room first
-            old.sendText(Shares.moveFrame(s))             // then the guest follows over the old key
+            old.sendText(Shares.moveFrame(s, sealed: sealed))   // then only the invited guest can follow
             self.queue.asyncAfter(deadline: .now() + 5) { old.stop() }
             self.server.deliverRouted(id: s.session, instruction: Shares.joined(s))
             self.tag()
@@ -221,10 +275,18 @@ final class ShareHub: @unchecked Sendable {
         queue.sync {
             guard let s = self.shares.first(where: { $0.id == id }), let client = self.clients[id] else { return }
             switch event {
-            case .join(let name) where s.state != "active":
+            case .join(let name, let device, let pub) where s.state != "active":
+                // S2: one join per link — whoever asks first; Sir decides on him.
+                guard s.state == "invited" else {
+                    if s.guest?.pub != pub { Log.write("share: a second join on \(s.label)'s link — ignored") }
+                    return
+                }
+                guard let raw = RelaySeal.base64url(pub), (try? P256.KeyAgreement.PublicKey(x963Representation: raw)) != nil else {
+                    client.sendText(Shares.notice("Bitte aktualisieren Sie Parley, um beizutreten."))
+                    return
+                }
                 guard let i = self.shares.firstIndex(where: { $0.id == id }) else { return }
-                let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
-                self.shares[i].guest = Share.Guest(name: clean.isEmpty ? "Gast" : clean)
+                self.shares[i].guest = Share.Guest(name: Shares.cleanName(name), device: String(device.prefix(40)), pub: pub)
                 self.shares[i].state = "asking"
                 self.store()
                 let asked = self.shares[i]
@@ -248,8 +310,14 @@ final class ShareHub: @unchecked Sendable {
                 }
             case .say(let sid, let text) where s.state == "active" && sid == s.session && !(s.guest?.listen ?? true):
                 guard let g = s.guest else { return }
+                let recent = (self.said[id] ?? []).filter { self.now().timeIntervalSince($0) < 60 }
+                guard recent.count < Self.sayLimit else {   // S6
+                    client.sendText(Shares.notice("Zu viele Nachrichten – bitte einen Moment warten."))
+                    return
+                }
+                self.said[id] = recent + [self.now()]
                 Log.write("share: \(g.name) wrote in \(s.label) (\(text.count) chars)")
-                self.server.deliverRouted(id: sid, instruction: Shares.prefix(g) + text)
+                self.server.deliverRouted(id: sid, instruction: Shares.prefix(g) + Shares.defuse(text))
             default:
                 break   // anything else (calls, resume, Sir's own controls) isn't a guest's
             }

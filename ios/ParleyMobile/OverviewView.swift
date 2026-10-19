@@ -66,7 +66,7 @@ struct OverviewView: View {
             .sheet(isPresented: $showsSettings) { SettingsView() }
             .sheet(isPresented: $showsSnapshots) { SnapshotsSheet() }
             .sheet(item: Binding(get: { model.joinRequests.first }, set: { _ in })) { ApproveJoinView(request: $0) }
-            .alert("Freigabe beendet", isPresented: Binding(get: { model.guestNotice != nil }, set: { if !$0 { model.guestNotice = nil } })) {
+            .alert("Parley", isPresented: Binding(get: { model.guestNotice != nil }, set: { if !$0 { model.guestNotice = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(model.guestNotice ?? "") }
             .sheet(item: $detail) { d in

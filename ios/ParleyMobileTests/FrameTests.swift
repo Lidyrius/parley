@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 import UserNotifications
@@ -448,15 +449,38 @@ struct FrameTests {
         #expect(snap.sessions[0].shared == [ShareTag(id: "s1", name: "Max", role: "Marketing")])
         #expect(Frame.decode(#"{"t":"join","id":"s1","session":"w","label":"Website","name":"Max"}"#)
                 == .joinRequest(JoinRequest(id: "s1", session: "w", label: "Website", name: "Max")))
-        #expect(Frame.decode(#"{"t":"move","r":"R","k":"K","e":"E","role":"Marketing","listen":true}"#)
-                == .shareMove(ShareMove(r: "R", k: "K", e: "E", role: "Marketing", listen: true)))
+        #expect(Frame.decode(#"{"t":"move","share":"s1","pub":"P","box":"B","role":"Marketing","listen":true}"#)
+                == .shareMove(ShareMove(share: "s1", pub: "P", box: "B", role: "Marketing", listen: true)))
         #expect(Frame.decode(#"{"t":"share-end"}"#) == .shareEnd)
         #expect(Frame.decode(#"{"t":"share","id":"s1","session":"w","link":"parley://join?x"}"#) == .shareLink(id: "s1", session: "w", link: "parley://join?x"))
 
         #expect(Outgoing.shareCreate(session: "w") == #"{"id":"w","op":"create","t":"share"}"#)
-        #expect(Outgoing.join(name: "Max") == #"{"name":"Max","t":"join"}"#)
+        #expect(Outgoing.join(name: "Max", device: "iPhone", pub: "P") == #"{"device":"iPhone","name":"Max","pub":"P","t":"join"}"#)
         #expect(Outgoing.shareApprove(id: "s1", role: "M", listen: false, full: true, mine: "T")
                 == #"{"full":true,"id":"s1","listen":false,"mine":"T","op":"approve","role":"M","t":"share"}"#)
+    }
+
+    /// The move sealed like the Mac does (Shares.sealMove): only the guest's own key opens it.
+    @Test func guestOpensOnlyItsOwnMove() throws {
+        let g = GuestShare(pairing: Pairing(relay: URL(string: "https://relay.example")!, room: "r", secret: "s", key: "k"),
+                           label: "W", host: "H", name: "Max")
+        let other = GuestShare(pairing: g.pairing, label: "W", host: "H", name: "Mallory")
+        func b64(_ s: String) -> Data {
+            var b = s.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            while b.count % 4 != 0 { b += "=" }
+            return Data(base64Encoded: b)!
+        }
+        let host = P256.KeyAgreement.PrivateKey()
+        let shared = try host.sharedSecretFromKeyAgreement(with: P256.KeyAgreement.PublicKey(x963Representation: b64(g.pub)))
+        let key = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data("share1".utf8),
+                                                 sharedInfo: Data("parley-share-move".utf8), outputByteCount: 32)
+        let box = try AES.GCM.seal(Data(#"{"r":"NEWROOM","k":"NEWSECRET","e":"NEWKEY"}"#.utf8), using: key).combined!
+        let m = ShareMove(share: "share1", pub: GuestShare.base64url(host.publicKey.x963Representation),
+                          box: GuestShare.base64url(box), role: "M", listen: false)
+        #expect(g.open(m)?.room == "NEWROOM" && g.open(m)?.key == "NEWKEY")
+        #expect(other.open(m) == nil)
+        #expect(g.code.count == 4)
+        #expect(GuestShare.code("test-pub") == "6299")   // same vector as the Mac's SharesTests
     }
 }
 

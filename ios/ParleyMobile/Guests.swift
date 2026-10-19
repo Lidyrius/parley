@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import UIKit
 
 /// v7 (docs/IPHONE.md, docs/design/screens/ios/60-multiplayer): someone else's session this phone
 /// joined. Its own room and key — a second relay connection beside (or without) the own Mac's.
@@ -11,6 +13,41 @@ struct GuestShare: Codable, Equatable, Identifiable, Sendable {
     var role = ""
     var listen = false              // "nur zuhören"
     var active = false              // let in (false: waits for the owner's yes)
+    var share = ""                  // the share's id on the owner's Mac (once let in)
+    /// This phone's key for this share (P-256, raw, base64): the move to the fresh room is sealed to it.
+    var secret = P256.KeyAgreement.PrivateKey().rawRepresentation.base64EncodedString()
+
+    var key: P256.KeyAgreement.PrivateKey? { Data(base64Encoded: secret).flatMap { try? .init(rawRepresentation: $0) } }
+    var pub: String { key.map { Self.base64url($0.publicKey.x963Representation) } ?? "" }
+    /// The four digits the owner sees in the request — the same on both sides (Shares.code on the Mac).
+    var code: String { Self.code(pub) }
+
+    static func code(_ pub: String) -> String {
+        let d = SHA256.hash(data: Data(pub.utf8))
+        return String(format: "%04u", d.prefix(4).reduce(UInt32(0)) { $0 << 8 | UInt32($1) } % 10_000)
+    }
+
+    static func base64url(_ d: Data) -> String {
+        d.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// The fresh room from a `move`: opened with this phone's key — nil if it wasn't sealed to it.
+    func open(_ m: ShareMove) -> (room: String, secret: String, key: String)? {
+        func data(_ s: String) -> Data? {
+            var b = s.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            while b.count % 4 != 0 { b += "=" }
+            return Data(base64Encoded: b)
+        }
+        guard let mine = key, let raw = data(m.pub), let theirs = try? P256.KeyAgreement.PublicKey(x963Representation: raw),
+              let shared = try? mine.sharedSecretFromKeyAgreement(with: theirs), let sealed = data(m.box),
+              let box = try? AES.GCM.SealedBox(combined: sealed) else { return nil }
+        let k = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data(m.share.utf8),
+                                               sharedInfo: Data("parley-share-move".utf8), outputByteCount: 32)
+        struct Room: Decodable { let r, k, e: String }
+        guard let plain = try? AES.GCM.open(box, using: k), let room = try? JSONDecoder().decode(Room.self, from: plain) else { return nil }
+        return (room.r, room.k, room.e)
+    }
 }
 
 extension AppModel {
@@ -64,11 +101,15 @@ extension AppModel {
         guard let i = guests.firstIndex(where: { $0.id == id }) else { return }
         switch event {
         case .opened:
-            if !guests[i].active { guestRelays[id]?.send(Outgoing.join(name: guests[i].name)) }
+            if !guests[i].active {
+                guestRelays[id]?.send(Outgoing.join(name: guests[i].name, device: UIDevice.current.name, pub: guests[i].pub))
+            }
         case .frame(.shareMove(let m)):
-            // Let in: the fresh room — the invite's room is dead from here on.
-            guard let moved = try? Pairing.parse(Self.pairLink(guests[i].pairing.relay, m)) else { return }
+            // Let in: the fresh room, sealed to this phone's key — the invite's room is dead from here on.
+            guard !guests[i].active, let room = guests[i].open(m),
+                  let moved = try? Pairing.parse(Self.pairLink(guests[i].pairing.relay, room)) else { return }
             guests[i].pairing = moved
+            guests[i].share = m.share
             guests[i].role = m.role ?? ""
             guests[i].listen = m.listen ?? false
             guests[i].active = true
@@ -78,6 +119,8 @@ extension AppModel {
         case .frame(.shareEnd):
             guestNotice = "\(guests[i].host.isEmpty ? "Die Freigabe" : guests[i].host + " hat die Freigabe") für „\(guests[i].label)“ beendet."
             leave(id)
+        case .frame(.notice(let text)):
+            guestNotice = text
         case .frame(.history), .frame(.image):
             handle(event)   // the same history store as the own sessions (ids don't collide)
         default:
@@ -85,12 +128,12 @@ extension AppModel {
         }
     }
 
-    private static func pairLink(_ relay: URL, _ m: ShareMove) -> String {
+    private static func pairLink(_ relay: URL, _ room: (room: String, secret: String, key: String)) -> String {
         var c = URLComponents()
         c.scheme = "parley"
         c.host = "pair"
-        c.queryItems = [.init(name: "u", value: relay.absoluteString), .init(name: "r", value: m.r),
-                        .init(name: "k", value: m.k), .init(name: "e", value: m.e)]
+        c.queryItems = [.init(name: "u", value: relay.absoluteString), .init(name: "r", value: room.room),
+                        .init(name: "k", value: room.secret), .init(name: "e", value: room.key)]
         return c.string ?? ""
     }
 
