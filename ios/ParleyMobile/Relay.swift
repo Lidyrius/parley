@@ -208,7 +208,7 @@ final class Relay {
             return
         case .peer(let host):
             hostOnline = host
-        case .audio, .ring, .history, .image, .caption, .slides, .palette, .other:
+        case .audio, .ring, .history, .image, .caption, .slides, .palette, .snapshotOpened, .other:
             break
         }
         onEvent(.frame(frame))

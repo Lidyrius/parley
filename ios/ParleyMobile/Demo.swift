@@ -39,12 +39,21 @@ enum Demo {
             #"{"id":"demo-relay","label":"Relay","project":"parley-relay","state":"background","since":\#(ago(203)),"until":null,"voice":false,"resumable":false,"tasks":[{"type":"subagent","description":"Durable Object gegen das Protokoll testen"}],"host":null,"stats":\#(stats(52, 57, 2.31, 9, 4, "Ein Agent prüft das Protokoll, ich melde mich, sobald er fertig ist."))}"#,
             #"{"id":"demo-edge","label":"Edge Army","project":"pmr","state":"parked","since":\#(ago(611)),"until":null,"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(95, 64, 4.02, 18, 7, "Zwei neue Kandidaten gefunden. Weitermachen?"))}"#,
             #"{"id":"demo-website","label":"Website","project":"developaway","state":"queued","since":\#(ago(17)),"until":null,"callback":0,"voice":false,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(12, 9, 0.31, 2, 1, nil))}"#,
-            #"{"id":"demo-notizen","label":"Notizen","project":"notes","state":"idle","since":\#(ago(1260)),"until":null,"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(140, 33, 0.58, 5, 3, "Alles notiert."))}"#,
+            #"{"id":"demo-notizen","label":"Notizen","project":"notes","state":"parked","since":\#(ago(1260)),"until":null,"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(140, 33, 0.58, 5, 3, "Alles notiert."))}"#,
             #"{"id":"demo-doku","label":"Doku","project":"docs","state":"stopped","since":\#(ago(180)),"until":null,"voice":false,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(61, 48, 0.94, 6, 2, "Fertig, die Doku ist aktualisiert."))}"#,
         ]
         let today = #"{"costUsd":13.61,"turns":65,"spokenSeconds":754,"rateLimits":[{"kind":"five_hour","percentUsed":42,"resetsAt":null},{"kind":"seven_day","percentUsed":18,"resetsAt":null}]}"#
         let reminders = #"[{"id":"r1","text":"Lass die Tests laufen und berichte, was rot ist.","to":"Shirts","at":\#(t + 14 * 3_600_000)},{"id":"r2","text":"Deploye auf Staging.","to":"Zentrale","after":"Shirts"}]"#
-        return #"{"t":"sessions","at":\#(t),"sessions":[\#(sessions.joined(separator: ","))],"today":\#(today),"reminders":\#(reminders)}"#
+        func snap(_ id: String, _ name: String, _ hoursAgo: Int64, _ items: [(String, String)]) -> String {
+            let list = items.map { #"{"id":"\#($0.0)","name":"\#($0.1)","cwd":"~/kunden/\#($0.1.lowercased())"}"# }
+            return #"{"id":"\#(id)","name":"\#(name)","at":\#(t - hoursAgo * 3_600_000),"sessions":[\#(list.joined(separator: ","))]}"#
+        }
+        let snapshots = [
+            snap("s1", "Kunde Müller", 2, [("demo-website", "Website"), ("demo-shirts", "Shirts"), ("demo-angebote", "Angebote"), ("demo-doku", "Doku")]),
+            snap("s2", "Parley intern", 26, [("demo-parley", "Parley"), ("demo-relay", "Relay"), ("zentrale", "Zentrale")]),
+            snap("s3", "Recherche", 170, [("gta", "GTA 6 Research"), ("poly", "Polymarket")]),
+        ].joined(separator: ",")
+        return #"{"t":"sessions","at":\#(t),"sessions":[\#(sessions.joined(separator: ","))],"today":\#(today),"reminders":\#(reminders),"snapshots":[\#(snapshots)]}"#
     }
 }
 

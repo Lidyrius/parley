@@ -156,7 +156,9 @@ struct FrameTests {
     @Test func demoFrameDecodes() throws {
         guard case .sessions(let snap)? = Frame.decode(Demo.frame(now: .now)) else { Issue.record("demo frame broken"); return }
         #expect(snap.sessions.count == 8)
-        #expect(Set(snap.sessions.map(\.state)).count == 8)
+        #expect(Set(snap.sessions.map(\.state)).count == 7)     // every state a host sends ("bereit" is gone)
+        #expect(!snap.sessions.contains { $0.state == .idle })
+        #expect(snap.snapshots.count == 3)
         #expect(snap.sessions.contains { $0.state == .waiting && $0.until != nil })
         #expect(snap.sessions.contains { $0.state == .background && !$0.tasks.isEmpty })
         #expect(snap.today?.rateLimits.count == 2)
@@ -402,6 +404,34 @@ struct FrameTests {
         let broken = String(decoding: try JSONSerialization.data(withJSONObject: ["t": "palette", "name": "X", "colors": partial]), as: UTF8.self)
         #expect(Frame.decode(broken) == .other("palette"))
         #expect(Outgoing.paletteSaved("Apple") == #"{"saved":"Apple","t":"palette"}"#)
+    }
+
+    // MARK: v6 Snapshots
+
+    @Test func snapshotsRideAlongAndOpeningAnswers() throws {
+        let json = #"{"t":"sessions","sessions":[],"snapshots":[{"id":"a","name":"Kunde","at":1760000000000,"sessions":[{"id":"s1","name":"Website","cwd":"/x/web"}]},{"name":"no id"}]}"#
+        guard case .sessions(let snap)? = Frame.decode(json) else { Issue.record("not a sessions frame"); return }
+        #expect(snap.snapshots.map(\.name) == ["Kunde"])
+        #expect(snap.snapshots[0].sessions == [SavedSnapshot.Item(id: "s1", name: "Website", cwd: "/x/web")])
+        if case .sessions(let old)? = Frame.decode(#"{"t":"sessions","sessions":[]}"#) { #expect(old.snapshots.isEmpty) }
+
+        let reply = #"{"t":"snapshot","id":"a","name":"Kunde","results":[{"id":"s1","name":"Website","result":"resumed"},{"id":"s2","name":"Shop","result":"later"}]}"#
+        guard case .snapshotOpened(let id, let results)? = Frame.decode(reply) else { Issue.record("not a snapshot frame"); return }
+        #expect(id == "a")
+        #expect(results.map(\.kind) == [.resumed, nil])        // unknown result: shown as missing
+
+        #expect(Outgoing.snapshotSave(name: "Kunde", ids: ["s1", "s2"]) == #"{"ids":["s1","s2"],"name":"Kunde","op":"save","t":"snapshot"}"#)
+        #expect(Outgoing.snapshotOpen(id: "a") == #"{"id":"a","op":"open","t":"snapshot"}"#)
+        #expect(Outgoing.snapshotDelete(id: "a") == #"{"id":"a","op":"delete","t":"snapshot"}"#)
+    }
+
+    @Test func snapshotDates() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Europe/Berlin")!
+        let now = 1_760_869_200_000.0                              // 19.10.2025 12:20 Berlin
+        #expect(Fmt.snapshotDate(now - 3_600_000 * 2, now: now, calendar: cal) == "heute 10:20")
+        #expect(Fmt.snapshotDate(now - 3_600_000 * 20, now: now, calendar: cal) == "gestern")
+        #expect(Fmt.snapshotDate(now - 3_600_000 * 24 * 7, now: now, calendar: cal) == "12.10.")
     }
 }
 

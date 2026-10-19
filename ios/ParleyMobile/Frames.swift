@@ -67,7 +67,30 @@ struct Snapshot: Equatable, Sendable {
     var sessions: [Session] = []
     var today: Today?
     var reminders: [ReminderRow] = []
+    var snapshots: [SavedSnapshot] = []
     var at: Double?
+}
+
+/// v6: a set of sessions kept under a name (the "Snapshots" sheet) — opened again in one go.
+struct SavedSnapshot: Identifiable, Hashable, Sendable, Decodable {
+    struct Item: Hashable, Sendable, Decodable {
+        var id: String
+        var name: String
+        var cwd: String
+    }
+    var id: String
+    var name: String
+    var at: Double                  // epoch ms, host clock
+    var sessions: [Item]
+}
+
+/// v6: what opening a snapshot did to one of its sessions (`snapshot` frame from the host).
+struct SnapshotResult: Equatable, Sendable, Decodable {
+    enum Kind: String, Sendable { case running, resumed, started, missing }
+    var id: String
+    var name: String
+    var result: String
+    var kind: Kind? { Kind(rawValue: result) }
 }
 
 /// One entry of a session's history (`history` frame, v3): what was typed or said, Claude's
@@ -163,6 +186,8 @@ enum Frame: Equatable, Sendable {
     case slides([Slide])
     /// v4: a colour palette made by voice (the Zentrale researched it) — save it and switch to it.
     case palette(Palette)
+    /// v6: the host opened snapshot `id` — what became of each session.
+    case snapshotOpened(id: String, results: [SnapshotResult])
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
 
     /// nil for anything that is not a JSON message with a `t` (e.g. the relay's `pong`).
@@ -190,6 +215,9 @@ enum Frame: Equatable, Sendable {
             guard let w = try? decoder.decode(CaptionWire.self, from: data), w.words.count == w.at.count, !w.words.isEmpty
             else { return .other(head.t) }
             return .caption(Caption(words: w.words, starts: w.at, end: w.end, last: w.last ?? false))
+        case "snapshot":
+            guard let w = try? decoder.decode(SnapshotWire.self, from: data) else { return .other(head.t) }
+            return .snapshotOpened(id: w.id, results: w.results.items)
         case "image":
             guard let w = try? decoder.decode(ImageWire.self, from: data) else { return .other(head.t) }
             return .image(key: w.key, data: w.data.flatMap { Data(base64Encoded: $0) })
@@ -205,6 +233,7 @@ enum Frame: Equatable, Sendable {
 
     private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
+    private struct SnapshotWire: Decodable { let id: String; let results: Lossy<SnapshotResult> }
     /// `{"t":"palette","name","note","alwaysDark","colors":{role:["#light","#dark"]}}` — every role
     /// present, else no palette.
     private struct PaletteWire: Decodable {
@@ -294,16 +323,23 @@ enum Outgoing {
     static let barge = encode(["t": .s("barge")])
     /// v4: a palette made by voice is saved (the host stops resending it).
     static func paletteSaved(_ name: String) -> String { encode(["t": .s("palette"), "saved": .s(name)]) }
+    /// v6: keep the sessions `ids` under `name` (the same name again replaces it); open one; delete one.
+    static func snapshotSave(name: String, ids: [String]) -> String {
+        encode(["t": .s("snapshot"), "op": .s("save"), "name": .s(name), "ids": .a(ids)])
+    }
+    static func snapshotOpen(id: String) -> String { encode(["t": .s("snapshot"), "op": .s("open"), "id": .s(id)]) }
+    static func snapshotDelete(id: String) -> String { encode(["t": .s("snapshot"), "op": .s("delete"), "id": .s(id)]) }
     /// Can't talk now (on the ringing screen): ring again in `after` s, or nil = I'll call back.
     static func later(after: Int?) -> String {
         after.map { encode(["t": .s("later"), "after": .i($0)]) } ?? encode(["t": .s("later")])
     }
 
     private enum Value: Encodable {
-        case s(String), b(Bool), i(Int)
+        case s(String), b(Bool), i(Int), a([String])
         func encode(to encoder: Encoder) throws {
             var c = encoder.singleValueContainer()
             switch self {
+            case .a(let v): try c.encode(v)
             case .s(let v): try c.encode(v)
             case .b(let v): try c.encode(v)
             case .i(let v): try c.encode(v)
@@ -426,12 +462,13 @@ extension ReminderRow: Decodable {
 }
 
 extension Snapshot: Decodable {
-    private enum K: String, CodingKey { case sessions, today, reminders, at }
+    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         sessions = (c.lenient(.sessions) as Lossy<Session>?)?.items ?? []
         today = c.lenient(.today)
         reminders = (c.lenient(.reminders) as Lossy<ReminderRow>?)?.items ?? []
+        snapshots = (c.lenient(.snapshots) as Lossy<SavedSnapshot>?)?.items ?? []
         at = c.lenient(.at)
     }
 }
