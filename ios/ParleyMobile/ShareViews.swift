@@ -217,7 +217,11 @@ struct GuestSection: View {
                             Button(g.active ? "Verlassen" : "Abbrechen", role: .destructive) { model.leave(g.id) }
                                 .font(.subheadline)
                         }
-                        if !g.active {
+                        if !g.active, model.guestRelays[g.id]?.failure == .unknownRoom {
+                            // B2: the invite's room is gone — expired, already used, or ended.
+                            Label("Einladung abgelaufen oder schon benutzt. Bitten Sie um einen neuen Link.", systemImage: "link.badge.plus")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        } else if !g.active {
                             HStack(spacing: 10) {
                                 ProgressView()
                                 Text("Warte, bis \(g.host.isEmpty ? "der Gastgeber" : g.host) Sie hereinlässt …")

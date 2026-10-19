@@ -301,7 +301,7 @@ final class ShareHub: @unchecked Sendable {
 
     func ask(share id: String, _ turn: TurnPayload, respond: @escaping (TurnReply) -> Void) {
         queue.async {
-            guard let s = self.shares.first(where: { $0.id == id && $0.state == "active" }), let g = s.guest,
+            guard let s = self.shares.first(where: { $0.id == id && $0.state == "active" }), let g = s.guest, !g.listen,
                   let client = self.clients[id] else {
                 self.voiceForSir?(Self.toSir(turn, why: nil), respond)
                 return

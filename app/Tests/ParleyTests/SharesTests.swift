@@ -229,4 +229,24 @@ final class SharesTests: XCTestCase {
         XCTAssertEqual(got.replies.count, before + 1)                 // (no voice pipeline here: answered at once)
         XCTAssertTrue(hub.questions().isEmpty)
     }
+
+    // S5: a guest reaches his session and his questions — nothing else of Sir's.
+    func testAGuestCannotReachAnythingElse() throws {
+        let (invite, _) = try XCTUnwrap(hub.create(session: "web"))
+        hub.guest(invite.id, .join(name: "Max", device: "", pub: pub))
+        hub.approve(invite.id, role: "", listen: false, full: false, mine: nil)
+        _ = instruction("web")
+        for e: PhoneEvent in [.shareCreate(session: "shop"), .shareRemove(invite.id), .snapshotSave(name: "x", ids: nil),
+                              .snapshotOpen("x"), .resume("shop"), .say(id: "shop", text: "x"), .history(id: "shop", before: nil),
+                              .shareApprove(id: invite.id, role: "Chef", listen: false, full: true, mine: nil), .away(true), .wake] {
+            hub.guest(invite.id, e)
+        }
+        let s = try XCTUnwrap(hub.list().first)
+        XCTAssertEqual(hub.list().count, 1)
+        XCTAssertEqual(s.guest?.role, "")                 // he can't make himself "Chef"
+        XCTAssertEqual(s.guest?.full, false)
+        XCTAssertEqual(instruction("shop"), "")
+        XCTAssertTrue(server.snapshotList().isEmpty)
+        XCTAssertFalse(server.sessionsJSON(only: "web").contains(#""id":"shop""#))
+    }
 }
