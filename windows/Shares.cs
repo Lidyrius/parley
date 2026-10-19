@@ -379,8 +379,9 @@ public sealed class ShareHub
         lock (_gate)
         {
             var i = _shares.FindIndex(x => x.Id == id);
-            if (i < 0 || _shares[i].State != "asking" || !_clients.TryGetValue(id, out old)
+            if (i < 0 || _shares[i].State != "asking" || !_clients.TryGetValue(id, out var current)
                 || _shares[i].Guest is not { Pub.Length: > 0 } g) return;
+            old = current;
             s = _shares[i].Clone();
             s.Guest!.Role = role.Trim();
             s.Guest.Listen = listen;
