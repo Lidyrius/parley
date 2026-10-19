@@ -34,7 +34,7 @@ cp -R "$ROOT/third_party/mediaremote-adapter" "$APP/Contents/Resources/"
 # The relay's source: setup step 7 ("Eigenes Relais · 1 Klick") deploys it with wrangler.
 mkdir -p "$APP/Contents/Resources/relay"
 cp -R "$ROOT/relay/src" "$ROOT/relay/wrangler.jsonc" "$ROOT/relay/package.json" "$ROOT/relay/package-lock.json" \
-  "$ROOT/relay/tsconfig.json" "$ROOT/relay/worker-configuration.d.ts" "$APP/Contents/Resources/relay/"
+  "$ROOT/relay/tsconfig.json" "$APP/Contents/Resources/relay/"
 
 # The app icon: Icon Composer file (light, dark, clear, tinted) → Assets.car + Parley.icns.
 xcrun actool "$ROOT/app/AppIcon/Parley.icon" --compile "$APP/Contents/Resources" --platform macosx \
