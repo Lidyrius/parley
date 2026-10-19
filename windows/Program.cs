@@ -33,6 +33,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _awayStatus = new("Unterwegs-Modus an") { Enabled = false, Visible = false };
     private readonly ToolStripMenuItem _snapshots = new("Snapshots");
     private RelayClient? _relay;
+    private readonly ShareHub _shares;   // v7: sessions shared with a guest (Shares.cs)
 
     public TrayApp()
     {
@@ -65,10 +66,19 @@ internal sealed class TrayApp : ApplicationContext
         };
         _pipeline.Route = (text, config) => _server.Delivery.Route(text, config);
         PhoneCall.LoadSettings(Config.Load());
+        // v7: shared sessions — Sir's phone hears who asks to join; a guest's question
+        // (<speak to="Max">) goes to him, and unanswered comes back to Sir's voice.
+        _shares = new ShareHub(_server)
+        {
+            ToSir = frame => _ = PhoneCall.Reply(frame),
+            Notify = Notifier.Notify,
+            Push = (token, env, title, body, session) => _ = Apns.SendAlertTo(token, env, title, body, session),
+        };
+        _server.AskGuest = (id, turn) => _shares.AskGuest(id, turn);
 
         var menu = new ContextMenuStrip();
         // Resumable (parked) sessions are inserted at the top on open.
-        menu.Opening += (_, _) => { RefreshParkedMenu(menu); RefreshSnapshotsMenu(); RefreshRelayStatus(); };
+        menu.Opening += (_, _) => { RefreshParkedMenu(menu); RefreshSnapshotsMenu(); RefreshSharesMenu(menu); RefreshRelayStatus(); };
         // Snapshots (Snapshots.cs), below the parked ones: rebuilt on open.
         menu.Items.Add(_snapshots);
         menu.Items.Add(new ToolStripSeparator());
@@ -170,8 +180,9 @@ internal sealed class TrayApp : ApplicationContext
             MessageBox.Show($"Parley konnte Port 8787 nicht öffnen: {e.Message}", "Parley");
         }
         StartRelay();
+        _shares.Start();
         _activityTimer = new System.Threading.Timer(_ => TickLiveActivity(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
-        _watchdogTimer = new System.Threading.Timer(_ => { TickWatchdog(); _server.TickReminders(); }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        _watchdogTimer = new System.Threading.Timer(_ => { TickWatchdog(); _server.TickReminders(); _shares.Tick(); }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     // ---- Unterwegs when the PC is locked ------------------------------------------------
@@ -390,6 +401,16 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneSnapshotDelete delete:
                 _server.DeleteSnapshot(delete.Id);
                 break;
+            // v7: shared sessions — Sir creates the invite (the link goes back), lets the guest in, ends it.
+            case PhoneShareCreate create:
+                if (_shares.Create(create.Session) is { } made) _ = PhoneCall.Reply(Shares.LinkFrame(made.Share, made.Link));
+                break;
+            case PhoneShareApprove approve:
+                _shares.Approve(approve.Id, approve.Role, approve.Listen, approve.Full, approve.Mine);
+                break;
+            case PhoneShareRemove remove:
+                _shares.Remove(remove.Id);
+                break;
         }
     }
 
@@ -497,6 +518,29 @@ internal sealed class TrayApp : ApplicationContext
         var save = new ToolStripMenuItem("Aktuellen Stand sichern …");
         save.Click += (_, _) => SaveSnapshot();
         _snapshots.DropDownItems.Add(save);
+    }
+
+    // "Geteilt" (as the macOS menu's section), below the Snapshots: each share a guest asked for or
+    // joined — "Max · Website", "fragt an" while he waits for Sir — with "Entfernen".
+    private void RefreshSharesMenu(ContextMenuStrip menu)
+    {
+        for (var i = menu.Items.Count - 1; i >= 0; i--)
+            if (menu.Items[i].Tag as string == "shared") menu.Items.RemoveAt(i);
+        var list = _shares.List().Where(x => x.State != "invited").ToList();
+        if (list.Count == 0) return;
+        var idx = menu.Items.IndexOf(_snapshots) + 1;
+        menu.Items.Insert(idx++, new ToolStripSeparator { Tag = "shared" });
+        menu.Items.Insert(idx++, new ToolStripMenuItem("Geteilt") { Enabled = false, Tag = "shared" });
+        foreach (var s in list)
+        {
+            var text = $"{s.Guest?.Name ?? "Gast"} · {s.Label}" + (s.State == "asking" ? " — fragt an" : "");
+            var item = new ToolStripMenuItem(text.Replace("&", "&&")) { Tag = "shared" };
+            var remove = new ToolStripMenuItem("Entfernen");
+            var id = s.Id;
+            remove.Click += (_, _) => Task.Run(() => _shares.Remove(id));
+            item.DropDownItems.Add(remove);
+            menu.Items.Insert(idx++, item);
+        }
     }
 
     // "Aktuellen Stand sichern …": a name, then every running session under it. As macOS (NSAlert).

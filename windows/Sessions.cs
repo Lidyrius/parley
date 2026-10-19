@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Parley;
 
@@ -536,8 +537,58 @@ public sealed class SessionRegistry
             return _entries.TryGetValue(id, out var e) ? (e.Label, e.Project) : null;
     }
 
+    // ---- shared sessions (Shares.cs keeps these current) ----------------------------------
+
+    // One guest of a session, as its row shows him.
+    public sealed record ShareTag(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("role")] string Role);
+
+    private Dictionary<string, List<ShareTag>> _shared = new();   // by session: who it is shared with
+    private readonly Dictionary<string, string> _asking = new();  // by session: a question waits for this guest
+
+    public void SetShared(Dictionary<string, List<ShareTag>> tags)
+    {
+        lock (_gate) _shared = tags;
+    }
+
+    public void SetAsking(string id, string? guest)
+    {
+        lock (_gate)
+        {
+            if (guest is null) _asking.Remove(id);
+            else _asking[id] = guest;
+        }
+    }
+
+    // The guest of session `id` called `name` (any case), if it is shared with him.
+    public ShareTag? SharedGuest(string id, string name)
+    {
+        lock (_gate)
+            return _shared.TryGetValue(id, out var list)
+                ? list.FirstOrDefault(g => string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase)) : null;
+    }
+
+    private sealed record Row(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("label")] string Label,
+        [property: JsonPropertyName("project")] string Project,
+        [property: JsonPropertyName("state")] string State,
+        [property: JsonPropertyName("since")] long Since,
+        [property: JsonPropertyName("until")] long? Until,
+        [property: JsonPropertyName("callback")] long? Callback,
+        [property: JsonPropertyName("voice")] bool Voice,
+        [property: JsonPropertyName("resumable")] bool Resumable,
+        [property: JsonPropertyName("tasks")] List<BackgroundTask> Tasks,
+        [property: JsonPropertyName("host")] string? Host,
+        [property: JsonPropertyName("shared"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<ShareTag>? Shared,
+        [property: JsonPropertyName("asking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Asking,
+        [property: JsonPropertyName("stats")] object Stats);
+
     // GET /sessions — voice holder first, then alive sessions by label, stopped last.
-    public string Json()
+    // `only`: a guest's view (Shares.cs) — that one session, nothing else of Sir's.
+    public string Json(string? only = null)
     {
         lock (_gate)
         {
@@ -545,23 +596,21 @@ public sealed class SessionRegistry
             var active = _activeId;
             int Rank(Entry e) => e.Id == active ? 0 : e.State == "stopped" ? 2 : 1;
             var rows = _entries.Values
+                .Where(e => only is null || e.Id == only)
                 .OrderBy(Rank)
                 .ThenBy(e => e.Label, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(e => e.Id, StringComparer.Ordinal)
-                .Select(e => new
-                {
-                    id = e.Id,
-                    label = e.Label,
-                    project = e.Project,
-                    state = e.State,
-                    since = Ms(e.Since),
-                    until = e.State == "waiting" && e.WaitUntil is { } u ? Ms(u) : (long?)null,
-                    callback = e.CallbackAt is { } cb ? (cb == DateTime.MaxValue ? 0 : Ms(cb)) : (long?)null,
-                    voice = e.Id == active,
-                    resumable = Resumable(e),
-                    tasks = e.Tasks,
-                    host = DesktopSessions.Resolve(e.Id, e.Host),
-                    stats = new
+                .Select(e => new Row(
+                    e.Id, e.Label, e.Project, e.State, Ms(e.Since),
+                    e.State == "waiting" && e.WaitUntil is { } u ? Ms(u) : null,
+                    e.CallbackAt is { } cb ? (cb == DateTime.MaxValue ? 0 : Ms(cb)) : null,
+                    e.Id == active,
+                    only is null && Resumable(e),
+                    e.Tasks,
+                    only is null ? DesktopSessions.Resolve(e.Id, e.Host) : null,
+                    _shared.TryGetValue(e.Id, out var tags) && tags.Count > 0 ? tags : null,
+                    _asking.TryGetValue(e.Id, out var asking) ? asking : null,
+                    new
                     {
                         startedAt = (long?)Ms(e.StartedAt ?? e.FirstSeen),
                         contextPercent = e.ContextPercent,
@@ -569,9 +618,16 @@ public sealed class SessionRegistry
                         turns = e.Turns,
                         replies = e.Replies,
                         lastLine = e.LastLine,
-                    },
-                })
+                    }))
                 .ToList();
+            if (only is not null)
+                return JsonSerializer.Serialize(new
+                {
+                    sessions = rows,
+                    today = new { costUsd = 0.0, turns = 0, spokenSeconds = 0, rateLimits = new List<RateLimit>() },
+                    reminders = new List<object>(),
+                    snapshots = new List<object>(),
+                });
             var day = _daily.Snapshot();
             var today = new
             {

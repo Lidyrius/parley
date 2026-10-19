@@ -146,6 +146,22 @@ public sealed class Server
                 Sessions.Queued(id, turn.Label ?? "", turn.Project, turn.Cwd);
                 Delivery.ClaimName(id, turn.Cwd);
                 if (Sessions.Name(id) is { } own) turn.Label = own;   // its own name: announced, rung, shown
+                // v7: <speak to="Max"> and Max is a guest of this session — the question goes to him
+                // (Shares.cs), not through Sir's voice; it comes back here if he doesn't answer.
+                if (turn.To is { Length: > 0 } to && turn.WantsListen && AskGuest is { } ask && Sessions.SharedGuest(id, to) is { } guest)
+                {
+                    Sessions.SetAsking(id, guest.Name);
+                    GuestOutcome outcome;
+                    try { outcome = await ask(guest.Id, turn); }
+                    finally { Sessions.SetAsking(id, null); }
+                    if (outcome.Answer is { } answer)
+                    {
+                        Sessions.Finished(id, answer, false, 0);
+                        await Respond(ctx, 200, TurnJson(answer, false, 0, ""));
+                        return;
+                    }
+                    turn = outcome.ForSir ?? turn;   // unanswered: Sir's voice, like any update
+                }
                 using var hold = PhoneCall.Hold();   // released after the reply — never leaks on an error
                 Interlocked.Increment(ref _queued);
                 if (_turnGate.CurrentCount == 0)   // another turn is active → this one waits
@@ -414,6 +430,14 @@ public sealed class Server
             try { ctx.Response.Abort(); } catch { }
         }
     }
+
+    // ---- shared sessions (Shares.cs) -----------------------------------------------------
+
+    // v7: the share hub takes a guest's question (share id, turn) → his answer, or the turn for Sir.
+    public Func<string, TurnPayload, Task<GuestOutcome>>? AskGuest;
+
+    // A guest's words (or the note that he joined / left) for a session — as a routed instruction.
+    public void DeliverRouted(string id, string instruction) => Deliver(id, instruction);
 
     // ---- Wiedervorlage (Reminders.cs) ----------------------------------------------------
 

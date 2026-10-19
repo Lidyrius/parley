@@ -21,7 +21,8 @@ public static class Transcript
         [property: JsonPropertyName("who")] string? Who = null,
         [property: JsonPropertyName("at")] double? At = null,
         [property: JsonPropertyName("add")] int? Add = null,     // tool: lines a Write / Edit added
-        [property: JsonPropertyName("del")] int? Del = null);    //       and removed
+        [property: JsonPropertyName("del")] int? Del = null,     //       and removed
+        [property: JsonPropertyName("by")] string? By = null);   // user / voice: a guest's name (Shares.cs), null = Sir
 
     public const int MaxItems = 60;
     public const int MaxText = 2500;
@@ -102,8 +103,11 @@ public static class Transcript
                 if (Str(e, "uuid") is not { } uuid || !e.TryGetProperty("message", out var msg) || msg.ValueKind != JsonValueKind.Object) continue;
                 double? at = Str(e, "timestamp") is { } ts && DateTimeOffset.TryParse(ts, out var d) ? d.ToUnixTimeMilliseconds() : null;
                 var n = 0;
-                void Add(string k, string? text = null, string? who = null, (int, int)? diff = null) =>
-                    output.Add(new Item($"{uuid}#{n++}", k, text is null ? null : Clip(text), who, at, diff?.Item1, diff?.Item2));
+                void Add(string k, string? text = null, string? who = null, (int, int)? diff = null)
+                {
+                    var (by, shown) = k is "user" or "voice" ? Shares.Author(text) : (null, text);
+                    output.Add(new Item($"{uuid}#{n++}", k, shown is null ? null : Clip(shown), who, at, diff?.Item1, diff?.Item2, by));
+                }
                 msg.TryGetProperty("content", out var content);
 
                 if (type == "assistant")

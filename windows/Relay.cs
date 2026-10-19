@@ -134,6 +134,7 @@ public static class RelayFrame
                 || !root.TryGetProperty("t", out var t) || t.ValueKind != JsonValueKind.String) return null;
             string? Str(string key) =>
                 root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            bool Flag(string key) => root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.True;
             switch (t.GetString())
             {
                 case "resume":
@@ -198,6 +199,20 @@ public static class RelayFrame
                         case "delete": return snap.Length > 0 ? new PhoneSnapshotDelete(snap) : null;
                         default: return null;
                     }
+                case "join":   // v7: a guest on a share's room says who he is, with his share key
+                    return new PhoneJoin(Str("name") ?? "", Str("device") ?? "", Str("pub") ?? "");
+                case "answer": // v7: a guest answers his question, or passes it on to Sir
+                    if (Str("id") is not { Length: > 0 } aid) return null;
+                    return new PhoneAnswer(aid, Str("text") ?? "", Flag("pass"));
+                case "share":  // v7: Sir shares a session, lets a guest in, ends a share
+                    if (Str("id") is not { Length: > 0 } shid) return null;
+                    return Str("op") switch
+                    {
+                        "create" => new PhoneShareCreate(shid),
+                        "approve" => new PhoneShareApprove(shid, Str("role") ?? "", Flag("listen"), Flag("full"), Str("mine")),
+                        "remove" => new PhoneShareRemove(shid),
+                        _ => null,
+                    };
                 default:
                     return null;
             }
@@ -241,6 +256,12 @@ public sealed record PhoneLater(double? After) : PhoneMessage;    // not now: ri
 public sealed record PhoneSnapshotSave(string Name, IReadOnlyList<string>? Ids) : PhoneMessage;   // null ids = every running session
 public sealed record PhoneSnapshotOpen(string Id) : PhoneMessage;
 public sealed record PhoneSnapshotDelete(string Id) : PhoneMessage;
+// v7 (docs/IPHONE.md): shared sessions — Sir's controls, and a guest saying who he is / answering.
+public sealed record PhoneShareCreate(string Session) : PhoneMessage;
+public sealed record PhoneShareApprove(string Id, string Role, bool Listen, bool Full, string? Mine) : PhoneMessage;
+public sealed record PhoneShareRemove(string Id) : PhoneMessage;
+public sealed record PhoneJoin(string Name, string Device, string Pub) : PhoneMessage;
+public sealed record PhoneAnswer(string Id, string Text, bool Pass) : PhoneMessage;
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never
 // counts), else at least every 10 s. A new connection starts with a fresh one → sent at once.
@@ -299,8 +320,11 @@ public sealed class RelayClient
 
     private static long NowMs => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-    private RelayClient(RelayConfig config, Uri uri, Func<string> sessions, Action<PhoneMessage> phone, Action<byte[]>? audio)
+    private readonly string _name;   // log prefix: "relay", or "share <id>" for a shared session's room
+
+    private RelayClient(RelayConfig config, Uri uri, Func<string> sessions, Action<PhoneMessage> phone, Action<byte[]>? audio, string name)
     {
+        _name = name;
         Config = config;
         _seal = RelaySeal.Create(config.Key);
         _uri = uri;
@@ -311,8 +335,9 @@ public sealed class RelayClient
 
     // null unless the config is complete (http(s) relayUrl, room, secret). `phone` gets each
     // phone message, `audio` each binary frame (the phone's mic), both on the receive task.
-    public static RelayClient? Create(RelayConfig config, Func<string> sessions, Action<PhoneMessage> phone, Action<byte[]>? audio = null) =>
-        config.IsComplete && RelayLink.Socket(config) is { } uri ? new RelayClient(config, uri, sessions, phone, audio) : null;
+    public static RelayClient? Create(RelayConfig config, Func<string> sessions, Action<PhoneMessage> phone, Action<byte[]>? audio = null,
+                                      string name = "relay") =>
+        config.IsComplete && RelayLink.Socket(config) is { } uri ? new RelayClient(config, uri, sessions, phone, audio, name) : null;
 
     public Task<bool> SendTextAsync(string text) =>
         Sealed(text) is { } s ? SendOutsideAsync(Encoding.UTF8.GetBytes(s), WebSocketMessageType.Text) : Task.FromResult(false);
@@ -352,7 +377,7 @@ public sealed class RelayClient
     {
         if (_stop.IsCancellationRequested) return;
         _stop.Cancel();
-        Log.Write("relay: stopped");
+        Log.Write($"{_name}: stopped");
     }
 
     private async Task RunAsync(CancellationToken ct)
@@ -373,9 +398,9 @@ public sealed class RelayClient
                 Volatile.Write(ref _connected, true);
                 Volatile.Write(ref _ws, ws);
                 backoff = TimeSpan.FromSeconds(1);
-                Log.Write($"relay: connected to {_uri.Host}");
+                Log.Write($"{_name}: connected to {_uri.Host}");
                 try { OnConnected?.Invoke(); }
-                catch (Exception e) { Log.Write($"relay: on-connect failed: {e.Message}"); }
+                catch (Exception e) { Log.Write($"{_name}: on-connect failed: {e.Message}"); }
                 try { await RunConnectedAsync(ws, ct); }
                 finally { Volatile.Write(ref _ws, null); }
             }
@@ -385,7 +410,7 @@ public sealed class RelayClient
             Volatile.Write(ref _connected, false);
             // Quiet once at the cap: an offline PC would log every 30 s otherwise.
             if (wasUp || backoff < MaxBackoff)
-                Log.Write($"relay: {(wasUp ? "disconnected" : "unreachable")} ({error?.Message ?? "closed"}) — retry in {(int)backoff.TotalSeconds} s");
+                Log.Write($"{_name}: {(wasUp ? "disconnected" : "unreachable")} ({error?.Message ?? "closed"}) — retry in {(int)backoff.TotalSeconds} s");
             try { await Task.Delay(backoff, ct); }
             catch (OperationCanceledException) { break; }
             backoff = NextBackoff(backoff);
@@ -474,13 +499,13 @@ public sealed class RelayClient
                     && RelayFrame.Parse(text) is { } message)
                 {
                     try { _phone(message); }
-                    catch (Exception e) { Log.Write($"relay: {message.GetType().Name} failed: {e.Message}"); }
+                    catch (Exception e) { Log.Write($"{_name}: {message.GetType().Name} failed: {e.Message}"); }
                 }
             }
             else if (frame.Length <= MaxAudioFrame && _audio is not null && Unseal(frame.ToArray()) is { } pcm)   // binary: the phone's mic (v2)
             {
                 try { _audio(pcm); }
-                catch (Exception e) { Log.Write($"relay: audio frame failed: {e.Message}"); }
+                catch (Exception e) { Log.Write($"{_name}: audio frame failed: {e.Message}"); }
             }
             frame.SetLength(0);
         }

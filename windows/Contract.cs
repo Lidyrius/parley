@@ -28,6 +28,8 @@ public sealed class TurnPayload
     [JsonPropertyName("replies")] public List<Reply>? Replies { get; set; }
     // <slide …/> markers for a phone call (docs/CALL-SLIDES.md).
     [JsonPropertyName("slides")] public List<SlideSpec>? Slides { get; set; }
+    // v7: <speak to="Max"> — a guest of the shared session is asked (Shares.cs).
+    [JsonPropertyName("to")] public string? To { get; set; }
 
     [JsonIgnore] public bool WantsListen => Listen ?? true;
     [JsonIgnore] public string SpokenLabel => string.IsNullOrEmpty(Label) ? Project : Label!;
@@ -39,6 +41,9 @@ public sealed class TurnPayload
         try { return JsonSerializer.Deserialize<TurnPayload>(body); }
         catch { return null; }
     }
+
+    // A shallow copy (a guest's question handed on to Sir gets its own `speak` / `to`).
+    public TurnPayload Copy() => (TurnPayload)MemberwiseClone();
 }
 
 // POST /presence — the Claude Code mod's heartbeat (~2 s per session).

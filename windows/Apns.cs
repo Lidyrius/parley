@@ -108,6 +108,13 @@ public static class Apns
             Log.Write("apns: no notification token from the phone yet — open the app once with Stumm on");
             return false;
         }
+        return await SendAlertTo(token, env, title, body, session);
+    }
+
+    // The same notification to another phone's token (v7: a guest's question, Shares.cs).
+    public static async Task<bool> SendAlertTo(string token, string env, string title, string body, string session)
+    {
+        if (!ValidToken(token)) return false;
         var payload = new Dictionary<string, object>
         {
             ["aps"] = new Dictionary<string, object>
