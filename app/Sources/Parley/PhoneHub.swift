@@ -42,9 +42,42 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     private var sendText: (@Sendable (String) -> Void)?
     private var sendBinary: (@Sendable (Data) -> Void)?
 
-    init(store: Store = .credentials, log: @escaping @Sendable (String) -> Void = { Log.write($0) }) {
+    init(store: Store = .credentials, log: @escaping @Sendable (String) -> Void = { Log.write($0) },
+         now: @escaping @Sendable () -> Date = { Date() }) {
         self.store = store
         self.log = log
+        self.now = now
+    }
+
+    // MARK: - a call that is gone without a word
+
+    // A call streams the phone's mic all the time (zeros when muted). Nothing for this long:
+    // the phone has hung up and its `call end` got lost (the app suspended right after) — the
+    // call is over here too, so the next update rings instead of talking into the void.
+    static let silentCall: TimeInterval = 6
+    private let now: @Sendable () -> Date
+    private var lastAudio = Date.distantPast
+    private var liveTimer: DispatchSourceTimer?
+
+    // Internal for tests: one look (every second while a call runs).
+    func checkAlive() {
+        let gone = lock.withLock { active && now().timeIntervalSince(lastAudio) > Self.silentCall }
+        guard gone else { return }
+        log("phone: call gone — no audio from the phone for \(Int(Self.silentCall)) s (its \"call end\" got lost)")
+        handle(.call(false))
+    }
+
+    private func watchAlive(_ on: Bool) {
+        lock.withLock {
+            liveTimer?.cancel()
+            liveTimer = nil
+            guard on else { return }
+            let t = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+            t.schedule(deadline: .now() + 1, repeating: 1)
+            t.setEventHandler { [weak self] in self?.checkAlive() }
+            t.resume()
+            liveTimer = t
+        }
     }
 
     // MARK: - the relay link
@@ -117,9 +150,11 @@ final class PhoneHub: CallLink, @unchecked Sendable {
                 recent.removeAll()
                 generation += 1
                 sentState = desired
+                lastAudio = now()
                 return (true, desired, sendText)
             }
             guard changed else { return }
+            watchAlive(true)
             log("phone: call connected (voice at \(down / 1000) kHz)")
             send?(RelayFrame.audio(state, label: lock.withLock { speaker }))
             onChange?()
@@ -132,6 +167,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
                 return true
             }
             guard changed else { return }
+            watchAlive(false)
             log("phone: call ended")
             onChange?()
         case .wake:
@@ -195,6 +231,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     func audioIn(_ frame: Data) {
         let s = lock.withLock { () -> (@Sendable (Data) -> Void)? in
             guard active else { return nil }
+            lastAudio = now()
             recent.append(frame)
             if recent.count > Self.prerollFrames { recent.removeFirst(recent.count - Self.prerollFrames) }
             return sink

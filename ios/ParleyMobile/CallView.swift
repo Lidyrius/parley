@@ -99,7 +99,7 @@ struct CallView: View {
                     .accessibilityHidden(true)
                 Group {
                     // The line stays readable while Parley listens (an app opened late still shows it).
-                    if look.mood == .speaking || look.mood == .listening, let c = call.caption, !call.muted {
+                    if look.mood == .speaking || look.mood == .listening, let c = call.caption {
                         LiveCaption(call: call, caption: c)
                     } else {
                         caption(call, look: look, line: voiced?.stats?.lastLine)
@@ -248,22 +248,22 @@ struct CallView: View {
     /// "spricht · 2:47" while connected; the timer counts from the moment the call connected.
     private func statusLine(_ call: CallController, look: CallLook) -> some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            Text(Self.status(look, phase: call.phase, at: context.date))
+            Text(Self.status(look, phase: call.phase, muted: call.muted, at: context.date))
         }
     }
 
-    private static func status(_ look: CallLook, phase: CallPhase, at date: Date) -> AttributedString {
+    /// Muted: "· stumm" in red — up here, so the subtitles below stay readable.
+    private static func status(_ look: CallLook, phase: CallPhase, muted: Bool, at date: Date) -> AttributedString {
         var text = AttributedString.run(look.status, look.ink)
         if case .active(let since) = phase {
             text += .run(" · " + Fmt.clock(date.timeIntervalSince(since) * 1000), .secondary)
+            if muted { text += .run(" · stumm", Theme.danger) }
         }
         return text
     }
 
     private func caption(_ call: CallController, look: CallLook, line: String?) -> some View {
         let text: Text = switch look.mood {
-        case _ where call.muted && call.phase.isActive:
-            Text("Stummgeschaltet – Parley hört dich nicht.")
         case .ringing:
             Text("Ein Update möchte mit dir sprechen.")
         case .connecting:

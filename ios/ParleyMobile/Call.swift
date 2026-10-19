@@ -543,7 +543,11 @@ final class CallController {
         // then voices on the Mac again.
         let declinedOnLockScreen = phase == .ringing && !endedInApp && !isTest && !isDemo
         let declinedLabel = label
+        // Ended in the background, iOS freezes the app right away — and the `call end` with it,
+        // so the Mac would think the call still runs. A moment to get it out.
+        let sending = UIApplication.shared.beginBackgroundTask(withName: "parley.callEnd")
         relay.send(Outgoing.call(started: false))
+        Task { try? await Task.sleep(for: .seconds(2)); UIApplication.shared.endBackgroundTask(sending) }
         reset()
         onEnded()
         if declinedOnLockScreen { onDeclined(declinedLabel) }

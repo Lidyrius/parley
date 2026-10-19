@@ -8,7 +8,7 @@ namespace Parley;
 public static class GoogleTts
 {
     public const int SampleRate = 24000;
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };   // a hanging request mustn't hold a turn or a call
 
     public static async Task<byte[]?> Synthesize(string text, Config config, CancellationToken cancellationToken = default)
     {
