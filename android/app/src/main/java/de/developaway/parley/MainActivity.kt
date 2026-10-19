@@ -24,8 +24,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 import de.developaway.parley.ui.CallScreen
 import de.developaway.parley.ui.LocalColors
 import de.developaway.parley.ui.Overview
@@ -39,9 +37,6 @@ class MainActivity : ComponentActivity() {
     private var pairError by mutableStateOf<String?>(null)
     private var demoSession by mutableStateOf<String?>(null)
 
-    private val scanner = registerForActivityResult(ScanContract()) { r ->
-        r.contents?.let { usePairing(it) }
-    }
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
                 Box(Modifier.fillMaxSize()) {
                     when {
-                        !m.isPaired -> PairingScreen(m, ::scan, pairError) { pairError = it }
+                        !m.isPaired || m.welcoming -> PairingScreen(m, pairError, { pairError = it }, ::usePairing)
                         settings -> { BackHandler { settings = false }; SettingsScreen(m) { settings = false } }
                         session != null -> { BackHandler { session = null }; SessionScreen(m, session!!, compose) { session = null } }
                         else -> Overview(m, { id, c -> session = id; compose = c }) { settings = true }
@@ -113,24 +108,19 @@ class MainActivity : ComponentActivity() {
         if (model.call.phase != CallPhase.none) model.call.showsScreen = true
     }
 
-    private fun usePairing(link: String) {
-        // v7: someone shares a session with this phone.
-        if (Uri.parse(link.trim()).host.equals("join", true)) {
-            JoinLink.parse(link)?.let { model.pendingJoin = it; pairError = null } ?: run { pairError = "Der Einladungslink ist ungültig." }
-            return
-        }
-        try {
+    /** A pairing (or v7 join) link from a deep link, the scanner or the clipboard; the error message, or null. */
+    private fun usePairing(link: String): String? {
+        // v7: someone shares a session with this phone — also as the https link the relay's /join page carries.
+        JoinLink.parse(link)?.let { model.pendingJoin = it; pairError = null; return null }
+        if (Uri.parse(link.trim()).host.equals("join", true)) return "Der Einladungslink ist ungültig.".also { pairError = it }
+        return try {
             model.pair(Pairing.parse(link))
             pairError = null
             askPermissions()
+            null
         } catch (e: Pairing.Invalid) {
-            pairError = e.message
+            e.message.also { pairError = it }
         }
-    }
-
-    private fun scan() {
-        scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("QR-Code aus Parley auf dem Mac")
-            .setBeepEnabled(false).setOrientationLocked(false))
     }
 
     private fun askPermissions(mic: Boolean = true) {

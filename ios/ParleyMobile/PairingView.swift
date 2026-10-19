@@ -1,125 +1,135 @@
 import SwiftUI
 
-/// First launch: pair with the host by scanning its QR code or pasting the link.
+/// First launch: pair with the host by scanning its QR code or pasting the link
+/// (design A2 "Silhouetten-Echo", docs/design/screens/ios/40-kopplung).
 struct PairingView: View {
     @Environment(AppModel.self) private var model
-    @State private var link = ""
+    @Environment(\.colorScheme) private var scheme
     @State private var error: String?
-    @State private var showsScanner = false
+    @State private var showsScanner = ProcessInfo.processInfo.arguments.contains("-demoScanner")
+
+    /// The icon's outline repeated outwards: size (pt), opacity, line width.
+    private static let echo: [(size: CGFloat, alpha: Double, width: CGFloat)] =
+        [(176, 0.50, 2), (232, 0.34, 1.75), (300, 0.22, 1.5), (380, 0.13, 1.25), (470, 0.07, 1)]
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 32) {
-                VStack(spacing: 14) {
-                    AppMark().frame(width: 84, height: 84)
-                    Text("Parley auf dem iPhone")
-                        .font(.largeTitle.bold())
-                        .multilineTextAlignment(.center)
-                    Text("Alle Sessions deines Macs im Blick – und mit einem Tipp fortgesetzt.")
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+        VStack(spacing: 0) {
+            AppIconImage(size: 128)
+                .background {
+                    // Outside the layout: the outer ones may run over the screen's edge.
+                    ForEach(Self.echo, id: \.size) { e in
+                        IconShape()
+                            .stroke(Theme.claude.opacity(e.alpha * (scheme == .light ? 1.5 : 1)), lineWidth: e.width)
+                            .frame(width: e.size, height: e.size)
+                    }
                 }
-                .padding(.top, 40)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 14) {
-                    Step(n: 1, text: "Öffne Parley auf dem Mac.")
-                    Step(n: 2, text: "Wähle im Menü „Handy\u{00A0}verbinden…\u{2060}“.")  // keeps the menu name in one piece
-                    Step(n: 3, text: "Scanne den QR-Code – oder füge den Link hier ein.")
+            VStack(spacing: 22) {
+                VStack(spacing: 8) {
+                    Text("Guten Tag, Sir.")
+                        .font(.largeTitle.bold())
+                    Text("Ein Code vom Mac, und Ihre Sessions sind hier.")
+                        .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(18)
-                .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.card))
-                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.stroke))
+                .multilineTextAlignment(.center)
+
+                HintCard(symbol: "desktopcomputer", title: "Auf dem Mac",
+                         detail: "Parley-Menü → „Handy\u{00A0}verbinden…\u{2060}“")   // keeps the menu name in one piece
 
                 VStack(spacing: 14) {
                     Button { showsScanner = true } label: {
-                        Label("QR-Code scannen", systemImage: "qrcode.viewfinder")
+                        Label("Code scannen", systemImage: "qrcode.viewfinder")
                             .font(.headline)
                             .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .foregroundStyle(Theme.onAccent)
+                            .background(Capsule().fill(Theme.claude))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    .buttonStyle(.plain)
 
-                    HStack(spacing: 10) {
-                        TextField("parley://pair?…", text: $link)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.URL)
-                            .submitLabel(.go)
-                            .onSubmit { pair(link) }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
-                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.stroke))
-                        if link.isEmpty {
-                            PasteButton(payloadType: String.self) { items in
-                                Task { @MainActor in if let first = items.first { pair(first) } }
-                            }
-                            .labelStyle(.iconOnly)
-                            .buttonBorderShape(.roundedRectangle(radius: 12))
-                        } else {
-                            Button("Verbinden") { pair(link) }
-                                .buttonStyle(.bordered)
-                                .controlSize(.large)
-                        }
+                    Button { error = pasteAndPair(model) } label: {
+                        Label("Link einfügen", systemImage: "doc.on.clipboard")
+                            .font(.headline)
+                            .foregroundStyle(Theme.claude)
                     }
+                    .buttonStyle(.plain)
 
                     if let error {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
                             .font(.footnote)
                             .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .multilineTextAlignment(.center)
                     }
                 }
+
+                Label("Verschlüsselt · nur Ihr Mac und Ihr iPhone", systemImage: "lock.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 32)
+            .padding(.bottom, 20)
             .frame(maxWidth: 520)
-            .frame(maxWidth: .infinity)
         }
-        .scrollDismissesKeyboard(.interactively)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .background(Theme.background)
-        .fullScreenCover(isPresented: $showsScanner) {
-            ScannerSheet { code in
-                do { try model.pair(code); return nil } catch { return error.localizedDescription }
+        .fullScreenCover(isPresented: $showsScanner) { ScannerSheet() }
+    }
+}
+
+/// Reads a pairing link from the clipboard and pairs with it; the error message, or nil.
+@MainActor func pasteAndPair(_ model: AppModel) -> String? {
+    guard let text = UIPasteboard.general.string, !text.isEmpty else {
+        return "In der Zwischenablage ist kein Link. Kopieren Sie ihn am Mac unter „Handy verbinden…“."
+    }
+    do { try model.pair(text); return nil } catch { return error.localizedDescription }
+}
+
+/// The app icon's outline: a continuous rounded square, 22.5 % corners.
+struct IconShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(roundedRect: rect, cornerRadius: min(rect.width, rect.height) * 0.225, style: .continuous)
+    }
+}
+
+/// The icon Sir chose (Settings → App-Symbol), as the app shows it on the Home Screen.
+struct AppIconImage: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image(AppIconChoice.current.preview)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .clipShape(IconShape())
+            .shadow(color: .black.opacity(0.35), radius: size * 0.14, y: size * 0.06)
+    }
+}
+
+/// One line of help as a card: a symbol on a clay tile, a title, a detail.
+struct HintCard: View {
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(Theme.claude)
+                .frame(width: 44, height: 44)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.claude.opacity(0.18)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary)
             }
+            Spacer(minLength: 0)
         }
-    }
-
-    private func pair(_ text: String) {
-        do {
-            try model.pair(text)
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
-private struct Step: View {
-    let n: Int
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text("\(n)")
-                .font(.subheadline.bold())
-                .foregroundStyle(Theme.onAccent)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(Theme.claude))
-                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
-            Text(text)
-        }
-    }
-}
-
-/// The app's mark: a voice wave on Claude orange.
-struct AppMark: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .fill(LinearGradient(colors: [Theme.claudeLight, Theme.claude], startPoint: .top, endPoint: .bottom))
-            .overlay(Image(systemName: "waveform").font(.system(size: 40, weight: .semibold)).foregroundStyle(Theme.onAccent))
-            .shadow(color: Theme.claude.opacity(0.35), radius: 14, y: 6)
-            .accessibilityHidden(true)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.stroke))
+        .accessibilityElement(children: .combine)
     }
 }

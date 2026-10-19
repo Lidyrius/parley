@@ -67,6 +67,8 @@ class AppModel(private val app: Application) {
     val guestAsks = mutableStateListOf<GuestAsk>()
 
     var demo = false; private set
+    /** Just paired from the scanner: it shows "Verbunden, Sir." a moment before the overview. */
+    var welcoming by mutableStateOf(false)
 
     /** Paired with an own host — or a guest somewhere: then the overview shows the shared sessions. */
     val isPaired: Boolean get() = pairing != null || guests.isNotEmpty()

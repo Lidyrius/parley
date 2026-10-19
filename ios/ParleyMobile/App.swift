@@ -64,6 +64,8 @@ final class AppModel {
     let relay = Relay()
     let call: CallController
     private(set) var pairing: Pairing?
+    /// Just paired from the scanner: it shows "Verbunden, Sir." a moment before the overview.
+    var welcoming = false
     /// Fragerunde (Einstellungen): after a call, how long a new update waits while other sessions
     /// still work, so they come as one call (0 = never; nothing else at work → it rings at once).
     /// Persisted; sent on change and after every (re)connect.
@@ -170,6 +172,8 @@ final class AppModel {
             // `-demoJoin`: a guest asks to join (the approval sheet).
             // `-demoAway`: Unterwegs and Stumm on; `-demoPalette <id>`: a palette (contrast checks).
             if arguments.contains("-demoAway") { away = true; silent = true }
+            // `-demoPairing` (+ `-demoScanner [found|denied]`): the first-launch screens.
+            welcoming = arguments.contains("-demoPairing")
             if let i = arguments.firstIndex(of: "-demoPalette"), i + 1 < arguments.count {
                 Appearance.shared.paletteID = arguments[i + 1]
             }
@@ -508,7 +512,7 @@ struct RootView: View {
     var body: some View {
         @Bindable var call = model.call
         Group {
-            if model.isPaired {
+            if model.isPaired && !model.welcoming {
                 OverviewView()
             } else {
                 PairingView()
