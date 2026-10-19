@@ -379,7 +379,8 @@ public static class SessionCloser
     }
 }
 
-public enum DispatchResult { Delivered, Started, Pending, Failed }
+// Starting: a start there is already on the way (no second one) — the instruction waits for it.
+public enum DispatchResult { Delivered, Started, Starting, Pending, Failed }
 
 // Hands instructions to sessions: wake routing, POST /dispatch, and the pending-by-cwd queue
 // the /presence handler drains. Delivery to a live session is the resume path (parked → /wake,
@@ -458,7 +459,9 @@ public sealed class Delivery
         }
         _pending.Add(dir, instruction, forNew);
         if (forNew) _pending.AddName(dir, name!);
-        var key = forNew ? dir + "\u0001" + name!.ToLowerInvariant() : dir;
+        // A resume is that one session: others starting in the folder (a snapshot opens several)
+        // don't stop it. As macOS.
+        var key = forNew ? dir + "\u0001" + name!.ToLowerInvariant() : resume is not null ? dir + "\u0002" + resume : dir;
         if (alive) start = false;   // it runs, just can't take it yet: its next turn does
         if (!start)
         {
@@ -470,18 +473,18 @@ public sealed class Delivery
         // for its `claude … /parley:voice` process in the folder; Windows can't read another
         // process's cwd cheaply.
         bool onTheWay;
-        lock (_starting) onTheWay = !forNew && _starting.ContainsKey(dir);
+        lock (_starting) onTheWay = !forNew && resume is null && _starting.ContainsKey(dir);
         if (onTheWay)
         {
             Log.Write($"dispatch: {dir} → pending (a start there is still on the way — no second session)");
-            return DispatchResult.Started;
+            return DispatchResult.Starting;
         }
         lock (_started)
         {
             if (_started.TryGetValue(key, out var at) && DateTime.UtcNow - at < RestartAfter)
             {
                 Log.Write($"dispatch: {dir} → pending (a session is already starting)");
-                return DispatchResult.Started;
+                return DispatchResult.Starting;
             }
             _started[key] = DateTime.UtcNow;
         }

@@ -165,6 +165,22 @@ public static class RelayFrame
                 case "away":
                     return root.TryGetProperty("on", out var flag) && (flag.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         ? new PhoneAway(flag.ValueKind == JsonValueKind.True) : null;
+                case "snapshot":
+                    // v6 (docs/IPHONE.md): Snapshots. `ids` other than a list of strings = none given (every
+                    // running session), as macOS.
+                    var snap = Str("id") ?? "";
+                    switch (Str("op"))
+                    {
+                        case "save":
+                            if (Str("name") is not { } sname || string.IsNullOrWhiteSpace(sname)) return null;
+                            var ids = root.TryGetProperty("ids", out var ia) && ia.ValueKind == JsonValueKind.Array
+                                && ia.EnumerateArray().All(v => v.ValueKind == JsonValueKind.String)
+                                ? ia.EnumerateArray().Select(v => v.GetString()!).ToList() : null;
+                            return new PhoneSnapshotSave(sname, ids);
+                        case "open": return snap.Length > 0 ? new PhoneSnapshotOpen(snap) : null;
+                        case "delete": return snap.Length > 0 ? new PhoneSnapshotDelete(snap) : null;
+                        default: return null;
+                    }
                 default:
                     return null;
             }
@@ -204,6 +220,10 @@ public sealed record PhonePaletteSaved(string Name) : PhoneMessage;
 public sealed record PhoneActivityStart(string Token, string Env) : PhoneMessage;
 public sealed record PhoneActivity(string Token, string Env) : PhoneMessage;
 public sealed record PhoneLater(double? After) : PhoneMessage;    // not now: ring again in n s, or null = Sir calls back
+// v6: Snapshots — keep the running sessions under a name, open them again.
+public sealed record PhoneSnapshotSave(string Name, IReadOnlyList<string>? Ids) : PhoneMessage;   // null ids = every running session
+public sealed record PhoneSnapshotOpen(string Id) : PhoneMessage;
+public sealed record PhoneSnapshotDelete(string Id) : PhoneMessage;
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never
 // counts), else at least every 10 s. A new connection starts with a fresh one → sent at once.

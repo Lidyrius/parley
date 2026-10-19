@@ -486,6 +486,20 @@ public sealed class SessionRegistry
 
     // The Wiedervorlagen, as /sessions lists them for the phone (the server's store).
     public Func<List<object>>? ReminderRows;
+    // The snapshots, likewise.
+    public Func<List<object>>? SnapshotRows;
+
+    // The sessions running now (not stopped, with a folder): what a snapshot keeps. As macOS.
+    public List<(string Id, string Label, string Cwd)> Live()
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.Values.Where(e => e.State != "stopped" && e.Cwd.Length > 0)
+                .OrderBy(e => e.Label, StringComparer.CurrentCultureIgnoreCase)
+                .Select(e => (e.Id, e.Label, e.Cwd)).ToList();
+        }
+    }
 
     // Running sessions whose label or folder name is `name` (any case) — POST /close by project.
     public List<string> RunningNamed(string name)
@@ -566,7 +580,13 @@ public sealed class SessionRegistry
                 spokenSeconds = (int)Math.Round(day.SpokenSeconds),
                 rateLimits = _rateLimits,
             };
-            return JsonSerializer.Serialize(new { sessions = rows, today, reminders = ReminderRows?.Invoke() ?? new List<object>() });
+            return JsonSerializer.Serialize(new
+            {
+                sessions = rows,
+                today,
+                reminders = ReminderRows?.Invoke() ?? new List<object>(),
+                snapshots = SnapshotRows?.Invoke() ?? new List<object>(),
+            });
         }
     }
 

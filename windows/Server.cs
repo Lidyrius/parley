@@ -10,7 +10,7 @@ namespace Parley;
 // POST /turn and blocks until the voice reply is transcribed. Turns are serialized —
 // one is spoken/recorded at a time; concurrent hooks queue FIFO (their connections
 // stay open). GET /health, /status, /sessions and POST /ready, /wake, /presence, /resume,
-// /dispatch, /permission as on macOS. Everything that voices or listens holds PhoneCall from
+// /dispatch, /permission, /snapshots… as on macOS. Everything that voices or listens holds PhoneCall from
 // the moment it queues, so an iPhone in a call knows Parley is busy (docs/IPHONE.md, v2).
 public sealed class Server
 {
@@ -50,6 +50,8 @@ public sealed class Server
     // Wiedervorlagen (Reminders.cs), kept in reminders.json; a handed-over one → OnReminded.
     public ReminderStore Reminders { get; } = new(Path.Combine(Config.Dir, "reminders.json"));
     public Action<Reminder>? OnReminded;
+    // Snapshots (Snapshots.cs), kept in snapshots.json beside them.
+    public SnapshotStore Snapshots { get; } = new(Path.Combine(Config.Dir, "snapshots.json"));
 
     // POST /permission is answered within this — the hook waits ≤ 120 s; a few seconds spare.
     public static readonly TimeSpan PermissionHold = TimeSpan.FromSeconds(115);
@@ -66,6 +68,7 @@ public sealed class Server
         _onReady = onReady;
         Delivery = new Delivery(Sessions, (id, instruction) => Deliver(id, instruction));
         Sessions.ReminderRows = () => Reminders.Rows();
+        Sessions.SnapshotRows = () => Snapshots.Rows();
         // 127.0.0.1 covers native Git Bash and WSL2 mirrored networking. (WSL NAT mode
         // would need an urlacl + firewall rule — documented, not default.)
         _listener.Prefixes.Add("http://127.0.0.1:8787/");
@@ -278,7 +281,7 @@ public sealed class Server
                 {
                     ok = true,
                     delivered = result == DispatchResult.Delivered ? "session" : "pending",
-                    started = result == DispatchResult.Started,
+                    started = result is DispatchResult.Started or DispatchResult.Starting,
                 }));
                 return;
             }
@@ -346,6 +349,14 @@ public sealed class Server
                 }
                 Log.Write($"remind: cancelled {string.Join(", ", gone.Select(g => g.Label))}");
                 await Respond(ctx, 200, JsonSerializer.Serialize(new { cancelled = ReminderStore.Rows(gone) }));
+                return;
+            }
+
+            // /snapshots… — Snapshots (Snapshots.cs). Same routes and answers as macOS.
+            if (path == "/snapshots" || path.StartsWith("/snapshots/", StringComparison.Ordinal))
+            {
+                var (code, json) = SnapshotRoute(req.HttpMethod, path, body);
+                await Respond(ctx, code, json);
                 return;
             }
 
@@ -463,6 +474,78 @@ public sealed class Server
         }
         Log.Write($"remind: handed to {r.Label}");
         OnReminded?.Invoke(r);
+    }
+
+    // ---- Snapshots (Snapshots.cs) ------------------------------------------------------
+
+    // One open at a time, as the server queue on macOS: opening twice starts nothing twice.
+    private readonly object _snapshotGate = new();
+
+    // The sessions running now (or just `ids`) under `name`; the same name again replaces it.
+    // Folders kept normalized, as Reminders keep them.
+    public Snapshot? SaveSnapshot(string name, IReadOnlyList<string>? ids = null)
+    {
+        var keep = ids is null ? Sessions.Live() : new List<(string Id, string Label, string Cwd)>();
+        foreach (var id in ids ?? Array.Empty<string>())
+            if (Sessions.Info(id) is { } i) keep.Add((id, i.Label, i.Cwd));
+        var s = Snapshots.Save(name, keep.Select(k => (k.Id, k.Label, CwdPath.Normalize(k.Cwd))), DateTime.UtcNow);
+        if (s is not null) Log.Write($"snapshot: saved {s.Name} — {string.Join(", ", s.Sessions.Select(x => x.Name))}");
+        return s;
+    }
+
+    // Per session: still running → left alone; folder gone → missing; else started through
+    // /dispatch's path — resumed when its transcript is still there, else a new one, same name.
+    public (Snapshot Snapshot, List<SnapshotOutcome> Results)? OpenSnapshot(string id)
+    {
+        if (Snapshots.Find(id) is not { } s) return null;
+        var outcomes = new List<SnapshotOutcome>();
+        lock (_snapshotGate)
+            foreach (var item in s.Sessions)
+            {
+                string result;
+                if (Sessions.Running(item.Id).Alive) result = "running";
+                else if (!Directory.Exists(item.Cwd)) result = "missing";
+                else
+                {
+                    var resume = Transcript.IsSessionId(item.Id) && Transcript.File(item.Id) is not null ? item.Id : null;
+                    var r = Delivery.Dispatch(item.Cwd, "", true, resume, item.Name);
+                    // Failed (not even cmd came up) counts as a start, as on macOS, where the starter
+                    // never reports back; Delivered / Pending / Starting: it runs, or is on the way.
+                    result = r is not (DispatchResult.Started or DispatchResult.Failed) ? "running" : resume is not null ? "resumed" : "started";
+                }
+                outcomes.Add(new SnapshotOutcome(item.Id, item.Name, result));
+            }
+        Log.Write($"snapshot: opened {s.Name} — {string.Join(", ", outcomes.Select(o => $"{o.Name} {o.Result}"))}");
+        return (s, outcomes);
+    }
+
+    public bool DeleteSnapshot(string id)
+    {
+        if (Snapshots.Delete(id) is not { } gone) return false;
+        Log.Write($"snapshot: deleted {gone.Name}");
+        return true;
+    }
+
+    // GET /snapshots, POST /snapshots {name, ids?}, /snapshots/open {id}, /snapshots/delete {id}.
+    private (int, string) SnapshotRoute(string method, string path, string body)
+    {
+        var r = SnapshotStore.Request(body);
+        switch (method, path)
+        {
+            case ("GET", "/snapshots"):
+                return (200, JsonSerializer.Serialize(new { snapshots = Snapshots.Rows() }));
+            case ("POST", "/snapshots"):
+                if (SaveSnapshot(r?.Name ?? "", r?.Ids) is not { } saved)
+                    return (400, "{\"ok\":false,\"error\":\"give a name; no running session to keep\"}");
+                return (200, JsonSerializer.Serialize(new { ok = true, snapshot = SnapshotStore.Rows(new[] { saved })[0] }));
+            case ("POST", "/snapshots/open"):
+                if (OpenSnapshot(r?.Id ?? "") is not { } opened) return (404, "{\"ok\":false,\"error\":\"unknown snapshot\"}");
+                return (200, JsonSerializer.Serialize(new { ok = true, name = opened.Snapshot.Name, results = SnapshotStore.Results(opened.Results) }));
+            case ("POST", "/snapshots/delete"):
+                return DeleteSnapshot(r?.Id ?? "") ? (200, "{\"ok\":true}") : (404, "{\"ok\":false,\"error\":\"unknown snapshot\"}");
+            default:
+                return (404, "{\"ok\":false,\"error\":\"not found\"}");
+        }
     }
 
     // ---- closing sessions (POST /close) ------------------------------------------------
