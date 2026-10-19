@@ -311,3 +311,22 @@ on by default):
   `reminders: [{id, text, to, at (ms) | null, after | null}]`; the phone lists them under the
   sessions.
 
+
+## Protocol v6 — Snapshots
+
+A snapshot keeps a set of sessions under a name — each one's name, session id and folder — and
+opens them again in one go. The host keeps them in `snapshots.json` (app data, beside
+`reminders.json`); `/sessions` (and so the `sessions` frame) carries
+`snapshots: [{id, name, at (ms), sessions: [{id, name, cwd}]}]`, newest first.
+
+- Phone → host: `{"t":"snapshot","op":"save","name":"Kunde Müller","ids":["…"]}` (no `ids` =
+  every running session; the same name again replaces that snapshot),
+  `{"t":"snapshot","op":"open","id":"…"}`, `{"t":"snapshot","op":"delete","id":"…"}`.
+- Host → phone after `open`: `{"t":"snapshot","id","name","results":[{id, name, result}]}` with
+  `result` per session: `running` (still runs, or its start is on the way — left alone),
+  `resumed` (`claude --resume <id>` in its folder, voice mode on), `started` (no transcript left:
+  a new session in its folder under the same name), `missing` (the folder is gone).
+- Local HTTP (the Zentrale, the menu): `GET /snapshots`, `POST /snapshots {name, ids?}`,
+  `POST /snapshots/open {id}`, `POST /snapshots/delete {id}`.
+- Starts go through `/dispatch` (same start check); several sessions resumed in one folder each
+  start — the per-folder "one start at a time" guard applies to new sessions only.

@@ -169,6 +169,16 @@ enum RelayFrame {
             guard let id = f["id"] as? String, let text = f["text"] as? String, !id.isEmpty,
                   case let t = text.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, t.count <= 8000 else { return nil }
             return .say(id: id, text: t)
+        case "snapshot":
+            let id = f["id"] as? String ?? ""
+            switch f["op"] as? String {
+            case "save":
+                guard let name = f["name"] as? String, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+                return .snapshotSave(name: name, ids: f["ids"] as? [String])
+            case "open": return id.isEmpty ? nil : .snapshotOpen(id)
+            case "delete": return id.isEmpty ? nil : .snapshotDelete(id)
+            default: return nil
+            }
         default:
             return nil
         }
@@ -219,6 +229,10 @@ enum PhoneEvent: Equatable, Sendable {
     // v4 (docs/LIVE-ACTIVITIES.md): the Live Activity's push tokens.
     case activityStart(token: String, env: String)   // push-to-start: the host starts it
     case activity(token: String, env: String)        // the running one's update token; "" = none runs
+    // v6 (docs/IPHONE.md): Snapshots — keep the running sessions under a name, open them again.
+    case snapshotSave(name: String, ids: [String]?)  // nil ids = every running session
+    case snapshotOpen(String)
+    case snapshotDelete(String)
 }
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never

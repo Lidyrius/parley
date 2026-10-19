@@ -22,6 +22,7 @@ struct SessionInfo: Identifiable, Equatable {
 final class AppController: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var parked: [ParkedInfo] = []   // resumable sessions: parked (hook polls /wake, or the mod)
+    @Published var snapshots: [Snapshot] = []
     @Published var lastError: String?
     @Published var muted = false   // manual mute toggle (menu)
     @Published var relayConnected: Bool?   // iPhone relay: nil = not configured, else reachable
@@ -126,6 +127,7 @@ final class AppController: ObservableObject {
         let server = self.server
         phone.onWake = { server.wakeFromPhone() }
         server.remindersFile = Reminders.file
+        server.snapshotsFile = Snapshots.file
         server.sessions.namesFile = Reminders.file.deletingLastPathComponent().appendingPathComponent("session-names.json")
         server.onReminded = { r in Notifier.notify(title: "Parley · Wiedervorlage", body: "An \(r.label): \(r.text)") }
         server.onPalette = { [weak self] name, frame in
@@ -164,6 +166,12 @@ final class AppController: ObservableObject {
                 case .say(let id, let text):
                     Log.write("phone: typed message for \(id) (\(text.count) chars)")
                     server.deliverRouted(id: id, instruction: text)
+                case .snapshotSave(let name, let ids):
+                    _ = server.saveSnapshot(name: name, ids: ids)   // the list goes out with /sessions
+                case .snapshotOpen(let id):
+                    if let (s, outcomes) = server.openSnapshot(id) { phone.reply(Snapshots.frame(s, outcomes)) }
+                case .snapshotDelete(let id):
+                    _ = server.deleteSnapshot(id)
                 default: break
                 }
             }
@@ -620,7 +628,31 @@ final class AppController: ObservableObject {
     func resume(_ id: String) { server.resume(id: id, instruction: ControlServer.resumeInstruction) }
 
     // Re-read the resumable list (menu opened — parked sessions may have gone stale since).
-    func refreshResumable() { parked = server.resumableList() }
+    func refreshResumable() {
+        parked = server.resumableList()
+        snapshots = server.snapshotList()
+    }
+
+    // The menu's Snapshots: open one, or keep the running sessions under a name Sir types.
+    func openSnapshot(_ id: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [server] in _ = server.openSnapshot(id) }
+    }
+
+    func saveSnapshot() {
+        let alert = NSAlert()
+        alert.messageText = "Snapshot sichern"
+        alert.informativeText = "Merkt sich Name, Session-ID und Ordner jeder laufenden Session."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Name, z. B. Kunde Müller"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Sichern")
+        alert.addButton(withTitle: "Abbrechen")
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if server.saveSnapshot(name: field.stringValue) == nil { lastError = "Snapshot: Name fehlt oder keine Session läuft" }
+        snapshots = server.snapshotList()
+    }
 
     // POST /resume (the mod's button): a short voice dialog instead of a hook turn — the
     // pre-recorded "Ich habe die Arbeit an X wieder aufgenommen…" line, then beep → record →

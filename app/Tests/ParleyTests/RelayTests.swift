@@ -71,7 +71,7 @@ final class RelayFrameTests: XCTestCase {
         reg.presence(id: "a", label: "Demo", project: "demo", state: "idle")
         let at = Date(timeIntervalSince1970: 1_760_000_123.456)
         let frame = try object(RelayFrame.sessions(reg.json(), at: at))
-        XCTAssertEqual(Set(frame.keys), ["t", "at", "sessions", "today", "reminders"])
+        XCTAssertEqual(Set(frame.keys), ["t", "at", "sessions", "today", "reminders", "snapshots"])
         XCTAssertEqual(frame["t"] as? String, "sessions")
         XCTAssertEqual((frame["at"] as? NSNumber)?.int64Value, 1_760_000_123_456)
         let rows = try XCTUnwrap(frame["sessions"] as? [[String: Any]])
