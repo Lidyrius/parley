@@ -27,7 +27,8 @@ struct OverviewView: View {
                     if model.call.isBusy {
                         CallParleyButton(call: model.call, canCall: relay.canSend, action: model.callParley)
                     }
-                    content(relay)
+                    if model.pairing != nil || model.demo || model.guests.isEmpty { content(relay) }
+                    GuestSection { model.open(session: $0) }
                 }
                 .animation(.snappy, value: model.call.failure)
                 .padding(.horizontal, 16)
@@ -64,11 +65,16 @@ struct OverviewView: View {
             }
             .sheet(isPresented: $showsSettings) { SettingsView() }
             .sheet(isPresented: $showsSnapshots) { SnapshotsSheet() }
+            .sheet(item: Binding(get: { model.joinRequests.first }, set: { _ in })) { ApproveJoinView(request: $0) }
+            .alert("Freigabe beendet", isPresented: Binding(get: { model.guestNotice != nil }, set: { if !$0 { model.guestNotice = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(model.guestNotice ?? "") }
             .sheet(item: $detail) { d in
                 let live = relay.snapshot?.sessions.first { $0.id == d.id } ?? d
                 SessionSheet(session: live, skew: relay.skew,
                              openHistory: { show(d.id, compose: false) },
-                             message: { show(d.id, compose: true) })
+                             message: { show(d.id, compose: true) },
+                             canShare: model.guestShare(of: d.id) == nil)
             }
             .navigationDestination(for: String.self) { SessionView(id: $0) }
         }

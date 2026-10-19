@@ -34,7 +34,7 @@ enum Demo {
         }
         let sessions = [
             #"{"id":"demo-parley","label":"Parley","project":"vloude","state":"speaking","since":\#(ago(9)),"until":null,"voice":true,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(74, 41, 3.12, 14, 6, "Die Tests laufen wieder grün. Soll ich den Release vorbereiten?"))}"#,
-            #"{"id":"demo-shirts","label":"Shirts","project":"ds-shirts","state":"working","since":\#(ago(134)),"until":null,"voice":false,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(38, 22, 1.47, 7, 3, "Ich baue jetzt die Mockups für die neue Kollektion."))}"#,
+            #"{"id":"demo-shirts","label":"Shirts","project":"ds-shirts","state":"working","since":\#(ago(134)),"until":null,"voice":false,"resumable":false,"tasks":[],"host":null,"shared":[{"id":"sh1","name":"Max","role":"Marketing"}],"stats":\#(stats(38, 22, 1.47, 7, 3, "Ich baue jetzt die Mockups für die neue Kollektion."))}"#,
             #"{"id":"demo-angebote","label":"Angebote","project":"angebotserstellung","state":"waiting","since":\#(ago(48)),"until":\#(t + 252_000),"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(21, 18, 0.86, 4, 2, "Ich warte fünf Minuten auf den Build und melde mich dann."))}"#,
             #"{"id":"demo-relay","label":"Relay","project":"parley-relay","state":"background","since":\#(ago(203)),"until":null,"voice":false,"resumable":false,"tasks":[{"type":"subagent","description":"Durable Object gegen das Protokoll testen"}],"host":null,"stats":\#(stats(52, 57, 2.31, 9, 4, "Ein Agent prüft das Protokoll, ich melde mich, sobald er fertig ist."))}"#,
             #"{"id":"demo-edge","label":"Edge Army","project":"pmr","state":"parked","since":\#(ago(611)),"until":null,"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(95, 64, 4.02, 18, 7, "Zwei neue Kandidaten gefunden. Weitermachen?"))}"#,
@@ -61,6 +61,7 @@ extension Demo {
     /// The session view's sample history (every kind of entry).
     static let history: [ChatItem] = [
         ChatItem(id: "d1", kind: .user, text: "Bau bitte den Export-Button in die Rechnungsliste ein."),
+        ChatItem(id: "d1b", kind: .user, text: "Und nenn den Knopf „Exportieren“, nicht „Export“ – so steht es auch im Newsletter.", by: "Max"),
         ChatItem(id: "d2", kind: .tool, text: "Bash · Find the invoice list"),
         ChatItem(id: "d3", kind: .tool, text: "Bash · Read the export helpers"),
         ChatItem(id: "d4", kind: .assistant, text: "Die Liste rendert `InvoiceList`, der Export fehlt noch. Ich baue ihn als eigene Datei, damit die Liste schlank bleibt."),

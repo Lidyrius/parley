@@ -389,7 +389,7 @@ final class SessionRegistry {
     // GET /sessions — voice holder first, then alive sessions by label, stopped last.
     // The people a session is shared with (Shares.swift keeps it current): shown on its row.
     var shared: [String: [ShareTag]] = [:]
-    struct ShareTag: Encodable, Equatable { let name, role: String }
+    struct ShareTag: Encodable, Equatable { let id, name, role: String }
 
     // `only`: a guest's view (Shares.swift) — that one session, nothing else of Sir's.
     func json(only: String? = nil) -> String {

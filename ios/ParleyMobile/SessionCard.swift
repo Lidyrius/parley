@@ -103,6 +103,7 @@ struct SessionTile: View {
                             .foregroundStyle(stateInk(session))
                             .lineLimit(1)
                             .monospacedDigit()
+                        SharedBadge(tags: session.shared)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .contentShape(Rectangle())
@@ -160,6 +161,7 @@ struct SessionRow: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+                    SharedBadge(tags: session.shared)
                     if let action = SessionAction(session) {
                         ActionButton(action: action, enabled: actions.canSend) { actions.perform(action, session) }
                             .padding(.top, 2)
@@ -255,7 +257,9 @@ struct SessionSheet: View {
     let skew: Double
     let openHistory: () -> Void
     let message: () -> Void
+    var canShare = false            // v7: one of the owner's own sessions
     @Environment(\.dismiss) private var dismiss
+    @State private var sharing = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -324,11 +328,22 @@ struct SessionSheet: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 4)
+                    if canShare {
+                        Button { sharing = true } label: {
+                            Label(session.shared.isEmpty ? "Teilen …" : "Geteilt mit \(session.shared.map(\.name).joined(separator: ", "))",
+                                  systemImage: "person.2.badge.plus")
+                                .font(.headline)
+                                .foregroundStyle(Theme.claude)
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(20)
             }
         }
         .background(Theme.background)
+        .sheet(isPresented: $sharing) { ShareSessionView(session: session) }
         // Tall enough for the figures, the last line and both buttons; pull up for the rest.
         .presentationDetents([.fraction(0.74), .large])
         .presentationDragIndicator(.visible)
@@ -468,5 +483,24 @@ private struct Ring: View {
             .stroke(color, style: StrokeStyle(lineWidth: 3 * u, lineCap: .round))
             .rotationEffect(.degrees(-90))
             .frame(width: 30 * u, height: 30 * u)
+    }
+}
+
+/// v7: "geteilt mit Max · Marketing" under a session that has guests.
+struct SharedBadge: View {
+    let tags: [ShareTag]
+
+    var body: some View {
+        if let first = tags.first {
+            Label {
+                Text(tags.count == 1 ? "geteilt mit \(first.name)\(first.role.isEmpty ? "" : " · \(first.role)")"
+                                     : "geteilt mit \(tags.map(\.name).joined(separator: ", "))")
+                    .lineLimit(1)
+            } icon: {
+                Image(systemName: "person.2.fill")
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(SessionState.idle.ink)
+        }
     }
 }

@@ -433,5 +433,30 @@ struct FrameTests {
         #expect(Fmt.snapshotDate(now - 3_600_000 * 20, now: now, calendar: cal) == "gestern")
         #expect(Fmt.snapshotDate(now - 3_600_000 * 24 * 7, now: now, calendar: cal) == "12.10.")
     }
+
+    // MARK: v7 shared sessions
+
+    @Test func shareFramesAndJoinLinks() throws {
+        let link = "parley://join?u=https%3A%2F%2Frelay.example&r=AAAAAAAAAAAAAAAAAAAAAA&k=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB&e=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC&s=Website&h=Sydney"
+        let j = try #require(JoinLink.parse(link))
+        #expect(j.label == "Website" && j.host == "Sydney" && j.pairing.room == "AAAAAAAAAAAAAAAAAAAAAA")
+        #expect(JoinLink.parse(link.replacingOccurrences(of: "&e=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", with: "")) == nil)   // never in the clear
+        #expect(JoinLink.parse("parley://pair?u=x") == nil)
+
+        guard case .sessions(let snap)? = Frame.decode(#"{"t":"sessions","sessions":[{"id":"w","shared":[{"id":"s1","name":"Max","role":"Marketing"}]}]}"#)
+        else { Issue.record("no sessions"); return }
+        #expect(snap.sessions[0].shared == [ShareTag(id: "s1", name: "Max", role: "Marketing")])
+        #expect(Frame.decode(#"{"t":"join","id":"s1","session":"w","label":"Website","name":"Max"}"#)
+                == .joinRequest(JoinRequest(id: "s1", session: "w", label: "Website", name: "Max")))
+        #expect(Frame.decode(#"{"t":"move","r":"R","k":"K","e":"E","role":"Marketing","listen":true}"#)
+                == .shareMove(ShareMove(r: "R", k: "K", e: "E", role: "Marketing", listen: true)))
+        #expect(Frame.decode(#"{"t":"share-end"}"#) == .shareEnd)
+        #expect(Frame.decode(#"{"t":"share","id":"s1","session":"w","link":"parley://join?x"}"#) == .shareLink(id: "s1", session: "w", link: "parley://join?x"))
+
+        #expect(Outgoing.shareCreate(session: "w") == #"{"id":"w","op":"create","t":"share"}"#)
+        #expect(Outgoing.join(name: "Max") == #"{"name":"Max","t":"join"}"#)
+        #expect(Outgoing.shareApprove(id: "s1", role: "M", listen: false, full: true, mine: "T")
+                == #"{"full":true,"id":"s1","listen":false,"mine":"T","op":"approve","role":"M","t":"share"}"#)
+    }
 }
 

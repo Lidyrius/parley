@@ -23,7 +23,7 @@ struct SessionView: View {
     @ScaledMetric(relativeTo: .subheadline) private var toolSize: CGFloat = 14.5   // Claude's tool lines run a touch smaller
 
     var body: some View {
-        let session = model.relay.snapshot?.sessions.first { $0.id == id }
+        let session = model.relay(for: id).snapshot?.sessions.first { $0.id == id }
         let items = model.histories[id]
         let pending = model.pending[id] ?? []
         let rows = Self.rows(items ?? [])
@@ -173,9 +173,9 @@ struct SessionView: View {
     private func row(_ item: ChatItem, actions: Bool) -> some View {
         switch item.kind {
         case .user:
-            bubble(item.text ?? "")
+            bubble(item.text ?? "", by: item.by)
         case .voice:
-            bubble(item.text ?? "", caption: "Antwort über Parley")
+            bubble(item.text ?? "", caption: "Antwort über Parley", by: item.by)
         case .assistant:
             VStack(alignment: .leading, spacing: 12) {
                 MarkdownView(text: item.text ?? "")
@@ -257,19 +257,31 @@ struct SessionView: View {
         return true
     }
 
-    private func bubble(_ text: String, caption: String? = nil) -> some View {
-        VStack(alignment: .trailing, spacing: 4) {
+    /// v7: in a shared session every message says who wrote it — mine on the right, others' left.
+    private func bubble(_ text: String, caption: String? = nil, by: String? = nil) -> some View {
+        let guest = model.guestShare(of: id)
+        let shared = guest != nil || !(model.relay.snapshot?.sessions.first { $0.id == id }?.shared.isEmpty ?? true)
+        let mine = guest.map { by == $0.name } ?? (by == nil)
+        let author = mine ? "Sie" : (by ?? guest?.host ?? "Gastgeber")
+        return VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+            if shared {
+                HStack(spacing: 6) {
+                    Avatar(name: author == "Sie" ? (guest?.name ?? "S") : author, size: 20)
+                    Text(author).font(.caption.weight(.semibold))
+                }
+            }
             Text(text)
                 .textSelection(.enabled)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.userBubble))
+                .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(mine ? Theme.userBubble : SessionState.idle.color.opacity(0.16)))
             if let caption {
                 Label(caption, systemImage: "waveform").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 44)
+        .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
+        .padding(mine ? .leading : .trailing, 44)
     }
 
     private func image(_ item: ChatItem) -> some View {
@@ -455,7 +467,8 @@ struct SessionView: View {
     // MARK: - message box
 
     private func inputBar(_ session: Session?) -> some View {
-        let canSend = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (model.relay.canSend || model.demo)
+        let canSend = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (model.relay(for: id).canSend || model.demo)
+            && !(model.guestShare(of: id)?.listen ?? false)   // "nur zuhören"
         return VStack(alignment: .leading, spacing: 12) {
             TextField("Nachricht an \(session?.name ?? "die Session")", text: $draft, axis: .vertical)
                 .focused($typing)

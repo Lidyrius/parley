@@ -122,6 +122,14 @@ final class AppModel {
     private(set) var hasOlder: Set<String> = []
     /// v6: what opening a snapshot did, by its id — absent while the host hasn't answered.
     private(set) var opened: [String: [SnapshotResult]] = [:]
+    // v7 (Guests.swift): shares of other people's sessions this phone joined, a link waiting to
+    // be joined, the invite links Sir made (by session) and guests asking Sir to let them in.
+    var guests: [GuestShare] = []
+    @ObservationIgnored var guestRelays: [String: Relay] = [:]
+    var pendingJoin: JoinLink?
+    var shareLinks: [String: String] = [:]
+    var joinRequests: [JoinRequest] = []
+    var guestNotice: String?
     private(set) var loadingOlder: Set<String> = []
     @ObservationIgnored private var requestedImages: Set<String> = []
     @ObservationIgnored var alertToken: String? {
@@ -157,6 +165,10 @@ final class AppModel {
             relay.startDemo()
             images["demo-5"] = Demo.screenshot()
             // `-demoCall speaking|listening|idle|incoming|connecting` opens the call screen.
+            // `-demoJoin`: a guest asks to join (the approval sheet).
+            if arguments.contains("-demoJoin") {
+                joinRequests = [JoinRequest(id: "demo-join", session: "demo-shirts", label: "Shirts", name: "Max")]
+            }
             if let i = arguments.firstIndex(of: "-demoCall") {
                 let state = i + 1 < arguments.count ? Demo.CallState(rawValue: arguments[i + 1]) : nil
                 call.startDemo(state ?? .speaking)
@@ -167,6 +179,7 @@ final class AppModel {
             pairing = saved
             relay.use(saved)  // dialled once the scene is active (or a call needs it)
         }
+        startGuests()
         // A push-to-start token or a new activity's update token: to the host now — the app may
         // have been woken in the background just for that.
         activity.onChange = { [weak self] in
@@ -184,7 +197,7 @@ final class AppModel {
         self.push = push
     }
 
-    var isPaired: Bool { demo || pairing != nil }
+    var isPaired: Bool { demo || pairing != nil || !guests.isEmpty }
 
     /// "Parley anrufen" in the app.
     /// "Fortsetzen": Sir starts it, so (Unterwegs) he starts the call too — it connects at once,
@@ -305,12 +318,14 @@ final class AppModel {
         case .background:
             isForeground = false
             if !call.isBusy { relay.disconnect() }
+            for r in guestRelays.values { r.disconnect() }
         default: break
         }
     }
 
     private func dialIfIdle() {
         if relay.link == .idle { relay.reconnect() }
+        for r in guestRelays.values where r.link == .idle { r.reconnect() }
     }
 
     /// Back in the background without a call: close the socket once `call end` has left.
@@ -328,14 +343,14 @@ final class AppModel {
 
     func loadHistory(_ id: String) {
         if demo { histories[id] = Demo.history; return }
-        relay.send(Outgoing.history(id: id))
+        relay(for: id).send(Outgoing.history(id: id))
     }
 
     /// The page before the oldest loaded item (scrolled to the top).
     func loadOlder(_ id: String) {
         guard !demo, hasOlder.contains(id), !loadingOlder.contains(id), let first = histories[id]?.first else { return }
         loadingOlder.insert(id)
-        relay.send(Outgoing.history(id: id, before: first.id))
+        relay(for: id).send(Outgoing.history(id: id, before: first.id))
     }
 
     /// A received page merged into what is loaded: an older page goes in front; the newest page
@@ -351,7 +366,7 @@ final class AppModel {
 
     func loadImage(session id: String, key: String) {
         guard !demo, requestedImages.insert(key).inserted else { return }
-        relay.send(Outgoing.image(id: id, key: key))
+        relay(for: id).send(Outgoing.image(id: id, key: key))
     }
 
     // MARK: Snapshots (v6) — the host keeps them; the list comes with every `sessions` frame.
@@ -383,7 +398,7 @@ final class AppModel {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         pending[id, default: []].append(t)
-        if !demo { relay.send(Outgoing.say(id: id, text: t)) }
+        if !demo { relay(for: id).send(Outgoing.say(id: id, text: t)) }
     }
 
     private func sendAlertToken() {
@@ -396,7 +411,7 @@ final class AppModel {
         relay.send(Outgoing.push(token: token, env: pushEnvironment))
     }
 
-    private func handle(_ event: RelayEvent) {
+    func handle(_ event: RelayEvent) {
         switch event {
         case .opened:
             // Per-connection state: the host may have restarted or the socket been replaced.
@@ -440,6 +455,11 @@ final class AppModel {
             relay.send(Outgoing.paletteSaved(p.name))
         case .frame(.image(let key, let data)):
             if let data, let image = UIImage(data: data) { images[key] = image }
+        case .frame(.shareLink(_, let session, let link)):
+            shareLinks[session] = link
+        case .frame(.joinRequest(let r)):
+            joinRequests.removeAll { $0.id == r.id }
+            joinRequests.append(r)
         case .frame(.ring(let label)):
             // In the background the VoIP push rings instead (the socket is closed there anyway).
             if isForeground { call.reportIncoming(label: label) }
@@ -464,7 +484,13 @@ struct RootView: View {
             }
         }
         // The system camera opens the QR's parley:// link here.
+        .sheet(item: Binding(get: { model.pendingJoin }, set: { model.pendingJoin = $0 })) { JoinView(link: $0) }
         .onOpenURL { url in
+            // v7: someone shares a session with this phone.
+            if url.host == "join" {
+                if let link = JoinLink.parse(url.absoluteString) { model.pendingJoin = link } else { linkError = "Der Einladungslink ist ungültig." }
+                return
+            }
             // The Island / Lock Screen: parley://session?id=<id> opens that session.
             if url.host == "session" {
                 if let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value {

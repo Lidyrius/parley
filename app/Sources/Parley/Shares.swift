@@ -288,7 +288,7 @@ final class ShareHub: @unchecked Sendable {
     private func tag() {
         var tags: [String: [SessionRegistry.ShareTag]] = [:]
         for s in shares where s.state == "active" {
-            if let g = s.guest { tags[s.session, default: []].append(.init(name: g.name, role: g.role)) }
+            if let g = s.guest { tags[s.session, default: []].append(.init(id: s.id, name: g.name, role: g.role)) }
         }
         server.setShared(tags)
     }

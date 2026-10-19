@@ -36,6 +36,31 @@ struct Session: Identifiable, Equatable, Sendable {
     var tasks: [BackgroundTask] = []
     var host: String?
     var stats: Stats?
+    var shared: [ShareTag] = []     // v7: the guests it is shared with (Sir's side)
+}
+
+/// v7: one guest of a shared session — the share's id (to remove him), his name and role.
+struct ShareTag: Equatable, Sendable, Decodable, Identifiable {
+    var id: String
+    var name: String
+    var role: String
+}
+
+/// v7: a guest asks to join one of Sir's sessions (`join` frame).
+struct JoinRequest: Identifiable, Equatable, Sendable, Decodable {
+    var id: String                  // the share
+    var session: String
+    var label: String
+    var name: String
+}
+
+/// v7: Sir let the guest in — the fresh room he moves to, and what he may do (`move` frame).
+struct ShareMove: Equatable, Sendable, Decodable {
+    var r: String
+    var k: String
+    var e: String
+    var role: String?
+    var listen: Bool?
 }
 
 struct RateLimit: Equatable, Sendable {
@@ -102,6 +127,7 @@ struct ChatItem: Identifiable, Equatable, Sendable {
     var text: String?
     var fromUser = false            // which side an image sits on
     var at: Double?
+    var by: String?                 // v7: a guest's name (user / voice), nil = the owner
     var add: Int?                   // tool: lines a Write / Edit added
     var del: Int?                   //       and removed
 }
@@ -186,6 +212,13 @@ enum Frame: Equatable, Sendable {
     case slides([Slide])
     /// v4: a colour palette made by voice (the Zentrale researched it) — save it and switch to it.
     case palette(Palette)
+    /// v7: the link for a new share of `session` (Sir's side).
+    case shareLink(id: String, session: String, link: String)
+    /// v7: a guest asks to join (Sir's side).
+    case joinRequest(JoinRequest)
+    /// v7: Sir let us in — move to the fresh room (guest side); the share is over.
+    case shareMove(ShareMove)
+    case shareEnd
     /// v6: the host opened snapshot `id` — what became of each session.
     case snapshotOpened(id: String, results: [SnapshotResult])
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
@@ -215,6 +248,16 @@ enum Frame: Equatable, Sendable {
             guard let w = try? decoder.decode(CaptionWire.self, from: data), w.words.count == w.at.count, !w.words.isEmpty
             else { return .other(head.t) }
             return .caption(Caption(words: w.words, starts: w.at, end: w.end, last: w.last ?? false))
+        case "share":
+            guard let w = try? decoder.decode(ShareLinkWire.self, from: data) else { return .other(head.t) }
+            return .shareLink(id: w.id, session: w.session, link: w.link)
+        case "join":
+            guard let w = try? decoder.decode(JoinRequest.self, from: data) else { return .other(head.t) }
+            return .joinRequest(w)
+        case "move":
+            guard let w = try? decoder.decode(ShareMove.self, from: data) else { return .other(head.t) }
+            return .shareMove(w)
+        case "share-end": return .shareEnd
         case "snapshot":
             guard let w = try? decoder.decode(SnapshotWire.self, from: data) else { return .other(head.t) }
             return .snapshotOpened(id: w.id, results: w.results.items)
@@ -233,6 +276,7 @@ enum Frame: Equatable, Sendable {
 
     private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
+    private struct ShareLinkWire: Decodable { let id: String; let session: String; let link: String }
     private struct SnapshotWire: Decodable { let id: String; let results: Lossy<SnapshotResult> }
     /// `{"t":"palette","name","note","alwaysDark","colors":{role:["#light","#dark"]}}` — every role
     /// present, else no palette.
@@ -329,6 +373,13 @@ enum Outgoing {
     }
     static func snapshotOpen(id: String) -> String { encode(["t": .s("snapshot"), "op": .s("open"), "id": .s(id)]) }
     static func snapshotDelete(id: String) -> String { encode(["t": .s("snapshot"), "op": .s("delete"), "id": .s(id)]) }
+    /// v7: share a session (Sir), let a guest in or end a share (Sir), say who I am (guest).
+    static func shareCreate(session: String) -> String { encode(["t": .s("share"), "op": .s("create"), "id": .s(session)]) }
+    static func shareApprove(id: String, role: String, listen: Bool, full: Bool, mine: String) -> String {
+        encode(["t": .s("share"), "op": .s("approve"), "id": .s(id), "role": .s(role), "listen": .b(listen), "full": .b(full), "mine": .s(mine)])
+    }
+    static func shareRemove(id: String) -> String { encode(["t": .s("share"), "op": .s("remove"), "id": .s(id)]) }
+    static func join(name: String) -> String { encode(["t": .s("join"), "name": .s(name)]) }
     /// Can't talk now (on the ringing screen): ring again in `after` s, or nil = I'll call back.
     static func later(after: Int?) -> String {
         after.map { encode(["t": .s("later"), "after": .i($0)]) } ?? encode(["t": .s("later")])
@@ -396,7 +447,7 @@ extension Stats: Decodable {
 }
 
 extension Session: Decodable {
-    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats }
+    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)  // the one field a tile cannot do without
@@ -411,11 +462,12 @@ extension Session: Decodable {
         tasks = (c.lenient(.tasks) as Lossy<BackgroundTask>?)?.items ?? []
         host = c.lenient(.host)
         stats = c.lenient(.stats)
+        shared = (c.lenient(.shared) as Lossy<ShareTag>?)?.items ?? []
     }
 }
 
 extension ChatItem: Decodable {
-    private enum K: String, CodingKey { case id, k, text, who, at, add, del }
+    private enum K: String, CodingKey { case id, k, text, who, at, by, add, del }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)
@@ -423,6 +475,7 @@ extension ChatItem: Decodable {
         text = c.lenient(.text)
         fromUser = (c.lenient(.who) as String?) == "user"
         at = c.lenient(.at)
+        by = c.lenient(.by)
         add = c.lenient(.add)
         del = c.lenient(.del)
     }

@@ -100,4 +100,43 @@ enum PairingStore {
     static func remove(account: String = "relay") {
         SecItemDelete(query(account) as CFDictionary)
     }
+
+    /// v7: the shares this phone joined as a guest — their rooms and keys, so the Keychain too.
+    static func loadGuests() -> [GuestShare] {
+        var q = query("guests")
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return [] }
+        return (try? JSONDecoder().decode([GuestShare].self, from: data)) ?? []
+    }
+
+    static func saveGuests(_ list: [GuestShare]) {
+        remove(account: "guests")
+        guard !list.isEmpty else { return }
+        var q = query("guests")
+        q[kSecValueData as String] = (try? JSONEncoder().encode(list)) ?? Data()
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(q as CFDictionary, nil)
+    }
+}
+
+/// v7: an invite to someone else's session — `parley://join?u&r&k&e` (as a pairing) plus `s`, the
+/// session's name, and `h`, who shares it.
+struct JoinLink: Equatable, Sendable, Identifiable {
+    let pairing: Pairing
+    let label: String
+    let host: String
+    var id: String { pairing.room }
+
+    static func parse(_ text: String) -> JoinLink? {
+        guard var c = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              c.scheme?.lowercased() == "parley", c.host?.lowercased() == "join" else { return nil }
+        let q = c.queryItems ?? []
+        func value(_ n: String) -> String { q.first { $0.name == n }?.value ?? "" }
+        c.host = "pair"
+        c.queryItems = q.filter { ["u", "r", "k", "e"].contains($0.name) }
+        guard let link = c.string, let p = try? Pairing.parse(link), p.key != nil else { return nil }   // never in the clear
+        return JoinLink(pairing: p, label: String(value("s").prefix(60)), host: String(value("h").prefix(60)))
+    }
 }
