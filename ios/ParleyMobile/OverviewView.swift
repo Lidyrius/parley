@@ -7,6 +7,7 @@ struct OverviewView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showsSettings = false
+    @State private var showsSnapshots = false
     /// The session whose sheet is open.
     @State private var detail: Session?
     /// Raster (default) or Liste, remembered.
@@ -39,6 +40,19 @@ struct OverviewView: View {
             .background(Theme.background)
             .navigationTitle("Parley")
             .toolbar {
+                // Snapshots (docs/design/screens/ios/50-snapshots): a labelled pill beside the gear.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showsSnapshots = true } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "square.on.square")
+                            Text("Snapshots")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize()
+                    }
+                    .disabled(!model.isPaired)
+                }
+                if #available(iOS 26, *) { ToolbarSpacer(.fixed, placement: .topBarTrailing) }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showsSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Einstellungen")
@@ -49,6 +63,7 @@ struct OverviewView: View {
                 try? await Task.sleep(for: .milliseconds(600))
             }
             .sheet(isPresented: $showsSettings) { SettingsView() }
+            .sheet(isPresented: $showsSnapshots) { SnapshotsSheet() }
             .sheet(item: $detail) { d in
                 let live = relay.snapshot?.sessions.first { $0.id == d.id } ?? d
                 SessionSheet(session: live, skew: relay.skew,

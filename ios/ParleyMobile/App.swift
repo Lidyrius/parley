@@ -120,6 +120,8 @@ final class AppModel {
     private(set) var pending: [String: [String]] = [:]
     /// Sessions whose history goes further back than what is loaded; an older page in flight.
     private(set) var hasOlder: Set<String> = []
+    /// v6: what opening a snapshot did, by its id — absent while the host hasn't answered.
+    private(set) var opened: [String: [SnapshotResult]] = [:]
     private(set) var loadingOlder: Set<String> = []
     @ObservationIgnored private var requestedImages: Set<String> = []
     @ObservationIgnored var alertToken: String? {
@@ -352,6 +354,31 @@ final class AppModel {
         relay.send(Outgoing.image(id: id, key: key))
     }
 
+    // MARK: Snapshots (v6) — the host keeps them; the list comes with every `sessions` frame.
+
+    func saveSnapshot(name: String, ids: [String]) {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty, !ids.isEmpty, !demo else { return }
+        relay.send(Outgoing.snapshotSave(name: n, ids: ids))
+    }
+
+    func openSnapshot(_ s: SavedSnapshot) {
+        opened[s.id] = nil
+        guard demo else { relay.send(Outgoing.snapshotOpen(id: s.id)); return }
+        Task { [weak self] in   // the demo answers like a host would
+            try? await Task.sleep(for: .milliseconds(900))
+            let kinds = ["running", "resumed", "resumed", "started"]
+            self?.opened[s.id] = s.sessions.enumerated().map { i, item in
+                SnapshotResult(id: item.id, name: item.name, result: kinds[i % kinds.count])
+            }
+        }
+    }
+
+    func deleteSnapshot(_ id: String) {
+        guard !demo else { return }
+        relay.send(Outgoing.snapshotDelete(id: id))
+    }
+
     func say(_ text: String, to id: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
@@ -406,6 +433,8 @@ final class AppModel {
             call.captionReceived(c)
         case .frame(.slides(let s)):
             call.slidesReceived(s)
+        case .frame(.snapshotOpened(let id, let results)):
+            opened[id] = results
         case .frame(.palette(let p)):
             Appearance.shared.adopt(p)
             relay.send(Outgoing.paletteSaved(p.name))
