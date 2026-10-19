@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import de.developaway.parley.ConnectionStatus
 import de.developaway.parley.SessionState
 
@@ -37,6 +38,10 @@ data class Colors(
         SessionState.parked, SessionState.stopped -> stopped
         SessionState.idle -> idle
     }
+
+    /** Text or an icon on a fill of colour `c`: black or white, whichever reads (ios `Shade.onColor`). */
+    fun on(c: Color): Color = if (c.luminance() > 0.5f) Color.Black else Color.White
+    val onAccent: Color get() = on(accent)
 
     /** A label's colour: a darker shade in light mode, so text stays readable on white. */
     fun ink(c: Color): Color = if (dark) c else Color(c.red * 0.78f, c.green * 0.78f, c.blue * 0.78f)

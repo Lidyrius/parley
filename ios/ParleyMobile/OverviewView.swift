@@ -6,7 +6,7 @@ struct OverviewView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var showsSettings = false
+    @State private var showsSettings = ProcessInfo.processInfo.arguments.contains("-demoSettings")   // screenshots
     @State private var showsSnapshots = false
     /// The session whose sheet is open.
     @State private var detail: Session?
@@ -525,7 +525,7 @@ struct PillToggleStyle: ToggleStyle {
                 .labelStyle(Tight())
                 .fixedSize()
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(configuration.isOn ? .white : .secondary)
+                .foregroundStyle(configuration.isOn ? Theme.onAccent : .secondary)   // a light accent in the dark too
                 .padding(.horizontal, 11)
                 .padding(.vertical, 6)
                 .background(Capsule().fill(configuration.isOn ? Theme.claude : Theme.card))

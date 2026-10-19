@@ -154,7 +154,7 @@ struct PaletteBoard: View {
                         id: \.offset) { _, s in Circle().fill(c(s)).frame(width: 9, height: 9) }
                 Spacer(minLength: 0)
                 Circle().fill(c(palette.red)).frame(width: 18, height: 18)
-                    .overlay(Image(systemName: "phone.down.fill").font(.system(size: 8)).foregroundStyle(.white))
+                    .overlay(Image(systemName: "phone.down.fill").font(.system(size: 8)).foregroundStyle(palette.red.onColor))
             }
         }
         .padding(10)

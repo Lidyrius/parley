@@ -593,9 +593,9 @@ struct KnobTuner<Preview: View>: View {
     }
 }
 
-/// The app's icon on the Home Screen: Porzellan · Indigo (the primary) or an alternate.
+/// The app's icon on the Home Screen: Graphit (the primary, the default) or an alternate.
 enum AppIconChoice: String, CaseIterable, Identifiable {
-    case porzellan, indigo, graphit, petrol
+    case graphit, porzellan, indigo, petrol
 
     var id: Self { self }
 
@@ -609,12 +609,12 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
     }
 
     /// The alternate icon (ios/AppIcons), nil = the primary.
-    var iconName: String? { self == .porzellan ? nil : "AppIcon-" + name }
+    var iconName: String? { self == .graphit ? nil : "AppIcon-" + name }
     var preview: String { "IconPreview" + name }
 
     static var current: Self {
         let set = UIApplication.shared.alternateIconName
-        return allCases.first { $0.iconName == set } ?? .porzellan
+        return allCases.first { $0.iconName == set } ?? .graphit   // also an old "AppIcon-Graphit"
     }
 }
 

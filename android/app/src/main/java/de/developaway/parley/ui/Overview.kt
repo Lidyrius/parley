@@ -215,7 +215,7 @@ private fun StatusHeader(m: AppModel, status: ConnectionStatus, c: Colors) {
 
 @Composable
 fun PillToggle(label: String, icon: ImageVector, on: Boolean, c: Colors, set: (Boolean) -> Unit) {
-    val fg = if (on) Color.White else c.text
+    val fg = if (on) c.onAccent else c.text   // a light accent in the dark too
     Row(Modifier.clip(Pill).background(if (on) c.accent else c.text.copy(alpha = 0.06f)).clickable { set(!on) }
         .padding(horizontal = 11.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = fg, modifier = Modifier.size(17.dp))

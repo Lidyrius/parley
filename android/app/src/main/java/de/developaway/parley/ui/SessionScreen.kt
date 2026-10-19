@@ -129,7 +129,7 @@ fun SessionScreen(m: AppModel, id: String, compose: Boolean, back: () -> Unit) {
             val canSend = text.isNotBlank() && relay.canSend && guest?.listen != true   // "nur zuhören"
             Box(Modifier.size(40.dp).clip(CircleShape).background(if (canSend) c.accent else c.accent.copy(alpha = 0.4f))
                 .clickable(enabled = canSend) { m.say(id, text); text = "" }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.ArrowUpward, "Senden", tint = Color.White)
+                Icon(Icons.Filled.ArrowUpward, "Senden", tint = c.onAccent)
             }
         }
     }

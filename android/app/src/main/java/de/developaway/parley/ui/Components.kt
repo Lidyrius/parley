@@ -70,7 +70,7 @@ fun Capsule(text: String, c: Colors, enabled: Boolean = true, filled: Boolean = 
             .clickable(enabled = enabled, onClick = onClick).alpha(if (enabled) 1f else 0.45f)
             .padding(horizontal = 14.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,
-    ) { Text(text, color = if (filled) Color.White else c.accent, fontWeight = FontWeight.SemiBold, fontSize = 15.sp) }
+    ) { Text(text, color = if (filled) c.onAccent else c.accent, fontWeight = FontWeight.SemiBold, fontSize = 15.sp) }
 }
 
 /** A slim bar for a share (context, the limits). */

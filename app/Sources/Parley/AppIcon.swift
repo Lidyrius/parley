@@ -1,11 +1,11 @@
 import AppKit
 
-// The app's icon (Einstellungen → App-Symbol). Porzellan · Indigo is the bundle's own — compiled
+// The app's icon (Einstellungen → App-Symbol). Graphit is the bundle's own (the default) — compiled
 // from app/AppIcon/Parley.icon by make-app.sh, with its dark, clear and tinted looks. The others take
 // its place while Parley runs (NSApp.applicationIconImage: Dock tile, alerts, About); Finder and
 // notifications keep the bundle's icon — changing that would break the app's signature.
 enum AppIconChoice: String, CaseIterable, Identifiable {
-    case porzellan, indigo, graphit, petrol
+    case graphit, porzellan, indigo, petrol
 
     var id: Self { self }
 
@@ -24,12 +24,12 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
             .flatMap(NSImage.init(contentsOf:))
     }
 
-    static var saved: Self { Keychain.get(.appIcon).flatMap(Self.init(rawValue:)) ?? .porzellan }
+    static var saved: Self { Keychain.get(.appIcon).flatMap(Self.init(rawValue:)) ?? .graphit }
 
     /// Shows it now; called again when the system switches between light and dark.
     @MainActor static func apply(_ choice: Self) {
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        NSApp.applicationIconImage = choice == .porzellan ? nil : choice.image(dark: dark)
+        NSApp.applicationIconImage = choice == .graphit ? nil : choice.image(dark: dark)
     }
 
     /// The menu-bar symbol (menuleiste.svg) as a template: the menu bar tints it.

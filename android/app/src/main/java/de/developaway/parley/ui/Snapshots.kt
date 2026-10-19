@@ -121,9 +121,9 @@ private fun ListView(list: List<SnapshotRow>, skew: Double, canSend: Boolean, c:
     }
     Row(Modifier.fillMaxWidth().height(50.dp).clip(Pill).background(c.accent).clickable(enabled = canSend, onClick = save).alpha(if (canSend) 1f else 0.45f),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Filled.FilterNone, null, tint = Color.White, modifier = Modifier.size(18.dp))
+        Icon(Icons.Filled.FilterNone, null, tint = c.onAccent, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
-        Text("Aktuellen Stand sichern", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Text("Aktuellen Stand sichern", color = c.onAccent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
     }
     if (list.isEmpty()) {
         Text("Noch keine Snapshots. Sichern Sie den aktuellen Stand, um ihn später mit einem Tipp wieder zu öffnen.",
@@ -168,9 +168,9 @@ private fun SnapshotCard(s: SnapshotRow, skew: Double, canSend: Boolean, c: Colo
         Row(Modifier.padding(top = 6.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.clip(Pill).background(c.accent).clickable(enabled = canSend, onClick = open).alpha(if (canSend) 1f else 0.45f)
                 .padding(start = 10.dp, end = 14.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.PlayArrow, null, tint = c.onAccent, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(3.dp))
-                Text("Öffnen", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Öffnen", color = c.onAccent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.weight(1f))
             Text(savedAt(s.at, skew), fontSize = 13.sp, color = c.secondary)
@@ -221,7 +221,7 @@ private fun SaveView(running: List<Session>, canSend: Boolean, c: Colors, cancel
             Row(Modifier.fillMaxWidth().clickable { off = if (on) off + s.id else off - s.id }.padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (on) Box(Modifier.size(24.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Check, "ausgewählt", tint = Color.White, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Filled.Check, "ausgewählt", tint = c.onAccent, modifier = Modifier.size(16.dp))
                 } else Box(Modifier.size(24.dp).border(1.5.dp, c.secondary.copy(alpha = 0.5f), CircleShape))
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
@@ -254,7 +254,7 @@ private fun OpenedView(m: AppModel, s: SnapshotRow, c: Colors, done: () -> Unit)
                 if (look == null) Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(18.dp), color = c.secondary, strokeWidth = 2.dp)
                 } else Box(Modifier.size(24.dp).clip(CircleShape).background(look.color), contentAlignment = Alignment.Center) {
-                    Icon(look.icon, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                    Icon(look.icon, null, tint = c.on(look.color), modifier = Modifier.size(15.dp))
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {

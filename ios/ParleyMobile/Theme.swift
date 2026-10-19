@@ -360,6 +360,9 @@ extension SessionState {
     /// The label's colour: a darker shade in light mode so the text stays readable on white.
     @MainActor var ink: Color { shade.ink }
 
+    /// Text or a symbol on a fill of this colour: black or white, whichever reads (light palettes too).
+    @MainActor var onColor: Color { shade.onColor }
+
     @MainActor private var shade: Shade {
         let p = Theme.palette
         return switch self {

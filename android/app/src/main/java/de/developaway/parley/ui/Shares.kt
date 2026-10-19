@@ -112,7 +112,7 @@ fun SharedBadge(tags: List<ShareTag>, c: Colors) {
 @Composable
 fun Avatar(name: String, c: Colors, size: Dp = 30.dp) {
     Box(Modifier.size(size).clip(CircleShape).background(c.idle), contentAlignment = Alignment.Center) {
-        Text(name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size.value * 0.45f).sp)
+        Text(name.take(1).uppercase(), color = c.on(c.idle), fontWeight = FontWeight.Bold, fontSize = (size.value * 0.45f).sp)
     }
 }
 
@@ -152,8 +152,8 @@ private fun BigButton(text: String, c: Colors, enabled: Boolean = true, filled: 
     Row(modifier.height(50.dp).alpha(if (enabled) 1f else 0.45f).clip(Pill).background(if (filled) c.accent else c.accent.copy(alpha = 0.14f))
         .clickable(enabled = enabled, onClick = onClick),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        icon?.let { Icon(it, null, tint = if (filled) Color.White else c.accent, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
-        Text(text, color = if (filled) Color.White else c.accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        icon?.let { Icon(it, null, tint = if (filled) c.onAccent else c.accent, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
+        Text(text, color = if (filled) c.onAccent else c.accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

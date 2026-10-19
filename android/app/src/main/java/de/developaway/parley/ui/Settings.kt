@@ -91,7 +91,7 @@ fun SettingsScreen(m: AppModel, close: () -> Unit) {
                 Row(Modifier.padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     roundChoices.forEach { s ->
                         val on = m.roundSeconds == s
-                        Text(roundLabel(s), color = if (on) Color.White else c.text, fontSize = 15.sp,
+                        Text(roundLabel(s), color = if (on) c.onAccent else c.text, fontSize = 15.sp,
                             modifier = Modifier.clip(Pill).background(if (on) c.accent else c.raised).clickable { m.setRound(s) }
                                 .padding(horizontal = 12.dp, vertical = 6.dp))
                     }

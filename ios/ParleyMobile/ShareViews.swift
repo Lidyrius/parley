@@ -265,7 +265,7 @@ struct Avatar: View {
     var body: some View {
         Text(String(name.prefix(1)).uppercased())
             .font(.system(size: size * 0.45, weight: .bold))
-            .foregroundStyle(.white)
+            .foregroundStyle(SessionState.idle.onColor)
             .frame(width: size, height: size)
             .background(Circle().fill(SessionState.idle.color))
     }

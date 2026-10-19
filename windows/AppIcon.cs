@@ -4,13 +4,13 @@ using System.Runtime.InteropServices;
 
 namespace Parley;
 
-// The app's icon (tray → App-Symbol), as on macOS and the iPhone: Porzellan · Indigo (default),
-// Indigo, Graphit, Petrol. The tray shows the chosen one (branding\icon-<id>.png, shared with the
-// macOS app); the .exe keeps Parley.ico (Porzellan).
+// The app's icon (tray → App-Symbol), as on macOS and the iPhone: Graphit (default), Porzellan ·
+// Indigo, Indigo, Petrol. The tray shows the chosen one (branding\icon-<id>.png, shared with the
+// macOS app); the .exe keeps Parley.ico (Graphit).
 public static class AppIcon
 {
     public static readonly (string Id, string Name)[] Choices =
-        { ("porzellan", "Porzellan"), ("indigo", "Indigo"), ("graphit", "Graphit"), ("petrol", "Petrol") };
+        { ("graphit", "Graphit"), ("porzellan", "Porzellan"), ("indigo", "Indigo"), ("petrol", "Petrol") };
 
     [DllImport("user32.dll")]
     private static extern bool DestroyIcon(IntPtr handle);

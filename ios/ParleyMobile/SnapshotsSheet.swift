@@ -238,6 +238,13 @@ private struct OpenedSnapshotView: View {
 
     /// `kind` nil: the host hasn't answered yet.
     private func row(_ name: String, _ kind: SnapshotResult.Kind?) -> some View {
+        let on: Color = switch kind {
+        case .running: SessionState.idle.onColor
+        case .resumed: SessionState.working.onColor
+        case .started: SessionState.waiting.onColor
+        case .missing: Theme.palette.red.onColor
+        case nil: .clear
+        }
         let (symbol, text, color): (String, String, Color) = switch kind {
         case nil: ("", "wird geöffnet …", .secondary)
         case .running: ("checkmark", "läuft schon", SessionState.idle.color)
@@ -251,7 +258,7 @@ private struct OpenedSnapshotView: View {
                     ProgressView()
                 } else {
                     Circle().fill(color)
-                    Image(systemName: symbol).font(.footnote.weight(.bold)).foregroundStyle(.white)
+                    Image(systemName: symbol).font(.footnote.weight(.bold)).foregroundStyle(on)
                 }
             }
             .frame(width: 28, height: 28)
