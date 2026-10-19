@@ -45,31 +45,33 @@ actor ProjectClips {
 
     /// A random cached resume line for `label`; if none is rendered yet, one is synthesized
     /// live (and cached) and the rest render in the background. nil = no Google TTS.
-    func resumeClip(label: String, config: AppConfig) async -> Data? {
+    // The clip comes with the line it says, so the captions match the voice.
+    func resumeClip(label: String, config: AppConfig) async -> (pcm: Data?, line: String) {
+        let lines = Self.resumePhrases(name: label, language: config.language)
         let s = Self.slug(label)
-        guard !s.isEmpty else { return nil }
-        let cached = (0..<3).compactMap { try? Data(contentsOf: Self.resumeFile(s, $0)) }
-        if let data = cached.randomElement() { return data }
-        guard config.useGoogle else { return nil }
+        guard !s.isEmpty else { return (nil, lines[0]) }
+        let cached = (0..<3).compactMap { n in (try? Data(contentsOf: Self.resumeFile(s, n))).map { (n, $0) } }
+        if let (n, data) = cached.randomElement() { return (data, lines[n]) }
+        guard config.useGoogle else { return (nil, lines[0]) }
         let n = Int.random(in: 0..<3)
-        guard let pcm = await Self.synth(Self.resumePhrases(name: label, language: config.language)[n], config: config)
-        else { return nil }
+        guard let pcm = await Self.synth(lines[n], config: config) else { return (nil, lines[n]) }
         Self.write(pcm, to: Self.resumeFile(s, n))
         Task { [weak self] in await self?.prerender(label: label, config: config) }
-        return pcm
+        return (pcm, lines[n])
     }
 
     /// A random cached wake greeting; if none is rendered yet, one is synthesized live (and
     /// cached) and the rest render in the background. nil = no Google TTS.
-    func greetClip(config: AppConfig) async -> Data? {
-        let cached = (0..<3).compactMap { try? Data(contentsOf: Self.greetFile($0)) }
-        if let data = cached.randomElement() { return data }
-        guard config.useGoogle else { return nil }
+    func greetClip(config: AppConfig) async -> (pcm: Data?, line: String) {
+        let lines = Self.greetPhrases(language: config.language)
+        let cached = (0..<3).compactMap { n in (try? Data(contentsOf: Self.greetFile(n))).map { (n, $0) } }
+        if let (n, data) = cached.randomElement() { return (data, lines[n]) }
+        guard config.useGoogle else { return (nil, lines[0]) }
         let n = Int.random(in: 0..<3)
-        guard let pcm = await Self.synth(Self.greetPhrases(language: config.language)[n], config: config) else { return nil }
+        guard let pcm = await Self.synth(lines[n], config: config) else { return (nil, lines[n]) }
         Self.write(pcm, to: Self.greetFile(n))
         Task { [weak self] in await self?.prerenderGreetings(config: config) }
-        return pcm
+        return (pcm, lines[n])
     }
 
     /// Render the missing wake greetings.

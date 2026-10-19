@@ -680,9 +680,8 @@ final class AppController: ObservableObject {
         if calledBack { await thankForCallingBack(config) }
 
         // Cached line (or synthesized live + cached); nil → speakAndBeep synthesizes the text.
-        let clip = await ProjectClips.shared.resumeClip(label: turn.spokenLabel, config: config)
+        let (clip, line) = await ProjectClips.shared.resumeClip(label: turn.spokenLabel, config: config)
         await pauseMediaIfPlaying()
-        let line = ProjectClips.resumePhrases(name: turn.spokenLabel, language: config.language)[0]
         await speakAndBeep(line, config: config, prefetched: clip, beep: true)
 
         LiveStatus.set(phase: "listening")
@@ -811,8 +810,7 @@ final class AppController: ObservableObject {
         await ackTask?.value
         ackTask = nil
         Log.write("wake: greeting")
-        let clip = await ProjectClips.shared.greetClip(config: config)
-        let line = ProjectClips.greetPhrases(language: config.language)[0]
+        let (clip, line) = await ProjectClips.shared.greetClip(config: config)
         await speakAndBeep(line, config: config, prefetched: clip, beep: true)
         LiveStatus.set(phase: "listening")
         let wav = await record()
