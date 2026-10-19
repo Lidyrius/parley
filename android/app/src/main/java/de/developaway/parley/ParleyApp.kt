@@ -14,6 +14,8 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class ParleyApp : Application() {
     lateinit var model: AppModel; private set
@@ -49,6 +51,8 @@ class AppModel(private val app: Application) {
     val pending = mutableStateMapOf<String, List<String>>()
     val images = mutableStateMapOf<String, Bitmap>()
     private val requestedImages = mutableSetOf<String>()
+    /** The host's answer to the last "Öffnen" of a snapshot; null while it is on the way. */
+    var snapshotOpened by mutableStateOf<SnapshotResult?>(null); private set
 
     var demo = false; private set
 
@@ -107,6 +111,7 @@ class AppModel(private val app: Application) {
                 val bytes = f.data?.let { runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull() } ?: return
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { images[f.key] = it }
             }
+            is Incoming.SnapshotOpened -> snapshotOpened = f.result
             else -> {}
         }
     }
@@ -182,6 +187,24 @@ class AppModel(private val app: Application) {
         pending[id] = (pending[id] ?: emptyList()) + t
         relay.send(Outgoing.say(id, t))
     }
+
+    // Snapshots: the host keeps and opens them; the list comes back with the next sessions frame.
+
+    fun saveSnapshot(name: String, ids: List<String>) {
+        val n = name.trim()
+        if (n.isNotEmpty() && ids.isNotEmpty()) relay.send(Outgoing.snapshotSave(n, ids))
+    }
+
+    fun openSnapshot(id: String) {
+        snapshotOpened = null
+        relay.send(Outgoing.snapshotOpen(id))
+        if (demo) scope.launch {
+            delay(900)
+            relay.snapshot?.snapshots?.firstOrNull { it.id == id }?.let { snapshotOpened = Demo.opened(it) }
+        }
+    }
+
+    fun deleteSnapshot(id: String) = relay.send(Outgoing.snapshotDelete(id))
 
     companion object {
         /** A history page into what is loaded: an older page goes in front, the latest replaces the tail. */

@@ -61,10 +61,19 @@ data class Today(
 /** A Wiedervorlage on the host: for whom, what, when (host ms) or once another session is done. */
 data class ReminderRow(val id: String, val text: String = "", val to: String = "", val at: Double? = null, val after: String? = null)
 
+/** A saved set of sessions on the host (docs/IPHONE.md, Protocol v6): its name, when (host ms), each one's name, id and folder. */
+data class SnapshotRow(val id: String, val name: String = "", val at: Double = 0.0, val sessions: List<SnapshotItem> = emptyList())
+data class SnapshotItem(val id: String, val name: String = "", val cwd: String = "")
+
+/** What opening a snapshot did to each session: running, resumed, started or missing. */
+data class SnapshotResult(val id: String, val name: String = "", val results: List<SnapshotOutcome> = emptyList())
+data class SnapshotOutcome(val id: String, val name: String = "", val result: String = "")
+
 data class Snapshot(
     val sessions: List<Session> = emptyList(),
     val today: Today? = null,
     val reminders: List<ReminderRow> = emptyList(),
+    val snapshots: List<SnapshotRow> = emptyList(),
     val at: Double? = null,
 )
 
@@ -114,6 +123,7 @@ sealed interface Incoming {
     data class History(val page: HistoryPage) : Incoming
     data class Image(val key: String, val mime: String?, val data: String?) : Incoming
     data class CaptionFrame(val caption: Caption) : Incoming
+    data class SnapshotOpened(val result: SnapshotResult) : Incoming
     data object Ignored : Incoming
 }
 
@@ -131,6 +141,11 @@ object Frames {
             "history" -> Incoming.History(history(o))
             "image" -> Incoming.Image(o.optString("key"), o.str("mime"), o.str("data"))
             "caption" -> caption(o)?.let { Incoming.CaptionFrame(it) } ?: Incoming.Ignored
+            "snapshot" -> o.str("id")?.let { id ->
+                Incoming.SnapshotOpened(SnapshotResult(id, o.optString("name"), o.optJSONArray("results").objects().mapNotNull { r ->
+                    r.str("id")?.let { SnapshotOutcome(it, r.optString("name"), r.optString("result")) }
+                }))
+            } ?: Incoming.Ignored
             else -> Incoming.Ignored
         }
     }
@@ -141,6 +156,12 @@ object Frames {
         reminders = o.optJSONArray("reminders").objects().mapNotNull { r ->
             val id = r.str("id") ?: return@mapNotNull null
             ReminderRow(id, r.optString("text"), r.optString("to"), r.num("at"), r.str("after"))
+        },
+        snapshots = o.optJSONArray("snapshots").objects().mapNotNull { r ->
+            val id = r.str("id") ?: return@mapNotNull null
+            SnapshotRow(id, r.optString("name"), r.num("at") ?: 0.0, r.optJSONArray("sessions").objects().mapNotNull { i ->
+                i.str("id")?.let { SnapshotItem(it, i.optString("name"), i.optString("cwd")) }
+            })
         },
         at = o.num("at"),
     )
@@ -210,6 +231,10 @@ object Outgoing {
     val wake = obj("t" to "wake")
     /** Sir talks over Parley: stop the line and listen. */
     val barge = obj("t" to "barge")
+    /** Snapshots: keep these sessions under `name`, open one again, or delete it. */
+    fun snapshotSave(name: String, ids: List<String>) = obj("t" to "snapshot", "op" to "save", "name" to name, "ids" to JSONArray(ids))
+    fun snapshotOpen(id: String) = obj("t" to "snapshot", "op" to "open", "id" to id)
+    fun snapshotDelete(id: String) = obj("t" to "snapshot", "op" to "delete", "id" to id)
     /** "Not now" on the ringing screen: ring again in `after` s, or null = I'll call back. */
     fun later(after: Int?) = obj("t" to "later", "after" to after)
 }
