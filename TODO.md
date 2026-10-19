@@ -1,5 +1,15 @@
 # TODO
 
+## Von Sir, 19.10.2026
+
+- [ ] Anruf legt manchmal nicht sofort auf, wenn Parley fertig gesprochen hat ("Danach auflegen").
+- [ ] Stumm im Anruf: der Hinweis „Du bist stummgeschaltet …“ verdeckt die Untertitel — die
+      Untertitel müssen sichtbar bleiben (Hinweis tiefer oder woanders).
+- [ ] Logs prüfen: manchmal klingelt es nicht, die Session steht stattdessen auf „geparkt“ —
+      obwohl Stumm nicht an ist.
+- [ ] Zustand „bereit“ abschaffen: eine fertige Session ist immer „geparkt“. „bereit“ stammt
+      aus der Zeit vor der Parley-Mod (nur Hook); gebraucht wird nur „geparkt“.
+
 ## Codex coverage audit — 2026-08-02
 
 The declared Codex feature matrix is currently 100% covered by automated behavioral
