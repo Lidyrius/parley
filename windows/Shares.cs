@@ -132,7 +132,7 @@ public static class Shares
     private static readonly (string, string)[] Markers =
     {
         ("[Parley", "(Parley"), ("[Nachricht von", "(Nachricht von"), ("[Antwort von", "(Antwort von"),
-        ("<speak", "‹speak"), ("</speak", "‹/speak"),
+        ("<speak", "\u2039speak"), ("</speak", "\u2039/speak"),
     };
 
     public static string Defuse(string text)
@@ -142,7 +142,7 @@ public static class Shares
         return t;
     }
 
-    private static bool IsNewline(char c) => c is '\n' or '\r' or '\u000B' or '\u000C' or '\u0085' or ' ' or ' ';
+    private static bool IsNewline(char c) => c is '\n' or '\r' or '\u000B' or '\u000C' or '\u0085' or '\u2028' or '\u2029';
 
     public static string CleanName(string raw)
     {
