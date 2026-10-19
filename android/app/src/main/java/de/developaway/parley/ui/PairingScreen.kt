@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.developaway.parley.AppModel
+import de.developaway.parley.JoinLink
 import de.developaway.parley.Pairing
 
 /** Not paired yet (ios PairingView): the steps, "QR-Code scannen", or paste the link. */
@@ -55,7 +56,11 @@ fun PairingScreen(m: AppModel, scan: () -> Unit, error: String?, setError: (Stri
     val c = LocalColors.current
     val clip = LocalClipboardManager.current
     var link by remember { mutableStateOf("") }
-    fun use(text: String) = try { m.pair(Pairing.parse(text)); setError(null) } catch (e: Pairing.Invalid) { setError(e.message) }
+    fun use(text: String) {
+        // v7: an invite to someone else's session works here too — without a host of one's own.
+        JoinLink.parse(text)?.let { m.pendingJoin = it; setError(null); return }
+        try { m.pair(Pairing.parse(text)); setError(null) } catch (e: Pairing.Invalid) { setError(e.message) }
+    }
 
     Column(Modifier.fillMaxSize().background(c.background).statusBarsPadding().imePadding().verticalScroll(rememberScrollState()).navigationBarsPadding()
         .padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {

@@ -68,7 +68,11 @@ import kotlinx.coroutines.delay
 @Composable
 fun SessionScreen(m: AppModel, id: String, compose: Boolean, back: () -> Unit) {
     val c = LocalColors.current
-    val session = m.relay.snapshot?.sessions?.firstOrNull { it.id == id }
+    val relay = m.relay(id)
+    val session = relay.snapshot?.sessions?.firstOrNull { it.id == id }
+    // v7: in a shared session every message says who wrote it — mine on the right, others' left.
+    val guest = m.guestShare(id)
+    val shared = guest != null || m.relay.snapshot?.sessions?.firstOrNull { it.id == id }?.shared?.isNotEmpty() == true
     val items = m.histories[id]
     val pending = m.pending[id] ?: emptyList()
     var text by rememberSaveable { mutableStateOf("") }
@@ -90,7 +94,7 @@ fun SessionScreen(m: AppModel, id: String, compose: Boolean, back: () -> Unit) {
                 session?.let { Text(Fmt.stateLabel(it), fontSize = 13.sp, color = c.secondary) }
             }
             Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                session?.let { SessionRing(it, c.state(it.state), m.relay.hostNow(), 26.dp) }
+                session?.let { SessionRing(it, c.state(it.state), relay.hostNow(), 26.dp) }
             }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -103,7 +107,12 @@ fun SessionScreen(m: AppModel, id: String, compose: Boolean, back: () -> Unit) {
                 val it0 = row.first()
                 when {
                     it0.kind == "tool" -> ToolRow(row, c)
-                    it0.kind == "user" || it0.kind == "voice" -> Bubble(it0.text ?: "", if (it0.kind == "voice") "gesprochen" else null, c)
+                    it0.kind == "user" || it0.kind == "voice" -> {
+                        val mine = guest?.let { it0.by == it.name } ?: (it0.by == null)
+                        val author = if (!shared) null else if (mine) "Sie" else it0.by ?: guest?.host?.ifEmpty { null } ?: "Gastgeber"
+                        Bubble(it0.text ?: "", if (it0.kind == "voice") "gesprochen" else null, c, mine = mine, author = author,
+                            avatar = if (mine) guest?.name ?: "S" else author)
+                    }
                     it0.kind == "image" -> ImageItem(m, id, it0, c)
                     it0.kind == "speak" -> Text("„${it0.text ?: ""}“", fontStyle = FontStyle.Italic, color = c.secondary, fontSize = 16.sp)
                     else -> SelectionContainer { Markdown(it0.text ?: "", c) }
@@ -117,7 +126,7 @@ fun SessionScreen(m: AppModel, id: String, compose: Boolean, back: () -> Unit) {
                 placeholder = { Text("Nachricht an ${session?.name ?: "die Session"}") }, maxLines = 6,
                 colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                     focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-            val canSend = text.isNotBlank() && m.relay.canSend
+            val canSend = text.isNotBlank() && relay.canSend && guest?.listen != true   // "nur zuhören"
             Box(Modifier.size(40.dp).clip(CircleShape).background(if (canSend) c.accent else c.accent.copy(alpha = 0.4f))
                 .clickable(enabled = canSend) { m.say(id, text); text = "" }, contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.ArrowUpward, "Senden", tint = Color.White)
@@ -137,11 +146,21 @@ private fun rows(items: List<ChatItem>): List<List<ChatItem>> {
 }
 
 @Composable
-private fun Bubble(text: String, caption: String?, c: Colors, modifier: Modifier = Modifier, faded: Boolean = false) {
-    Column(modifier.fillMaxWidth().padding(start = 44.dp), horizontalAlignment = Alignment.End) {
+private fun Bubble(text: String, caption: String?, c: Colors, modifier: Modifier = Modifier, faded: Boolean = false, mine: Boolean = true,
+                   author: String? = null, avatar: String? = null) {
+    Column(modifier.fillMaxWidth().padding(start = if (mine) 44.dp else 0.dp, end = if (mine) 0.dp else 44.dp),
+        horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
+        author?.let {
+            Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(avatar ?: it, c, 20.dp)
+                Spacer(Modifier.size(6.dp))
+                Text(it, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = c.text)
+            }
+        }
         SelectionContainer {
             Text(text, color = c.text.copy(alpha = if (faded) 0.55f else 1f), fontSize = 16.sp,
-                modifier = Modifier.clip(RoundedCornerShape(22.dp)).background(c.raised).padding(horizontal = 16.dp, vertical = 12.dp))
+                modifier = Modifier.clip(RoundedCornerShape(22.dp)).background(if (mine) c.raised else c.idle.copy(alpha = 0.16f))
+                    .padding(horizontal = 16.dp, vertical = 12.dp))
         }
         caption?.let { Text(it, fontSize = 12.sp, color = c.secondary, modifier = Modifier.padding(top = 4.dp)) }
     }

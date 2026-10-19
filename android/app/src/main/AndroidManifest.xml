@@ -40,6 +40,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="parley" android:host="pair" />
             </intent-filter>
+            <!-- An invite to someone's shared session: parley://join?u=…&r=…&k=…&e=…&s=…&h=… -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="parley" android:host="join" />
+            </intent-filter>
         </activity>
 
         <!-- Portrait only, the QR scanner too (instead of its default landscape). -->

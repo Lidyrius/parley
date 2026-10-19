@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Laptop
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
@@ -85,7 +86,7 @@ private fun action(s: Session): String? = when {
 /** The state as the card says it — a put-off call first. */
 private fun cardState(s: Session, at: Double): String = s.callback?.let {
     if (it == 0.0) "wartet auf Rückruf" else "ruft in ${Fmt.clock(maxOf(0.0, it - at))} an"
-} ?: Fmt.stateLabel(s)
+} ?: s.asking?.let { "Rückfrage an $it" } ?: Fmt.stateLabel(s)
 
 private fun stateInk(s: Session, c: Colors): Color = when {
     s.callback != null -> c.ink(c.waiting)
@@ -101,25 +102,29 @@ fun Overview(m: AppModel, openSession: (String, Boolean) -> Unit, openSettings: 
     val relay = m.relay
     var detail by remember { mutableStateOf<String?>(null) }
     var snapshots by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf<String?>(null) }
+    // Only a guest somewhere, no own host: just the shared sessions.
+    val own = m.pairing != null || m.demo || m.guests.isEmpty()
     var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     PullToRefreshBox(refreshing, onRefresh = {
         refreshing = true
-        relay.reconnect()
+        if (m.pairing != null) relay.reconnect()
+        m.guestRelays.values.forEach { it.reconnect() }
         scope.launch { delay(700); refreshing = false }
     }, Modifier.fillMaxSize().background(c.background)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp)
             .padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Box(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Row(Modifier.align(Alignment.TopEnd), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SnapshotsPill(c) { snapshots = true }
+                    if (own) SnapshotsPill(c) { snapshots = true }
                     Box(Modifier.size(46.dp).clip(CircleShape).background(c.card).clickable(onClick = openSettings),
                         contentAlignment = Alignment.Center) { Icon(Icons.Filled.Settings, "Einstellungen", tint = c.accent) }
                 }
                 Text("Parley", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = c.text, modifier = Modifier.padding(top = 48.dp))
             }
-            StatusHeader(m, relay.status, c)
+            if (own) StatusHeader(m, relay.status, c)
             m.call.failure?.let { f ->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.red.copy(alpha = 0.12f)).padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically) {
@@ -127,7 +132,8 @@ fun Overview(m: AppModel, openSession: (String, Boolean) -> Unit, openSettings: 
                     Icon(Icons.Filled.Close, "Schließen", tint = c.secondary, modifier = Modifier.clickable { m.call.failure = null })
                 }
             }
-            Content(m, c) { detail = it }
+            if (own) Content(m, c) { detail = it }
+            GuestSection(m) { openSession(it, false) }
         }
     }
 
@@ -138,7 +144,15 @@ fun Overview(m: AppModel, openSession: (String, Boolean) -> Unit, openSettings: 
             SessionSheet(open, relay.skew, c,
                 close = { detail = null },
                 openHistory = { detail = null; openSession(open.id, false) },
-                message = { detail = null; openSession(open.id, true) })
+                message = { detail = null; openSession(open.id, true) },
+                share = { detail = null; sharing = open.id })
+        }
+    }
+    val shared = sharing?.let { id -> relay.snapshot?.sessions?.firstOrNull { it.id == id } }
+    if (shared != null) {
+        val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet({ sharing = null }, sheetState = state, containerColor = c.background) {
+            ShareSessionSheet(m, shared) { sharing = null }
         }
     }
     if (snapshots) {
@@ -299,6 +313,7 @@ private fun Tile(s: Session, at: Double, c: Colors, canSend: Boolean, modifier: 
         Text(s.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = if (s.state == SessionState.stopped) c.secondary else c.text,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(cardState(s, at), fontSize = 15.sp, color = stateInk(s, c), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        SharedBadge(s.shared, c)
         action(s)?.let { Spacer(Modifier.height(8.dp)); Capsule(it, c, enabled = canSend, onClick = act) }
     }
 }
@@ -320,6 +335,7 @@ private fun ListRow(s: Session, at: Double, c: Colors, canSend: Boolean, open: (
             val line = s.stats?.lastLine
             if (s.isLive) MiniWave(c.state(s.state), Modifier.width(96.dp).height(16.dp))
             else if (!line.isNullOrEmpty()) Text("„$line“", fontSize = 15.sp, fontStyle = FontStyle.Italic, color = c.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            SharedBadge(s.shared, c)
             action(s)?.let { Capsule(it, c, enabled = canSend, modifier = Modifier.padding(top = 2.dp), onClick = act) }
         }
     }
@@ -327,7 +343,7 @@ private fun ListRow(s: Session, at: Double, c: Colors, canSend: Boolean, open: (
 
 /** Tapping a card: figures, the agent's task, what it said last, and the way to its history or a message. */
 @Composable
-private fun SessionSheet(s: Session, skew: Double, c: Colors, close: () -> Unit, openHistory: () -> Unit, message: () -> Unit) {
+private fun SessionSheet(s: Session, skew: Double, c: Colors, close: () -> Unit, openHistory: () -> Unit, message: () -> Unit, share: () -> Unit) {
     val now by rememberNow()
     val at = now + skew
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -359,6 +375,14 @@ private fun SessionSheet(s: Session, skew: Double, c: Colors, close: () -> Unit,
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
             Capsule("Verlauf öffnen", c, modifier = Modifier.weight(1f).height(50.dp), onClick = openHistory)
             Capsule("Nachricht", c, filled = false, modifier = Modifier.weight(1f).height(50.dp), onClick = message)
+        }
+        // v7: share one of the owner's own sessions (a guest's sessions open their history directly).
+        Row(Modifier.fillMaxWidth().height(46.dp).clip(Pill).clickable(onClick = share), horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.GroupAdd, null, tint = c.accent, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(if (s.shared.isEmpty()) "Teilen …" else "Geteilt mit ${s.shared.joinToString(", ") { it.name }}",
+                color = c.accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

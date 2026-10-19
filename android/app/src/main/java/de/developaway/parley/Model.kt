@@ -36,6 +36,8 @@ data class Session(
     val resumable: Boolean? = null,
     val tasks: List<BackgroundTask> = emptyList(),
     val stats: Stats? = null,
+    val shared: List<ShareTag> = emptyList(),   // v7: the guests it is shared with (Sir's side)
+    val asking: String? = null,                 // v7: a question waits for this guest
 ) {
     val name: String get() = label.ifEmpty { project.ifEmpty { id.take(8) } }
     val canResume: Boolean get() = resumable ?: (state == SessionState.parked)
@@ -48,6 +50,18 @@ data class Session(
         return ((until - at) / maxOf(1.0, until - since)).coerceIn(0.0, 1.0)
     }
 }
+
+/** v7: one guest of a shared session — the share's id (to remove him), his name and role. */
+data class ShareTag(val id: String, val name: String, val role: String = "")
+
+/** v7: a guest asks to join one of Sir's sessions (`join` frame). `code`: four digits the guest sees too. */
+data class JoinRequest(val id: String, val session: String, val label: String, val name: String, val device: String? = null, val code: String? = null)
+
+/** v7: Sir let the guest in — the fresh room sealed to the guest's key (`pub`: the host's half, `box`: the room). */
+data class ShareMove(val share: String, val pub: String, val box: String, val role: String? = null, val listen: Boolean? = null)
+
+/** v7: a question for this phone's owner as a guest (`ask` frame). */
+data class GuestAsk(val id: String, val session: String, val label: String, val text: String, val replies: List<String>? = null, val seconds: Int? = null)
 
 data class RateLimit(val kind: String? = null, val percentUsed: Double? = null)
 
@@ -86,6 +100,7 @@ data class ChatItem(
     val at: Double? = null,
     val add: Int? = null,
     val del: Int? = null,
+    val by: String? = null,              // v7: a guest's name (user / voice), null = the owner
 )
 
 data class HistoryPage(val id: String, val before: String?, val more: Boolean, val items: List<ChatItem>)
@@ -124,6 +139,18 @@ sealed interface Incoming {
     data class Image(val key: String, val mime: String?, val data: String?) : Incoming
     data class CaptionFrame(val caption: Caption) : Incoming
     data class SnapshotOpened(val result: SnapshotResult) : Incoming
+    /** v7: the link for a new share of `session` (Sir's side). */
+    data class ShareLink(val id: String, val session: String, val link: String) : Incoming
+    /** v7: a guest asks to join (Sir's side). */
+    data class Join(val request: JoinRequest) : Incoming
+    /** v7: Sir let us in — move to the fresh room (guest side); the share is over. */
+    data class Move(val move: ShareMove) : Incoming
+    data object ShareEnd : Incoming
+    /** v7: a short message from the host for this phone (e.g. too many messages). */
+    data class Notice(val text: String) : Incoming
+    /** v7: a question for the guest, and its end (answered, passed on, timed out). */
+    data class Ask(val ask: GuestAsk) : Incoming
+    data class AskEnd(val id: String) : Incoming
     data object Ignored : Incoming
 }
 
@@ -146,6 +173,29 @@ object Frames {
                     r.str("id")?.let { SnapshotOutcome(it, r.optString("name"), r.optString("result")) }
                 }))
             } ?: Incoming.Ignored
+            "share" -> {
+                val id = o.s("id"); val session = o.s("session"); val link = o.s("link")
+                if (id != null && session != null && link != null) Incoming.ShareLink(id, session, link) else Incoming.Ignored
+            }
+            "join" -> {
+                val id = o.s("id"); val session = o.s("session"); val label = o.s("label"); val name = o.s("name")
+                if (id != null && session != null && label != null && name != null)
+                    Incoming.Join(JoinRequest(id, session, label, name, o.s("device"), o.s("code"))) else Incoming.Ignored
+            }
+            "move" -> {
+                val share = o.s("share"); val pub = o.s("pub"); val box = o.s("box")
+                if (share != null && pub != null && box != null)
+                    Incoming.Move(ShareMove(share, pub, box, o.s("role"), o.opt("listen") as? Boolean)) else Incoming.Ignored
+            }
+            "share-end" -> Incoming.ShareEnd
+            "notice" -> o.s("text")?.let { Incoming.Notice(it) } ?: Incoming.Ignored
+            "ask" -> {
+                val id = o.s("id"); val session = o.s("session"); val label = o.s("label"); val text = o.s("text")
+                if (id != null && session != null && label != null && text != null) Incoming.Ask(GuestAsk(id, session, label, text,
+                    o.optJSONArray("replies")?.let { a -> (0 until a.length()).mapNotNull { a.opt(it) as? String } },
+                    (o.opt("seconds") as? Number)?.toInt())) else Incoming.Ignored
+            }
+            "ask-end" -> o.s("id")?.let { Incoming.AskEnd(it) } ?: Incoming.Ignored
             else -> Incoming.Ignored
         }
     }
@@ -183,6 +233,11 @@ object Frames {
             resumable = if (o.has("resumable") && !o.isNull("resumable")) o.optBoolean("resumable") else null,
             tasks = o.optJSONArray("tasks").objects().map { BackgroundTask(it.optString("type"), it.optString("description")) },
             stats = stats,
+            shared = o.optJSONArray("shared").objects().mapNotNull { t ->
+                val tid = t.s("id") ?: return@mapNotNull null
+                ShareTag(tid, t.s("name") ?: return@mapNotNull null, t.s("role") ?: "")
+            },
+            asking = o.str("asking"),
         )
     }
 
@@ -199,7 +254,7 @@ object Frames {
         more = o.optBoolean("more", false),
         items = o.optJSONArray("items").objects().mapNotNull { i ->
             val id = i.str("id") ?: return@mapNotNull null
-            ChatItem(id, i.optString("k", "other"), i.str("text"), i.optString("who") == "user", i.num("at"), i.ints("add"), i.ints("del"))
+            ChatItem(id, i.optString("k", "other"), i.str("text"), i.optString("who") == "user", i.num("at"), i.ints("add"), i.ints("del"), i.str("by"))
         },
     )
 
@@ -237,9 +292,20 @@ object Outgoing {
     fun snapshotDelete(id: String) = obj("t" to "snapshot", "op" to "delete", "id" to id)
     /** "Not now" on the ringing screen: ring again in `after` s, or null = I'll call back. */
     fun later(after: Int?) = obj("t" to "later", "after" to after)
+    /** v7: share a session (Sir), let a guest in or end a share (Sir), say who I am (guest). */
+    fun shareCreate(session: String) = obj("t" to "share", "op" to "create", "id" to session)
+    fun shareApprove(id: String, role: String, listen: Boolean, full: Boolean, mine: String) =
+        obj("t" to "share", "op" to "approve", "id" to id, "role" to role, "listen" to listen, "full" to full, "mine" to mine)
+    fun shareRemove(id: String) = obj("t" to "share", "op" to "remove", "id" to id)
+    fun join(name: String, device: String, pub: String) = obj("t" to "join", "name" to name, "device" to device, "pub" to pub)
+    /** v7: the guest's answer to a question, or `pass` = give it to the owner. */
+    fun answer(id: String, text: String, pass: Boolean = false) =
+        if (pass) obj("t" to "answer", "id" to id, "pass" to true) else obj("t" to "answer", "id" to id, "text" to text)
 }
 
 private fun JSONObject.str(k: String): String? = if (has(k) && !isNull(k)) optString(k).takeIf { it.isNotEmpty() } else null
+/** A string field, empty allowed (a required field of a v7 frame); null when missing or not a string. */
+private fun JSONObject.s(k: String): String? = opt(k) as? String
 private fun JSONObject.num(k: String): Double? = if (has(k) && !isNull(k)) optDouble(k).takeIf { !it.isNaN() } else null
 private fun JSONObject.ints(k: String): Int? = num(k)?.toInt()
 private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }

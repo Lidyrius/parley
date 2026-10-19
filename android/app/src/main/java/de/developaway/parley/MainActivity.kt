@@ -3,6 +3,7 @@ package de.developaway.parley
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -32,6 +33,7 @@ import de.developaway.parley.ui.PairingScreen
 import de.developaway.parley.ui.ParleyTheme
 import de.developaway.parley.ui.SessionScreen
 import de.developaway.parley.ui.SettingsScreen
+import de.developaway.parley.ui.ShareOverlays
 
 class MainActivity : ComponentActivity() {
     private var pairError by mutableStateOf<String?>(null)
@@ -66,11 +68,14 @@ class MainActivity : ComponentActivity() {
 
                 Box(Modifier.fillMaxSize()) {
                     when {
-                        m.pairing == null -> PairingScreen(m, ::scan, pairError) { pairError = it }
+                        !m.isPaired -> PairingScreen(m, ::scan, pairError) { pairError = it }
                         settings -> { BackHandler { settings = false }; SettingsScreen(m) { settings = false } }
                         session != null -> { BackHandler { session = null }; SessionScreen(m, session!!, compose) { session = null } }
                         else -> Overview(m, { id, c -> session = id; compose = c }) { settings = true }
                     }
+                    ShareOverlays(m)
+                    // A guest's questions reach him as a notification while Unterwegs keeps the share's room open.
+                    LaunchedEffect(m.guests.isNotEmpty()) { if (m.guests.isNotEmpty() && !m.demo) askPermissions(mic = m.pairing != null) }
                     AnimatedVisibility(call.showsScreen && call.phase != CallPhase.none,
                         enter = slideInVertically { it }, exit = slideOutVertically { it }) {
                         BackHandler { call.showsScreen = false }
@@ -108,6 +113,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun usePairing(link: String) {
+        // v7: someone shares a session with this phone.
+        if (Uri.parse(link.trim()).host.equals("join", true)) {
+            JoinLink.parse(link)?.let { model.pendingJoin = it; pairError = null } ?: run { pairError = "Der Einladungslink ist ungültig." }
+            return
+        }
         try {
             model.pair(Pairing.parse(link))
             pairError = null
@@ -122,9 +132,9 @@ class MainActivity : ComponentActivity() {
             .setBeepEnabled(false).setOrientationLocked(false))
     }
 
-    private fun askPermissions() {
+    private fun askPermissions(mic: Boolean = true) {
         val want = buildList {
-            add(Manifest.permission.RECORD_AUDIO)
+            if (mic) add(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
         }.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         if (want.isNotEmpty()) permissions.launch(want.toTypedArray())

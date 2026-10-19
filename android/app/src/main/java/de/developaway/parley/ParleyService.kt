@@ -72,6 +72,7 @@ class ParleyService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         if (phase == CallPhase.ringing && !m.isForeground) nm.notify(RING_ID, ringingNotification(m.call.label)) else nm.cancel(RING_ID)
         m.relay.ensure()
+        m.guestRelays.values.forEach { it.ensure() }
     }
 
     private fun ongoingNotification(phase: CallPhase, label: String?): Notification {
@@ -150,6 +151,7 @@ class ParleyService : Service() {
         private var running: ParleyService? = null
         const val CHANNEL_ONGOING = "ongoing"
         const val CHANNEL_CALLS = "calls"
+        const val CHANNEL_ASKS = "asks"
         const val ACTION_DECLINE = "decline"
         const val ACTION_HANG_UP = "hangup"
 
@@ -160,6 +162,27 @@ class ParleyService : Service() {
                 setSound(null, null)   // the service rings itself
                 enableVibration(false)
             })
+            nm.createNotificationChannel(NotificationChannel(CHANNEL_ASKS, "Rückfragen in geteilten Sessions", NotificationManager.IMPORTANCE_HIGH))
+        }
+
+        /**
+         * v7: a question for this phone as a guest while the app is in the background (its share's
+         * room stays open only while Unterwegs — the iPhone gets it as a push instead).
+         */
+        fun notifyAsk(c: Context, a: GuestAsk) {
+            if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(c, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+            val open = PendingIntent.getActivity(c, 3, Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val n = NotificationCompat.Builder(c, CHANNEL_ASKS)
+                .setSmallIcon(R.drawable.ic_stat_parley)
+                .setContentTitle("Rückfrage · ${a.label}")
+                .setContentText(a.text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(a.text))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(open)
+                .build()
+            c.getSystemService(NotificationManager::class.java).notify(a.id.hashCode(), n)
         }
 
         /** The model changed (Unterwegs, the call): the service follows. */

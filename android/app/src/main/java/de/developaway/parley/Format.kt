@@ -78,4 +78,7 @@ object Prefs {
     fun grid(c: Context) = p(c).getBoolean("grid", true)
     fun set(c: Context, key: String, v: Boolean) = p(c).edit().putBoolean(key, v).apply()
     fun set(c: Context, key: String, v: Int) = p(c).edit().putInt(key, v).apply()
+    /** v7: the guest's name (join sheet) and the owner's own role in a share (approval sheet), remembered. */
+    fun string(c: Context, key: String) = p(c).getString(key, "") ?: ""
+    fun set(c: Context, key: String, v: String) = p(c).edit().putString(key, v).apply()
 }

@@ -13,7 +13,7 @@ object Demo {
             """{"startedAt":${ago(startedMin * 60)},"contextPercent":$ctx,"costUsd":$cost,"turns":$turns,"replies":$replies,"lastLine":${line?.let { "\"$it\"" } ?: "null"}}"""
         val sessions = listOf(
             """{"id":"demo-parley","label":"Parley","project":"vloude","state":"speaking","since":${ago(9)},"voice":true,"resumable":false,"tasks":[],"stats":${stats(74, 41, 3.12, 14, 6, "Die Tests laufen wieder grün. Soll ich den Release vorbereiten?")}}""",
-            """{"id":"demo-shirts","label":"Shirts","project":"ds-shirts","state":"working","since":${ago(134)},"voice":false,"resumable":false,"tasks":[],"stats":${stats(38, 22, 1.47, 7, 3, "Ich baue jetzt die Mockups für die neue Kollektion.")}}""",
+            """{"id":"demo-shirts","label":"Shirts","project":"ds-shirts","state":"working","since":${ago(134)},"voice":false,"resumable":false,"tasks":[],"shared":[{"id":"sh1","name":"Max","role":"Marketing"}],"stats":${stats(38, 22, 1.47, 7, 3, "Ich baue jetzt die Mockups für die neue Kollektion.")}}""",
             """{"id":"demo-angebote","label":"Angebote","project":"angebotserstellung","state":"waiting","since":${ago(48)},"until":${now + 252_000},"voice":false,"resumable":true,"tasks":[],"stats":${stats(21, 18, 0.86, 4, 2, "Ich warte fünf Minuten auf den Build und melde mich dann.")}}""",
             """{"id":"demo-relay","label":"Relay","project":"parley-relay","state":"background","since":${ago(203)},"voice":false,"resumable":false,"tasks":[{"type":"subagent","description":"Durable Object gegen das Protokoll testen"}],"stats":${stats(52, 57, 2.31, 9, 4, "Ein Agent prüft das Protokoll, ich melde mich, sobald er fertig ist.")}}""",
             """{"id":"demo-edge","label":"Edge Army","project":"pmr","state":"parked","since":${ago(611)},"voice":false,"resumable":true,"tasks":[],"stats":${stats(95, 64, 4.02, 18, 7, "Zwei neue Kandidaten gefunden. Weitermachen?")}}""",
@@ -42,6 +42,7 @@ object Demo {
 
     val history = listOf(
         ChatItem("d1", "user", "Bau bitte den Export-Button in die Rechnungsliste ein.", fromUser = true),
+        ChatItem("d1b", "user", "Und nenn den Knopf „Exportieren“, nicht „Export“ – so steht es auch im Newsletter.", fromUser = true, by = "Max"),
         ChatItem("d2", "tool", "Bash · Find the invoice list"),
         ChatItem("d3", "tool", "Bash · Read the export helpers"),
         ChatItem("d4", "assistant", "Die Liste rendert `InvoiceList`, der Export fehlt noch. Ich baue ihn als eigene Datei, damit die Liste schlank bleibt."),

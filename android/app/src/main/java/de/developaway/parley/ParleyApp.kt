@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Base64
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -54,7 +55,21 @@ class AppModel(private val app: Application) {
     /** The host's answer to the last "Öffnen" of a snapshot; null while it is on the way. */
     var snapshotOpened by mutableStateOf<SnapshotResult?>(null); private set
 
+    // v7 (Guests.kt): shares of other people's sessions this phone joined, a link waiting to be
+    // joined, the invite links Sir made (by session), guests asking Sir to let them in, a message
+    // for the guest, and questions for this phone as a guest (the Rückfrage screen shows the first).
+    val guests = mutableStateListOf<GuestShare>()
+    val guestRelays = mutableMapOf<String, Relay>()
+    var pendingJoin by mutableStateOf<JoinLink?>(null)
+    val shareLinks = mutableStateMapOf<String, String>()
+    val joinRequests = mutableStateListOf<JoinRequest>()
+    var guestNotice by mutableStateOf<String?>(null)
+    val guestAsks = mutableStateListOf<GuestAsk>()
+
     var demo = false; private set
+
+    /** Paired with an own host — or a guest somewhere: then the overview shows the shared sessions. */
+    val isPaired: Boolean get() = pairing != null || guests.isNotEmpty()
 
     /** Sample data instead of a relay (Demo.kt). */
     fun startDemo(kind: String) {
@@ -63,6 +78,10 @@ class AppModel(private val app: Application) {
         pairing = Pairing("https://relay.example", "demo", "demo")
         relay.demo(Frames.snapshot(org.json.JSONObject(Demo.frame(System.currentTimeMillis()))))
         histories["demo-shirts"] = Demo.history
+        // `join`: a guest asks to join (the approval sheet); `ask`: a question as a guest.
+        if (kind == "join") joinRequests += JoinRequest("demo-join", "demo-shirts", "Shirts", "Max", "Pixel 9", "4821")
+        if (kind == "ask") guestAsks += GuestAsk("demo-ask", "demo-shirts", "Shirts",
+            "Max, für die Überschrift habe ich zwei Varianten. Welche passt zur Kampagne?", listOf("Variante A", "Variante B"), 120)
         if (kind in setOf("speaking", "listening", "idle", "incoming", "connecting")) call.demo(kind)
     }
 
@@ -89,11 +108,19 @@ class AppModel(private val app: Application) {
             if (phase == CallPhase.none && !isForeground && !away) relay.disconnect()
         }
         pairing?.let { relay.use(it) }
+        startGuests()
     }
 
     private fun Relay.resume(id: String) = send(Outgoing.resume(id))
 
     private fun handle(f: Incoming) {
+        if (f is Incoming.ShareLink) { shareLinks[f.session] = f.link; return }
+        if (f is Incoming.Join) { joinRequests.removeAll { it.id == f.request.id }; joinRequests += f.request; return }
+        store(f)
+    }
+
+    /** The own host's frames — a share's history and images go in here too, the same store (ids don't collide). */
+    private fun store(f: Incoming) {
         when (f) {
             is Incoming.Peer -> call.relayChanged()
             is Incoming.Audio -> call.hostAudioChanged(f.state, f.label)
@@ -138,7 +165,10 @@ class AppModel(private val app: Application) {
     /** The app came up or went to the background: the socket stays only while Unterwegs or in a call. */
     fun foreground(on: Boolean) {
         isForeground = on
-        if (pairing == null || demo) return
+        if (demo) return
+        // A share's room too (no push here: while Unterwegs it stays open, as the own one).
+        for (r in guestRelays.values) if (on) r.ensure() else if (!away) r.disconnect()
+        if (pairing == null) return
         if (call.phase != CallPhase.none) ParleyService.sync(app)
         if (on) relay.ensure() else if (!away && call.phase == CallPhase.none) relay.disconnect()
     }
@@ -170,22 +200,127 @@ class AppModel(private val app: Application) {
         call.startOutgoing()
     }
 
-    fun loadHistory(id: String) = relay.send(Outgoing.history(id))
+    fun loadHistory(id: String) = relay(id).send(Outgoing.history(id))
 
     fun loadOlder(id: String) {
         val first = histories[id]?.firstOrNull()?.id ?: return
-        relay.send(Outgoing.history(id, before = first))
+        relay(id).send(Outgoing.history(id, before = first))
     }
 
     fun loadImage(session: String, key: String) {
-        if (requestedImages.add(key)) relay.send(Outgoing.image(session, key))
+        if (requestedImages.add(key)) relay(session).send(Outgoing.image(session, key))
     }
 
     fun say(id: String, text: String) {
         val t = text.trim()
         if (t.isEmpty()) return
         pending[id] = (pending[id] ?: emptyList()) + t
-        relay.send(Outgoing.say(id, t))
+        relay(id).send(Outgoing.say(id, t))
+    }
+
+    // Shared sessions, the guest's side (ios/ParleyMobile/Guests.swift).
+
+    private fun startGuests() {
+        guests.addAll(GuestStore.load(app))
+        guests.forEach(::connect)
+    }
+
+    private fun saveGuests() = GuestStore.save(app, guests.toList())
+
+    /** "Beitreten": keep the share, dial its room, say who I am. */
+    fun join(link: JoinLink, name: String) {
+        val g = GuestShare.create(link.pairing, link.label, link.host, name.trim())
+        guests.filter { it.pairing.room == g.pairing.room }.forEach { leave(it.id) }
+        guests += g
+        saveGuests()
+        pendingJoin = null
+        connect(g)
+    }
+
+    /** Leave a share (or give up waiting): the owner's host ends it when told; the room just goes quiet. */
+    fun leave(id: String) {
+        guestRelays.remove(id)?.forget()
+        guests.removeAll { it.id == id }
+        saveGuests()
+    }
+
+    /** The relay that carries session `id`: a share's, else the own host's. */
+    fun relay(id: String): Relay = guests.firstNotNullOfOrNull { g ->
+        guestRelays[g.id]?.takeIf { r -> r.snapshot?.sessions?.any { it.id == id } == true }
+    } ?: relay
+
+    /** The share a session belongs to, if it is someone else's. */
+    fun guestShare(id: String): GuestShare? = guests.firstOrNull { g -> guestRelays[g.id]?.snapshot?.sessions?.any { it.id == id } == true }
+
+    private fun connect(g: GuestShare) {
+        val r = guestRelays.getOrPut(g.id) { Relay(scope, deviceName) }
+        // Not let in yet: say who I am (and the key the fresh room is sealed to). Let in: nothing —
+        // the iPhone sends its notification push token here; Android has no push.
+        r.onOpened = { guests.firstOrNull { it.id == g.id }?.let { if (!it.active) r.send(Outgoing.join(it.name, Build.MODEL ?: "Android", it.pub)) } }
+        r.onFrame = { guestEvent(g.id, it) }
+        r.use(g.pairing)
+        r.reconnect()
+    }
+
+    private fun guestEvent(id: String, f: Incoming) {
+        val i = guests.indexOfFirst { it.id == id }
+        if (i < 0) return
+        val g = guests[i]
+        when (f) {
+            // The owner's host came (back) into the invite room after we did: ask again (one join per link and key).
+            is Incoming.Peer -> if (f.host && !g.active) guestRelays[id]?.send(Outgoing.join(g.name, Build.MODEL ?: "Android", g.pub))
+            is Incoming.Move -> {
+                // Let in: the fresh room, sealed to this phone's key — the invite's room is dead from here on.
+                if (g.active) return
+                val room = g.open(f.move) ?: return
+                val moved = runCatching { Pairing.check(g.pairing.relay, room.first, room.second, room.third) }.getOrNull() ?: return
+                guests[i] = g.copy(pairing = moved, share = f.move.share, role = f.move.role ?: "", listen = f.move.listen ?: false, active = true)
+                saveGuests()
+                guestRelays[id]?.let { it.use(moved); it.reconnect() }
+            }
+            is Incoming.ShareEnd -> {
+                guestNotice = "${if (g.host.isEmpty()) "Die Freigabe" else g.host + " hat die Freigabe"} für „${g.label}“ beendet."
+                leave(id)
+            }
+            is Incoming.Notice -> guestNotice = f.text
+            is Incoming.Ask -> {
+                guestAsks.removeAll { it.id == f.ask.id }
+                guestAsks += f.ask
+                if (!isForeground) ParleyService.notifyAsk(app, f.ask)
+            }
+            is Incoming.AskEnd -> guestAsks.removeAll { it.id == f.id }
+            is Incoming.History, is Incoming.Image -> store(f)
+            else -> {}   // calls, rings and the owner's controls aren't a guest's
+        }
+    }
+
+    /** The guest answers (text, a predicted answer, dictation) or gives the question to the owner. */
+    fun answer(a: GuestAsk, text: String, pass: Boolean = false) {
+        guestAsks.removeAll { it.id == a.id }
+        if (!demo) relay(a.session).send(Outgoing.answer(a.id, text, pass))
+    }
+
+    // Shared sessions, the owner's side.
+
+    /** "Teilen": ask the host for a one-time link (it arrives as `shareLinks[session]`). */
+    fun share(session: String) {
+        shareLinks.remove(session)
+        if (demo) {   // a link to look at, nothing behind it
+            shareLinks[session] = "parley://join?u=https%3A%2F%2Frelay.example&r=demo-room&k=demo&e=demo&s=Shirts&h=Sydney"
+            return
+        }
+        relay.send(Outgoing.shareCreate(session))
+    }
+
+    fun approve(r: JoinRequest, role: String, listen: Boolean, full: Boolean, mine: String) {
+        joinRequests.removeAll { it.id == r.id }
+        relay.send(Outgoing.shareApprove(r.id, role, listen, full, mine))
+    }
+
+    /** Say no to a guest who asks, or remove one who is in. */
+    fun removeShare(id: String) {
+        joinRequests.removeAll { it.id == id }
+        relay.send(Outgoing.shareRemove(id))
     }
 
     // Snapshots: the host keeps and opens them; the list comes back with the next sessions frame.
