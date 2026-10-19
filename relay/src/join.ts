@@ -84,7 +84,7 @@ export const JOIN_HTML = `<!doctype html>
 </html>
 `;
 
-// iOS universal links: /join on this relay opens the Parley app directly (it reads the fragment).
+// iOS universal links: /join and /pair (the setup QR code, scanned with the camera) on this relay open the Parley app directly (it reads the fragment).
 export const APPLE_APP_SITE_ASSOCIATION = JSON.stringify({
-	applinks: { details: [{ appIDs: ["384887N3UL.de.developaway.parley.mobile"], components: [{ "/": "/join" }] }] },
+	applinks: { details: [{ appIDs: ["384887N3UL.de.developaway.parley.mobile"], components: [{ "/": "/join" }, { "/": "/pair" }] }] },
 });

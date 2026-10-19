@@ -47,7 +47,7 @@ final class PaletteSpecTests: XCTestCase {
     func testThePhonesConfirmationAndHello() {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"palette","saved":"Apple"}"#), .paletteSaved("Apple"))
         XCTAssertNil(RelayFrame.parse(#"{"t":"palette"}"#))
-        XCTAssertEqual(RelayFrame.parse(#"{"t":"hello","device":"iPhone"}"#), .hello)
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"hello","device":"iPhone"}"#), .hello(device: "iPhone"))
     }
 }
 

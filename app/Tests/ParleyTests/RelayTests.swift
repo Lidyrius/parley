@@ -211,7 +211,7 @@ final class RelayClientTests: XCTestCase {
             drain()
         }
         XCTAssertEqual(world.resumed, ["s1"])
-        XCTAssertEqual(world.events, [.hello])   // v4: a (re)connect resends what the phone still lacks
+        XCTAssertEqual(world.events.count, 1); if case .hello = world.events.first {} else { XCTFail("no hello") }   // v4: a (re)connect resends what the phone still lacks
         XCTAssertFalse(socket.closed)
     }
 

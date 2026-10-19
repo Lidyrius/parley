@@ -97,7 +97,7 @@ describe("plain HTTP", () => {
 		const aasa = await exports.default.fetch("https://relay.test/.well-known/apple-app-site-association");
 		expect(aasa.headers.get("content-type")).toBe("application/json");
 		expect(await aasa.json()).toEqual({
-			applinks: { details: [{ appIDs: ["384887N3UL.de.developaway.parley.mobile"], components: [{ "/": "/join" }] }] },
+			applinks: { details: [{ appIDs: ["384887N3UL.de.developaway.parley.mobile"], components: [{ "/": "/join" }, { "/": "/pair" }] }] },
 		});
 	});
 

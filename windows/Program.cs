@@ -76,6 +76,7 @@ internal sealed class TrayApp : ApplicationContext
             CallGuest = (line, turn, share) => CallGuest(line, turn, share),
         };
         _server.AskGuest = (id, turn) => _shares.AskGuest(id, turn);
+        RelayHost.Start = StartRelay;   // the setup connects once the relay is chosen / the phone pairs
 
         var menu = new ContextMenuStrip();
         // Resumable (parked) sessions are inserted at the top on open.
@@ -413,7 +414,8 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneBarge:
                 PhoneCall.OnBarge();
                 break;
-            case PhoneHello:
+            case PhoneHello hello:
+                RelayHost.SayHello(hello.Device);   // the setup's pairing step waits for this
                 if (_pendingPalette is { } pending) _ = PhoneCall.Reply(pending.Frame);
                 break;
             case PhonePaletteSaved saved:

@@ -89,6 +89,7 @@ export const PAIR_HTML = `<!doctype html>
   <div id="qr" role="img" aria-label="QR-Code mit dem Parley-Kopplungslink"></div>
   <p class="muted ok">Der Code enthält den Schlüssel für deinen Parley-Raum. Er bleibt in diesem Browser – der Relay-Server bekommt ihn nie zu sehen. Zeig ihn niemandem sonst.</p>
   <p class="muted ok"><a id="open" href="#">Schon auf dem iPhone? In Parley öffnen</a></p>
+  <p class="muted ok">Noch kein Parley auf dem Handy? iPhone: TestFlight, Android: APK – beides gibt es bei dem, der Parley eingerichtet hat.</p>
   <noscript><p>Für den QR-Code wird JavaScript benötigt.</p></noscript>
 </main>
 <script src="${QR_LIB.url}" integrity="${QR_LIB.integrity}" crossorigin="anonymous" referrerpolicy="no-referrer"></script>

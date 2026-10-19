@@ -62,6 +62,24 @@ public sealed record RelayConfig
     }
 }
 
+// What the setup (OnboardingForm) needs from the app's own relay link — macOS: AppController's
+// startRelay() and its published phoneHello.
+public static class RelayHost
+{
+    // (Re)connect with the saved relay settings; set by the tray app, on the UI thread.
+    public static Action? Start { get; set; }
+
+    // The last phone that came onto the relay: its name ("Ihrem Handy" without one) and when (UTC).
+    public static (string Device, DateTime At)? PhoneHello { get; private set; }
+    public static event Action? PhoneHelloChanged;   // on the relay's receive task
+
+    public static void SayHello(string device)
+    {
+        PhoneHello = (device.Length == 0 ? "Ihrem Handy" : device, DateTime.UtcNow);
+        PhoneHelloChanged?.Invoke();
+    }
+}
+
 // Pairing link, pairing page and socket URL — pure (1:1 with RelayLink on macOS).
 public static class RelayLink
 {
@@ -148,8 +166,11 @@ public static class RelayFrame
                         "end" => new PhoneCallState(false),
                         _ => null,
                     };
-                case "hello":
-                    return new PhoneHello();
+                case "hello":   // its name (for the setup's "Verbunden mit …"), at most 60 characters
+                {
+                    var device = new System.Globalization.StringInfo(Str("device") ?? "");
+                    return new PhoneHello(device.LengthInTextElements > 60 ? device.SubstringByTextElements(0, 60) : device.String);
+                }
                 case "barge":
                     return new PhoneBarge();
                 case "palette":
@@ -244,8 +265,8 @@ public sealed record PhoneAlert(string Token, string Env) : PhoneMessage;
 public sealed record PhoneHistory(string Id, string? Before) : PhoneMessage;   // newest page, or the one before an item
 public sealed record PhoneImage(string Id, string Key) : PhoneMessage;
 public sealed record PhoneSay(string Id, string Text) : PhoneMessage;
-// v4: the phone (re)connected; it saved and switched to a palette made by voice.
-public sealed record PhoneHello : PhoneMessage { }
+// v4: the phone (re)connected (its name, for the setup); it saved and switched to a palette made by voice.
+public sealed record PhoneHello(string Device = "") : PhoneMessage;
 public sealed record PhoneBarge : PhoneMessage { }   // v4: Sir talks over Parley — stop the line, listen
 public sealed record PhonePaletteSaved(string Name) : PhoneMessage;
 // v4: the Live Activity's push-to-start token, and the running one's update token ("" = none).

@@ -148,7 +148,7 @@ enum RelayFrame {
             let env = f["env"] as? String == "development" ? "development" : "production"
             return f["kind"] as? String == "alert" ? .alert(token: token.lowercased(), env: env) : .push(token: token.lowercased(), env: env)
         case "hello":
-            return .hello
+            return .hello(device: String((f["device"] as? String ?? "").prefix(60)))
         case "join":   // v7: a guest on a share's room says who he is, with his share key
             return .join(name: f["name"] as? String ?? "", device: f["device"] as? String ?? "", pub: f["pub"] as? String ?? "")
         case "answer": // v7: a guest answers his question, or passes it on to Sir
@@ -255,7 +255,7 @@ enum PhoneEvent: Equatable, Sendable {
     case image(id: String, key: String)       // send one image of it
     case say(id: String, text: String)        // a typed message for that session
     case later(TimeInterval?)                 // can't talk now: ring again in n s, or nil = Sir calls back
-    case hello                                // the phone (re)connected to the relay
+    case hello(device: String)                // the phone (re)connected to the relay (its name, for the setup)
     case barge                                // v4: Sir talks over Parley — stop the line, listen
     case paletteSaved(String)                 // v4: it saved and switched to a palette made by voice
     // v4 (docs/LIVE-ACTIVITIES.md): the Live Activity's push tokens.

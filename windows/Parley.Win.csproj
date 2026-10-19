@@ -32,4 +32,15 @@
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The relay's source: setup step 7 ("Eigenes Relais · 1 Klick") deploys it with wrangler
+       (RelaySetup.cs) — as scripts/make-app.sh bundles it into the macOS app. -->
+  <ItemGroup>
+    <Content Include="..\relay\src\**\*"
+             Link="relay\src\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\relay\wrangler.jsonc;..\relay\package.json;..\relay\package-lock.json;..\relay\tsconfig.json;..\relay\worker-configuration.d.ts"
+             Link="relay\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

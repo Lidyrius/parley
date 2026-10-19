@@ -24,6 +24,7 @@ final class AppController: ObservableObject {
     @Published var parked: [ParkedInfo] = []   // resumable sessions: parked (hook polls /wake, or the mod)
     @Published var snapshots: [Snapshot] = []
     @Published var shared: [Share] = []        // v7: sessions shared with a guest (the menu can end them)
+    @Published var phoneHello: (device: String, at: Date)?   // the last phone that came onto the relay (setup step 8)
     @Published var lastError: String?
     @Published var muted = false   // manual mute toggle (menu)
     @Published var relayConnected: Bool?   // iPhone relay: nil = not configured, else reachable
@@ -158,7 +159,8 @@ final class AppController: ObservableObject {
                 Task { @MainActor in if self?.activityAsk?.id == id { self?.activityAsk = nil } }
             }
             // A palette made by voice: again on every (re)connect until the phone confirms it.
-            if case .hello = event {
+            if case .hello(let device) = event {
+                Task { @MainActor in self?.phoneHello = (device.isEmpty ? "Ihrem Handy" : device, Date()) }
                 Task { @MainActor in if let p = self?.pendingPalette { phone.reply(p.frame) } }
                 return
             }

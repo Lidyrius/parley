@@ -32,6 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start the control server at launch — NOT from the menu view's .task, which
         // (with menuBarExtraStyle(.window)) only runs when the popover is first opened.
         MainActor.assumeIsolated {
+            if let dir = ProcessInfo.processInfo.environment["PARLEY_ONBOARDING_SNAPSHOTS"] {
+                OnboardingPresenter.shared.snapshots(to: dir)
+                return
+            }
             AppController.shared.start()
             OnboardingPresenter.shared.showIfNeeded()   // first-run visual onboarding
         }
