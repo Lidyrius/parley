@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Einstellungen Vorschläge</title>
+<style>
+:root{--bg:#f2f1ec;--card:#fff;--ink:#1f1e1c;--sec:#8a8781;--line:#ece9e2;--clay:#d97757;--soft:#f6e6df;--green:#4fa36a;--track:#e4e1da}
+*{box-sizing:border-box}body{margin:0;background:#e6e4de;font:15px -apple-system,system-ui,sans-serif;color:var(--ink)}
+.stage{display:flex;gap:28px;padding:28px;align-items:flex-start}
+.ph{width:402px;height:874px;background:var(--bg);border-radius:54px;overflow:hidden;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.18);flex:none}
+.ph:after{content:"";position:absolute;left:0;right:0;bottom:0;height:60px;background:linear-gradient(transparent,var(--bg))}
+.sb{height:54px;display:flex;justify-content:space-between;align-items:center;padding:0 34px;font:600 16px -apple-system,system-ui,sans-serif}
+.nav{display:flex;align-items:center;justify-content:center;height:50px;position:relative;font:600 17px -apple-system,system-ui,sans-serif}
+.nav .done{position:absolute;right:16px;background:#fff;color:var(--clay);border-radius:99px;padding:8px 16px;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.nav .back{position:absolute;left:16px;width:38px;height:38px;border-radius:50%;background:#fff;display:grid;place-items:center;font-size:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.pad{padding:0 16px}
+.cap{margin-top:12px;font:600 17px -apple-system,system-ui,sans-serif;width:402px}.cap small{display:block;font-weight:400;color:#6e6c66;font-size:13px;margin-top:3px;line-height:1.4}
+.sec{font:600 13px -apple-system,system-ui,sans-serif;color:var(--sec);margin:18px 6px 7px}
+.card{background:var(--card);border-radius:22px;overflow:hidden}
+.r{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:46px}
+.r+.r{border-top:1px solid var(--line)}
+.r .t{flex:1;min-width:0}.r .t b{font-weight:400;display:block}.r .t small{display:block;color:var(--sec);font-size:12.5px;line-height:1.3;margin-top:1px}
+.v{color:var(--sec)}
+.ic{width:22px;height:22px;object-fit:contain;flex:none}
+.tile{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex:none}.tile img{width:18px;height:18px;object-fit:contain}
+.sw{width:50px;height:30px;border-radius:99px;background:var(--track);position:relative;flex:none}.sw:after{content:"";position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.sw.on{background:var(--clay)}.sw.on:after{left:22px}
+.chev{width:9px;opacity:.7}
+.seg{flex:1;display:flex;background:var(--track);border-radius:99px;padding:3px}.seg span{flex:1;text-align:center;padding:6px 0;border-radius:99px;font-size:13.5px}.seg .a{background:#fff;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.1)}
+.icons{display:flex;justify-content:space-between;padding:12px 14px 6px}.icons div{text-align:center;font-size:12px;color:var(--sec)}
+.icons img{width:62px;height:62px;display:block;margin-bottom:4px;border-radius:15px}.icons .sel img{outline:2.5px solid var(--clay);outline-offset:2px}.icons .sel{color:var(--ink);font-weight:600}
+.foot{font-size:12.5px;color:var(--sec);margin:6px 6px 0;line-height:1.35}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;font-size:13px;font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green)}
+.big{font:700 30px -apple-system,system-ui,sans-serif;letter-spacing:-.4px;margin:4px 6px 2px}
+</style></head><body>
+<div class="stage" id="stage"></div>
+<script>
+const S='symbole/';
+const ic=(n,c='c')=>`<img class="ic" src="${S}${n}-${c}.png">`;
+const tile=(n,bg)=>`<span class="tile" style="background:${bg}"><img src="${S}${n}-w.png"></span>`;
+const chev=`<img class="chev" src="${S}chevron.right-g.png">`;
+const sw=on=>`<span class="sw ${on?'on':''}"></span>`;
+const sb='<div class="sb"><span>9:41</span><span style="letter-spacing:2px">▂▄▆ ▮</span></div>';
+const nav=(t,back)=>`<div class="nav">${back?'<span class="back">‹</span>':''}${t}${back?'':'<span class="done">Fertig</span>'}</div>`;
+const row=(l,t,sub,r)=>`<div class="r">${l}<div class="t"><b>${t}</b>${sub?`<small>${sub}</small>`:''}</div>${r||''}</div>`;
+const L='../../../../logo/final-v2/png/';
+const icons=sel=>`<div class="icons">${[['03-graphit','Graphit'],['01-porzellan-indigo','Porzellan'],['02-indigo','Indigo'],['04-petrol','Petrol']].map(([f,n])=>`<div class="${n===sel?'sel':''}"><img src="${L}${f}-Default.png">${n}</div>`).join('')}</div>`;
+const seg=`<div class="seg"><span class="a">System</span><span>Hell</span><span>Dunkel</span></div>`;
+
+// A · Erklärung pro Zeile
+const A=`${sb}${nav('Einstellungen')}<div class="pad">
+<div class="sec">Unterwegs</div><div class="card">
+${row(ic('car.fill'),'Unterwegs-Modus','Updates klingeln als Anruf auf dem iPhone',sw(1))}
+${row(ic('bell.slash.fill'),'Stumm','Statt Anruf eine Mitteilung – schriftlich antworten',sw(0))}
+${row(ic('moon.fill'),'Automatisch mit Fokus','„Fahren“ schaltet Unterwegs ein',chev)}</div>
+<div class="sec">Anrufe</div><div class="card">
+${row(ic('speaker.wave.2.fill'),'Lautsprecher','AirPods und Auto bleiben, wie sie sind',sw(1))}
+${row(ic('phone.down.circle'),'Danach auflegen','Musik läuft gleich weiter',sw(0))}
+${row(ic('hand.raised'),'Unterbrechen','Reden oder „Stopp“ – Parley hört zu',sw(1))}
+${row(ic('rectangle.stack.badge.person.crop'),'Fragerunde','Updates sammeln, solange andere arbeiten','<span class="v">90 s</span>')}</div>
+<div class="foot">„Hey Siri, Parley anrufen“ geht jederzeit, auch in CarPlay.</div>
+<div class="sec">Darstellung</div><div class="card">${icons('Graphit')}<div class="r">${seg}</div></div></div>`;
+
+// B · Zwei Ebenen wie iOS-Einstellungen
+const B=`${sb}${nav('Einstellungen')}<div class="pad">
+<div class="card" style="margin-top:8px">${row('<img src="'+L+'03-graphit-Default.png" style="width:52px;height:52px;border-radius:12px">','<span style="font:600 19px -apple-system,system-ui,sans-serif">Parley</span>','<span class="pill" style="background:#e6f2e9;color:#2f6b42;margin-top:4px"><span class="dot"></span>Verbunden mit MacBook Pro</span>',chev)}</div>
+<div class="card" style="margin-top:22px">
+${row(tile('car.fill','#d97757'),'Unterwegs','',`<span class="v">An · Stumm aus</span>${chev}`)}
+${row(tile('phone.fill','#4fa36a'),'Anrufe','',`<span class="v">Lautsprecher</span>${chev}`)}
+${row(tile('rectangle.stack.badge.person.crop','#5b8def'),'Fragerunde','',`<span class="v">90 s</span>${chev}`)}</div>
+<div class="card" style="margin-top:22px">
+${row(tile('app.badge','#3a3a3c'),'App-Symbol','',`<span class="v">Graphit</span>${chev}`)}
+${row(tile('paintpalette.fill','#d9a43b'),'Farben','',`<span class="v">Claude · System</span>${chev}`)}
+${row(tile('sparkles','#9b87f5'),'Anruf-Bildschirm','',`<span class="v">JARVIS · Wellen</span>${chev}`)}
+${row(tile('chart.xyaxis.line','#2f8f9d'),'Diagramme','',`<span class="v">Zeichnen</span>${chev}`)}</div>
+<div class="card" style="margin-top:22px">
+${row(tile('questionmark.circle','#8a8781'),'So funktioniert Parley','',chev)}
+${row(tile('info.circle','#8a8781'),'Version','','<span class="v">0.1.0</span>')}</div></div>`;
+
+// C · Visuelle Darstellung, Vorschauen statt Listen
+const prev=(bg,lbl,sel)=>`<div style="text-align:center;font-size:12px;color:${sel?'var(--ink)':'var(--sec)'};font-weight:${sel?600:400}"><div style="width:84px;height:84px;border-radius:18px;background:${bg};${sel?'outline:2.5px solid var(--clay);outline-offset:2px;':''}margin-bottom:5px"></div>${lbl}</div>`;
+const orb=c=>`radial-gradient(circle at 50% 50%,${c} 0 18%,transparent 19%),radial-gradient(circle,rgba(217,119,87,.25) 0 40%,transparent 41%),repeating-radial-gradient(circle,${c}33 0 2px,transparent 2px 6px),#fbf3ee`;
+const C=`${sb}${nav('Einstellungen')}<div class="pad">
+<div class="sec">App-Symbol</div><div class="card">${icons('Graphit')}<div style="height:8px"></div></div>
+<div class="sec">Farben</div><div class="card" style="padding:12px 14px">
+<div style="display:flex;gap:10px;overflow:hidden">${[['Claude','#d97757','#faf9f5',1],['Schwarzweiß','#111','#fff'],['Nachtlicht','#c0392b','#111'],['Chat','#1f9d74','#fff'],['Silber','#3478f6','#eef0f3']].map(([n,a,b,s])=>`<div style="text-align:center;font-size:11.5px;color:${s?'var(--ink)':'var(--sec)'};font-weight:${s?600:400}"><div style="width:62px;height:62px;border-radius:14px;background:linear-gradient(135deg,${b} 50%,${a} 50%);border:1px solid var(--line);${s?'outline:2.5px solid var(--clay);outline-offset:2px;':''}margin-bottom:4px"></div>${n}</div>`).join('')}</div>
+<div style="margin-top:12px">${seg}</div></div>
+<div class="sec">Parley im Anruf</div><div class="card" style="padding:12px 14px"><div style="display:flex;gap:12px;overflow:hidden">
+${prev(orb('#d97757'),'JARVIS',1)}${prev(orb('#e8a07f'),'Nebel')}${prev(orb('#c96a4a'),'Welle')}${prev(orb('#b85a3a'),'Orbit')}</div></div>
+<div class="sec">Anrufe &amp; Unterwegs</div><div class="card">
+${row(ic('car.fill'),'Unterwegs, Stumm, Lautsprecher …','',chev)}</div></div>`;
+
+// D · Modus-Karten oben
+const mode=(n,sym,sub,on)=>`<div style="flex:1;border-radius:20px;padding:12px;background:${on?'var(--clay)':'#fff'};color:${on?'#fff':'var(--ink)'};height:112px;display:flex;flex-direction:column;justify-content:space-between"><img src="${S}${sym}-${on?'w':'c'}.png" style="width:24px;height:24px;object-fit:contain"><div><b style="font-size:15px">${n}</b><div style="font-size:11.5px;opacity:.8;line-height:1.25;margin-top:2px">${sub}</div></div></div>`;
+const D=`${sb}${nav('Einstellungen')}<div class="pad">
+<div class="sec">Wo soll Parley sprechen?</div>
+<div style="display:flex;gap:8px">${mode('Am Mac','desktopcomputer','Spricht über die Lautsprecher am Mac')}${mode('Unterwegs','car.fill','Ruft dieses iPhone an',1)}${mode('Stumm','bell.slash.fill','Nur Mitteilung, schriftlich')}</div>
+<div class="card" style="margin-top:10px">${row(ic('moon.fill'),'Mit Fokus „Fahren“ wechseln','Oder Kurzbefehl: CarPlay verbunden',chev)}</div>
+<div class="sec">Im Anruf</div><div class="card">
+${row(ic('speaker.wave.2.fill'),'Mit Lautsprecher starten','',sw(1))}
+${row(ic('hand.raised'),'Reinreden unterbricht','',sw(1))}
+${row(ic('phone.down.circle'),'Nach der Antwort auflegen','',sw(0))}
+${row(ic('rectangle.stack.badge.person.crop'),'Updates bündeln','Bis zu','<span class="v">90 s</span>')}</div>
+<div class="sec">Darstellung</div><div class="card">
+${row(ic('app.badge'),'App-Symbol','',`<span class="v">Graphit</span>${chev}`)}
+${row(ic('paintpalette.fill'),'Farben','',`<span class="v">Claude</span>${chev}`)}
+${row(ic('sparkles'),'Anruf-Bildschirm','',`<span class="v">JARVIS</span>${chev}`)}</div></div>`;
+
+// E · Kacheln wie Kontrollzentrum
+const ctl=(n,sym,st,on,w)=>`<div style="grid-column:span ${w||1};border-radius:22px;padding:13px 14px;background:${on?'var(--clay)':'#fff'};color:${on?'#fff':'var(--ink)'};display:flex;gap:10px;align-items:center"><span style="width:36px;height:36px;border-radius:50%;background:${on?'rgba(255,255,255,.22)':'var(--soft)'};display:grid;place-items:center;flex:none"><img src="${S}${sym}-${on?'w':'c'}.png" style="width:19px;height:19px;object-fit:contain"></span><div style="min-width:0"><b style="font-size:14.5px;display:block">${n}</b><span style="font-size:12px;opacity:.75">${st}</span></div></div>`;
+const E=`${sb}${nav('Einstellungen')}<div class="pad">
+<div class="big">Steuerung</div>
+<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px;margin-top:8px">
+${ctl('Unterwegs','car.fill','An',1)}${ctl('Stumm','bell.slash.fill','Aus')}
+${ctl('Lautsprecher','speaker.wave.2.fill','Beim Start',1)}${ctl('Unterbrechen','hand.raised','An',1)}
+${ctl('Auflegen','phone.down.circle','Bleibt dran')}${ctl('Fragerunde','rectangle.stack.badge.person.crop','90 s')}</div>
+<div class="foot" style="margin-top:8px">Lange drücken zeigt, was ein Schalter tut.</div>
+<div class="big" style="margin-top:20px">Aussehen</div>
+<div class="card" style="margin-top:8px">${icons('Graphit')}<div class="r">${seg}</div>
+${row(ic('paintpalette.fill'),'Farbpalette','',`<span class="v">Claude</span>${chev}`)}
+${row(ic('sparkles'),'Anruf-Bildschirm','',`<span class="v">JARVIS · Wellen</span>${chev}`)}</div></div>`;
+
+const V=[["A · Erklärung pro Zeile","Die Textwand verschwindet: jeder Schalter bekommt eine Zeile Erklärung. Unterwegs wird eigener Abschnitt mit Fokus-Automation. Neue Logos.",A],
+["B · Zwei Ebenen","Wie die iOS-Einstellungen: Kopf mit Logo und Verbindung, darunter farbige Kategorien. Details auf Unterseiten, die Startseite passt auf einen Blick.",B],
+["C · Vorschau statt Liste","Darstellung wird sichtbar: Logos, Paletten und Kugeln als Kacheln direkt wählbar. Anruf-Schalter wandern auf eine Unterseite.",C],
+["D · Modus-Karten","Oben die eigentliche Frage: Wo spricht Parley – Mac, Unterwegs, Stumm? Drei Karten statt zwei abhängiger Schalter. Darunter nur das Anrufverhalten.",D],
+["E · Kacheln","Schalter als Kacheln wie im Kontrollzentrum – Zustand auf einen Blick, Erklärung per langem Druck. Aussehen darunter kompakt.",E]];
+const only=new URLSearchParams(location.search).get('v');
+document.getElementById('stage').innerHTML=V.filter((_,i)=>only==null||+only===i).map(([t,d,b])=>`<div><div class="ph">${b}</div><div class="cap">${t}<small>${d}</small></div></div>`).join('');
+</script></body></html>

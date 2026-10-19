@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Kopplung A verfeinert</title>
+<style>
+:root{--bg:#161615;--card:#242322;--ink:#f3f1ec;--sec:#9a968e;--line:rgba(255,255,255,.08);--clay:#d97757;--soft:rgba(217,119,87,.15)}
+*{box-sizing:border-box}body{margin:0;background:#cfccc4;font:15px -apple-system,system-ui,sans-serif;color:var(--ink)}
+.stage{display:flex;gap:28px;padding:28px;align-items:flex-start}
+.ph{width:402px;height:874px;background:var(--bg);border-radius:54px;overflow:hidden;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.25);flex:none;display:flex;flex-direction:column}
+.sb{height:54px;flex:none;display:flex;justify-content:space-between;align-items:center;padding:0 34px;font:600 16px -apple-system,system-ui,sans-serif;position:relative;z-index:5}
+.di{position:absolute;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000;z-index:6}
+.body{flex:1;display:flex;flex-direction:column;padding:0 24px 34px;position:relative;z-index:2}
+.cap{margin-top:12px;font:600 17px -apple-system,system-ui,sans-serif;width:402px;color:#1f1e1c}.cap small{display:block;font-weight:400;color:#5e5c57;font-size:13px;margin-top:3px;line-height:1.4}
+h1{font:700 32px -apple-system,system-ui,sans-serif;margin:0;letter-spacing:-.5px}
+.sub{color:var(--sec);font-size:16px;line-height:1.4;margin-top:8px}
+.ic{width:18px;height:18px;object-fit:contain;flex:none}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;background:var(--clay);color:#fff;border-radius:99px;height:54px;font-weight:600;font-size:17px}
+.btn2{display:flex;align-items:center;justify-content:center;gap:8px;color:var(--clay);height:46px;font-weight:600;font-size:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px}
+.tile{width:34px;height:34px;border-radius:10px;background:var(--soft);display:grid;place-items:center;flex:none}
+.t{flex:1;min-width:0}.t b{display:block;font-weight:600;font-size:15px}.t small{display:block;color:var(--sec);font-size:13px;line-height:1.3;margin-top:1px}
+.foot{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--sec);font-size:12.5px}
+.qr{display:grid;gap:1px}.qr i{background:#1f1e1c;border-radius:1px}.qr i.o{background:transparent}
+.glass{background:rgba(30,30,28,.62);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.1)}
+.round{width:44px;height:44px;border-radius:50%;display:grid;place-items:center}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:99px;font-size:13.5px;font-weight:600}
+</style></head><body>
+<div class="stage" id="stage"></div>
+<script>
+const S='symbole/', I=(n,c='c',s=18)=>`<img class="ic" style="width:${s}px;height:${s}px" src="${S}${n}-${c}.png">`;
+const LOGO='../../../../logo/final-v2/png/03-graphit-Dark.png';
+const SB=`<div class="di"></div><div class="sb"><span>09:41</span><span style="letter-spacing:2px">▮▮▮ ◔</span></div>`;
+const qr=(px=150,n=25,seed=7)=>{let r=seed,c='';const rnd=()=>(r=(r*9301+49297)%233280)/233280;
+ const finOn=(x,y)=>{for(const[a,b]of[[0,0],[n-7,0],[0,n-7]]){if(x>=a&&x<a+7&&y>=b&&y<b+7){const u=x-a,v=y-b;return u==0||v==0||u==6||v==6||(u>=2&&u<=4&&v>=2&&v<=4)}}return null};
+ for(let y=0;y<n;y++)for(let x=0;x<n;x++){const f=finOn(x,y);const on=f==null?rnd()>.5:f;c+=`<i class="${on?'':'o'}"></i>`}
+ return `<div style="background:#fff;padding:${px/14}px;border-radius:${px/10}px;display:inline-block"><div class="qr" style="grid-template-columns:repeat(${n},${(px-n)/n}px);grid-auto-rows:${(px-n)/n}px">${c}</div></div>`};
+const lock=`<div class="foot">${I('lock.fill','g',12)}Verschlüsselt · nur Ihr Mac und Ihr iPhone</div>`;
+
+// Logo-Geometrie (menuleiste.svg): Bauch-Mitte (0,0), Bögen ±70°, r 30 / 42.
+const arc=(r)=>{const x=(r*.342).toFixed(1),y=(r*.94).toFixed(1);return `M${x} ${-y}A${r} ${r} 0 0 1 ${x} ${y}`};
+// Echo-Bögen außerhalb, gleicher Mittelpunkt wie im Icon
+const echoes=(cx,cy,u,radii,col,w0=4.5)=>`<svg width="402" height="874" style="position:absolute;left:0;top:0;z-index:1;overflow:visible"><g transform="translate(${cx} ${cy}) scale(${u})" fill="none" stroke-linecap="round">${radii.map((r,i)=>`<path d="${arc(r)}" stroke="${col}" stroke-opacity="${(.5-i*.1).toFixed(2)}" stroke-width="${(w0-i*.7).toFixed(1)}"/>`).join('')}</g></svg>`;
+// Icon 1024: Bauch-Mitte bei (434.2, 486.5)
+const iconAt=(cx,cy,s)=>`<img src="${LOGO}" style="position:absolute;z-index:2;width:${s}px;height:${s}px;left:${cx-434.2/1024*s}px;top:${cy-486.5/1024*s}px;border-radius:${s*.225}px;box-shadow:0 16px 40px rgba(0,0,0,.55)">`;
+const P=(u,col,arcCol)=>`<g transform="scale(${u})" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M0 50V-24" stroke="${col}" stroke-width="8"/><path d="M0 -18A18 18 0 0 1 0 18" stroke="${col}" stroke-width="8"/><path d="${arc(30)}" stroke="${col}" stroke-width="7"/><path d="${arc(42)}" stroke="${arcCol}" stroke-opacity=".45" stroke-width="5"/></g>`;
+
+const bottom=`<div class="card"><div class="row"><div class="tile">${I('desktopcomputer','c',17)}</div><div class="t"><b>Auf dem Mac</b><small>Parley-Menü → „Handy verbinden…“</small></div></div></div>
+<div class="btn" style="margin-top:20px">${I('qrcode.viewfinder','w',20)}Code scannen</div>
+<div class="btn2" style="margin-top:4px">${I('doc.on.clipboard','c',16)}Link einfügen</div><div style="margin-top:6px">${lock}</div>`;
+
+// A1 · Das Echo läuft aus dem Icon heraus
+const u1=128/1024*5.7454*1.0; // px pro Logo-Einheit bei 128er Icon
+const A1=`${SB}${echoes(150,250,u1*1.0,[78,118,165,220,282],'#d97757',5)}${iconAt(150,250,128)}
+<div class="body"><span style="flex:1"></span><h1 style="text-align:center">Guten Tag, Sir.</h1><div class="sub" style="text-align:center">Ein Code vom Mac, und Ihre Sessions sind hier.</div><div style="height:30px"></div>${bottom}</div>`;
+
+// A2 · Silhouetten-Echo: die Icon-Form wiederholt sich nach außen
+const sq=(cx,cy,s,o,w)=>`<span style="position:absolute;z-index:1;left:${cx-s/2}px;top:${cy-s/2}px;width:${s}px;height:${s}px;border-radius:${s*.225}px;border:${w}px solid rgba(217,119,87,${o})"></span>`;
+const A2=`${SB}${[[176,.5,2],[232,.34,1.8],[300,.22,1.5],[380,.13,1.2],[470,.07,1]].map(([s,o,w])=>sq(201,240,s,o,w)).join('')}${iconAt(201-64+434.2/1024*128,240-64+486.5/1024*128,128)}
+<div class="body"><span style="flex:1"></span><h1 style="text-align:center">Guten Tag, Sir.</h1><div class="sub" style="text-align:center">Ein Code vom Mac, und Ihre Sessions sind hier.</div><div style="height:30px"></div>${bottom}</div>`;
+
+// A3 · Logo frei, ohne Kachel – das P ist die Illustration
+const A3=`${SB}<svg width="402" height="874" style="position:absolute;left:0;top:0;z-index:1"><g transform="translate(118 250)">${P(2.6,'#f3f1ec','#f3f1ec')}<g transform="scale(2.6)" fill="none" stroke-linecap="round">${[56,72,90,110].map((r,i)=>`<path d="${arc(r)}" stroke="#d97757" stroke-opacity="${(.85-i*.2).toFixed(2)}" stroke-width="${(4.2-i*.7).toFixed(1)}"/>`).join('')}</g></g></svg>
+<div class="body"><span style="flex:1"></span><h1>Guten Tag, Sir.</h1><div class="sub">Ein Code vom Mac, und Ihre Sessions sind hier.</div><div style="height:28px"></div>${bottom}</div>`;
+
+// Kamerabild: Mac-Bildschirm mit Kopplungsfenster, leicht schräg
+const cam=(blur=0)=>`<div style="position:absolute;inset:0;background:radial-gradient(90% 70% at 50% 40%,#45423d,#1a1917 75%);overflow:hidden">
+<div style="position:absolute;left:-30px;right:-30px;top:120px;height:520px;transform:perspective(900px) rotateX(9deg) rotateZ(-3deg);background:linear-gradient(160deg,#2f3a46,#1c2026);border-radius:18px;box-shadow:0 0 0 14px #0d0d0d;filter:blur(${blur}px)">
+<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#2a2927;border-radius:16px;padding:16px 16px 12px;text-align:center;border:1px solid rgba(255,255,255,.1)">${qr(176,25,7)}<div style="font-size:12px;color:#cfcac0;margin-top:8px">Mit dem iPhone scannen</div></div></div></div>`;
+// Sucher in Icon-Silhouette (abgerundetes Quadrat), Rest abgedunkelt
+const finder=(cy,s,col,extra='')=>`<div style="position:absolute;left:${201-s/2}px;top:${cy-s/2}px;width:${s}px;height:${s}px;border-radius:${s*.225}px;box-shadow:0 0 0 999px rgba(10,10,9,.66);border:3px solid ${col}">${extra}</div>`;
+const topbar=`<div style="position:absolute;z-index:4;left:20px;right:20px;top:62px;display:flex;align-items:center;gap:12px"><span class="round glass" style="">${I('xmark','w',16)}</span><div style="flex:1;text-align:center;font:600 17px -apple-system,system-ui">Code vom Mac</div><span class="round glass">${I('lock.fill','w',15)}</span></div>`;
+
+// S1 · Scanner: Sucher in Icon-Form, Echo-Bögen pulsen rechts
+const S1=`${SB}${cam(0)}${finder(380,250,'var(--clay)')}
+<svg width="402" height="874" style="position:absolute;left:0;top:0;z-index:3"><g transform="translate(201 380)" fill="none" stroke-linecap="round">${[150,178,206].map((r,i)=>`<path d="M${(r*.5).toFixed(0)} ${(-r*.866).toFixed(0)}A${r} ${r} 0 0 1 ${(r*.5).toFixed(0)} ${(r*.866).toFixed(0)}" stroke="#d97757" stroke-opacity="${.75-i*.25}" stroke-width="${3-i*.6}"/>`).join('')}</g></svg>${topbar}
+<div style="position:absolute;z-index:4;left:0;right:0;top:540px;text-align:center"><span class="pill glass" style="color:#fff;font-weight:500"><span style="width:8px;height:8px;border-radius:50%;background:var(--clay);box-shadow:0 0 0 4px rgba(217,119,87,.3)"></span>Suche den Code …</span></div>
+<div class="glass" style="position:absolute;z-index:4;left:12px;right:12px;bottom:12px;border-radius:38px;padding:18px 18px 22px">
+<div style="display:flex;gap:12px;align-items:center"><div class="tile" style="width:40px;height:40px;border-radius:12px">${I('menubar.rectangle','c',19)}</div><div class="t"><b>Kein Code zu sehen?</b><small>Mac: Parley-Menü → „Handy verbinden…“</small></div></div>
+<div style="display:flex;gap:10px;margin-top:16px"><div class="pill" style="flex:1;justify-content:center;height:46px;background:rgba(255,255,255,.1);font-size:15px">${I('doc.on.clipboard','w',15)}Link einfügen</div><div class="round" style="width:46px;height:46px;background:rgba(255,255,255,.1)">${I('flashlight.on.fill','w',18)}</div></div></div>`;
+
+// S2 · Erkannt: Sucher rastet ein, Gerät + Name, automatisch weiter
+const S2=`${SB}${cam(4)}${finder(380,250,'#4fa36a',`<div style="position:absolute;inset:0;display:grid;place-items:center;background:rgba(79,163,106,.18);border-radius:inherit"><span style="width:76px;height:76px;border-radius:50%;background:#4fa36a;display:grid;place-items:center;box-shadow:0 0 0 12px rgba(79,163,106,.25)">${I('checkmark','w',36)}</span></div>`)}${topbar}
+<div class="glass" style="position:absolute;z-index:4;left:12px;right:12px;bottom:12px;border-radius:38px;padding:20px 20px 24px;text-align:center">
+<div style="font:700 22px -apple-system,system-ui">Verbunden, Sir.</div><div style="color:var(--sec);margin-top:4px">MacBook Pro · 3 Sessions</div>
+<div style="display:flex;justify-content:center;gap:8px;margin-top:14px">${['vloude','shop-api','blog'].map(n=>`<span class="pill" style="background:rgba(255,255,255,.08);font-weight:500">${n}</span>`).join('')}</div>
+<div style="height:4px;border-radius:9px;background:rgba(255,255,255,.12);margin-top:18px;overflow:hidden"><div style="width:62%;height:100%;background:var(--clay)"></div></div>
+<div style="color:var(--sec);font-size:12.5px;margin-top:8px">Öffnet gleich die Übersicht</div></div>`;
+
+// S3 · Ohne Kamera-Erlaubnis
+const S3=`${SB}${topbar}<div class="body" style="padding-top:20px;text-align:center"><span style="flex:1"></span>
+<div style="align-self:center;width:200px;height:200px;border-radius:45px;border:2.5px dashed rgba(217,119,87,.5);display:grid;place-items:center">${I('camera.fill','c',54)}</div>
+<h1 style="font-size:26px;margin-top:28px">Kamera ist aus</h1><div class="sub">Parley braucht sie nur für diesen einen Code.</div>
+<span style="flex:1"></span><div class="btn">Kamera erlauben</div><div class="btn2" style="margin-top:4px">${I('doc.on.clipboard','c',16)}Stattdessen Link einfügen</div></div>`;
+
+const V=[["A1 · Echo läuft aus dem Icon","Die Bögen des Logos setzen sich hinter dem Icon fort – gleicher Mittelpunkt wie im P, nach außen schwächer.",A1],
+["A2 · Silhouetten-Echo","Die Icon-Form wiederholt sich nach außen, wie eine Welle aus der Kachel.",A2],
+["A3 · Logo frei","Kein Icon-Kasten: das P groß auf dem Grund, die Echo-Bögen laufen in Clay weiter. Text links.",A3],
+["Scanner · sucht","Vollbild-Kamera, Sucher in Icon-Form, Echo-Bögen pulsen. Hilfe und „Link einfügen“ unten im Glas.",S1],
+["Scanner · erkannt","Sucher rastet grün ein, „Verbunden, Sir.“ mit Mac und Sessions, öffnet dann selbst die Übersicht.",S2],
+["Scanner · ohne Kamera","Wenn die Kamera verweigert ist: klare Bitte, Rückweg über den Link.",S3]];
+const only=new URLSearchParams(location.search).get('v');
+document.getElementById('stage').innerHTML=V.filter((_,i)=>only==null||+only===i).map(([t,d,b])=>`<div><div class="ph">${b}</div><div class="cap">${t}<small>${d}</small></div></div>`).join('');
+</script></body></html>

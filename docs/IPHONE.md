@@ -389,3 +389,14 @@ the guest's phone dials it as `phone`. The relay needs nothing new.
   "Max hat nicht geantwortet, Sir." / "Max gibt die Frage an Sie weiter, Sir."; `{"t":"ask-end","id"}`
   closes it on his phone.
 - History items carry `by: <name>` for a guest's message or answer (parsed from those prefixes).
+- **A real call for the guest (part 3):** each active share has its own call line on the guest's
+  room (a second `PhoneHub`; Sir's line is untouched and runs in parallel). With a question the host
+  also rings him — `ring{label:"Rückfrage · <session>"}` on his room and a VoIP push
+  `{"label","share":<share id>}` — and his phone puts that call on the share's room (`call`, binary
+  audio, `audio`, captions there). Parley asks in its voice, listens, transcribes, thanks him and goes
+  idle; the answer is his answer. Not picked up → the Rückfrage stays open; the 120 s don't run out
+  while he is on the phone. His phone sends its VoIP and alert tokens on his room (`push`).
+- **Invite links are https:** `https://<relay>/join#<the parley://join link, percent-encoded>`. The relay
+  serves `/join` (a page with "In Parley öffnen" and a QR code; script hash-pinned) and
+  `/.well-known/apple-app-site-association` (`/join` opens the iPhone app directly). The fragment
+  never reaches the relay.

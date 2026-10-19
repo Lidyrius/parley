@@ -58,5 +58,9 @@ Protokoll: `docs/IPHONE.md` → v7.
       kommen dort als lokale Mitteilung, solange die Verbindung offen ist (Unterwegs) oder die App läuft.
 - [x] **B5** Protokoll in `docs/IPHONE.md` (v7), README-Abschnitt „Session teilen“.
 - [x] **B6** Tests: Mac 233, iPhone 102, Android 13, Hook, Mod; Windows kompiliert (CI). TestFlight 57, Mac eingespielt.
-- [ ] **Offen:** Live-Test mit zwei echten Geräten; Windows einmal auf einem echten PC; echter Live-Anruf
-      beim Gast (CallKit, Stimme) statt Rückfrage-Bildschirm — eigener Schritt, wenn gewünscht.
+- [x] **Live-Anruf beim Gast (Teil 3):** eigene Anrufleitung je Freigabe; bei einer Rückfrage klingelt sein
+      Handy (VoIP-Push mit Freigabe-Kennung bzw. `ring` im Vordergrund), Parley fragt mit seiner Stimme,
+      seine gesprochene Antwort geht zurück. Nicht abgenommen → Rückfrage-Bildschirm bleibt offen.
+- [x] **Einladung als https-Link** (`/join`-Seite am Relay, iPhone öffnet die App direkt).
+- [ ] **Offen:** Live-Test mit zwei echten Geräten; Windows einmal auf einem echten PC; Android ohne Push
+      (klingelt nur bei offener Verbindung).

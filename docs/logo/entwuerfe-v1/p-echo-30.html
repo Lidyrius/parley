@@ -1,0 +1,137 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Parley P Echo</title>
+<style>
+  body{margin:0;background:#f2f2f4;font:12px -apple-system,"SF Pro Text",sans-serif;color:#1d1d1f}
+  h1{font:600 22px -apple-system,"SF Pro Display";margin:24px 28px 2px}
+  p.sub{margin:0 28px 6px;color:#6e6e73}
+  h2{font:600 15px -apple-system;margin:14px 28px 8px}
+  .row{display:grid;grid-template-columns:repeat(10,1fr);gap:12px;padding:0 28px}
+  .card{background:#fff;border-radius:18px;padding:12px 6px 10px;display:flex;flex-direction:column;align-items:center;gap:7px}
+  .icon{width:118px;height:118px;filter:drop-shadow(0 6px 10px rgba(0,0,0,.2))}
+  .name{font-weight:600}
+  .bars{display:flex;gap:5px}
+  .bar{width:44px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center}
+  .bar.l{background:#e8e8ed;color:#000}.bar.d{background:#1e1e20;color:#fff}
+  .bar svg{width:18px;height:18px}
+ .big .row{grid-template-columns:repeat(3,1fr);gap:22px;padding:0 32px}
+  .big h1{margin:28px 32px 18px;font-size:26px}
+  .big .card{padding:22px 10px 18px;gap:12px;border-radius:24px}
+  .big .icon{width:250px;height:250px}
+  .big .name{font-size:17px}
+  .big .bar{width:70px;height:28px}
+</style></head><body>
+<svg id="defs" width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs></svg>
+<h1>Parley — „P Echo“, drei Familien × zehn</h1>
+<p class="sub">Jede Glyphe ist automatisch auf ihre Gesamtfläche zentriert (inkl. Strichstärke) und auf gleiche Größe normiert. Spalte = Farbpalette, gleich über alle drei Familien.</p>
+<div id="out"></div>
+<script>
+// Palettes: [top, bottom, halo, glyph]
+const PAL=[
+ ["#6e6cf0","#1e1b6b","#bdbcff","#fff"],  // Indigo
+ ["#3a3f63","#0b0d17","#8f7bff","#fff"],  // Mitternacht
+ ["#14a3a8","#063a46","#9ff6ee","#fff"],  // Petrol
+ ["#3a3a3c","#000","#d8d8ff","#fff"],     // Graphit
+ ["#ff8a50","#c2361b","#ffe0c8","#fff"],  // Koralle
+ ["#7b5cff","#0a6aa8","#8ef0ff","#fff"],  // Aurora
+ ["#2f8f6a","#0b3326","#b6f5d8","#fff"],  // Wald
+ ["#d9b25e","#6f4f12","#fff3cf","#fff"],  // Gold
+ ["#a3264a","#3a0718","#ffc2d4","#fff"],  // Bordeaux
+ ["#ffffff","#d6d9e3","#7c86ff","#1e1b6b"]// Porzellan
+];
+const fade=(n,a=1,b=.25)=>Array.from({length:n},(_,i)=>n<2?a:+(a-(a-b)*i/(n-1)).toFixed(2));
+const rad=d=>d*Math.PI/180;
+// Echo origin is (0,0). arcs: {r,w,o,s(span° from horizontal, 90 = touches stem),dash}
+function glyph(v){
+  let p='';
+  const top=v.top??-(v.bowl??v.arcs[v.arcs.length-1].r), bot=v.bot??48;
+  if(v.bowl) p+=`<path d="M0 ${bot}V${-v.bowl}a${v.bowl} ${v.bowl} 0 0 1 0 ${2*v.bowl}" stroke-width="${v.bw??v.sw??8}" stroke-linejoin="round"/>`;
+  else p+=`<path d="M0 ${bot}V${top}" stroke-width="${v.sw??8}"/>`;
+  if(v.dot) p+=`<circle cx="${v.dotx??6}" cy="0" r="${v.dot}" fill="currentColor" stroke="none"/>`;
+  for(const a of v.arcs){
+    const s=rad(a.s??90), x=(a.r*Math.cos(s)).toFixed(2), y=(a.r*Math.sin(s)).toFixed(2);
+    p+=`<path d="M${x} ${-y}A${a.r} ${a.r} 0 0 1 ${x} ${y}" stroke-width="${a.w}" opacity="${a.o??1}"${a.dash?` stroke-dasharray="${a.dash}"`:''}/>`;
+  }
+  return `<g fill="none" stroke="currentColor" stroke-linecap="round">${p}</g>`;
+}
+const A=(rs,ws,os,ss,extra={})=>rs.map((r,i)=>({r,w:[].concat(ws)[i]??[].concat(ws)[0],o:[].concat(os)[i]??1,s:[].concat(ss)[i]??[].concat(ss)[0],...extra}));
+const F={
+ "Nachhall":[
+  ["Original",{sw:6,arcs:A([8,16,24,32],6,fade(4,1,.3),90)}],
+  ["Fünf",{sw:5,arcs:A([8,16,24,32,40],5,fade(5,1,.15),90)}],
+  ["Drei",{sw:7,arcs:A([10,21,32],7,fade(3,1,.3),90)}],
+  ["Ausdünnen",{sw:7,arcs:A([8,17,26,35],[7,6,5,4],fade(4,1,.4),90)}],
+  ["Strich-Fade",{sw:7,arcs:A([8,16,24,32],[7,5.5,4,2.5],1,90)}],
+  ["Fein",{sw:3.5,arcs:A([6,12,18,24,30,36],3.5,fade(6,1,.2),90)}],
+  ["Kurz",{sw:6,bot:30,arcs:A([8,16,24,32],6,fade(4,1,.3),90)}],
+  ["Quelle",{sw:6,dot:4.5,dotx:6,arcs:A([16,24,32],6,fade(3,.95,.3),90)}],
+  ["Beschleunigt",{sw:6,arcs:A([8,17,28,41],6,fade(4,1,.25),90)}],
+  ["Gestrichelt",{sw:6,arcs:[...A([8,16],6,[1,.85],90),...A([24,32],5,[.6,.4],90,{dash:"2 7"})]}]],
+ "Gelöst":[
+  ["Original",{top:-28,arcs:A([12,24,36],[8,7,5],[1,1,.45],70)}],
+  ["Enger",{top:-28,arcs:A([12,24,36],[8,7,5],[1,1,.45],60)}],
+  ["Kurzbogen",{top:-28,arcs:A([12,24,36],[8,7,5],[1,1,.45],48)}],
+  ["Zwei",{top:-26,arcs:A([13,27],8,1,68)}],
+  ["Vier",{sw:6,top:-30,arcs:A([10,20,30,40],6,fade(4,1,.3),70)}],
+  ["Fächer",{top:-28,arcs:A([12,24,36],[8,7,5],[1,.9,.5],[75,60,45])}],
+  ["Quelle",{dot:5,dotx:8,top:-28,arcs:A([16,27,38],[7,6,5],fade(3,1,.4),65)}],
+  ["Haarlinie",{sw:4.5,top:-28,arcs:A([12,24,36],4.5,1,70)}],
+  ["Weit",{top:-30,arcs:A([16,30],8,[1,.6],60)}],
+  ["Hoch",{top:-36,arcs:A([12,24,36],[8,7,5],[1,1,.45],70)}]],
+ "Klassisch":[
+  ["Original",{bowl:14,bot:50,arcs:A([24,34],[6,5],[.75,.4],60)}],
+  ["Ein Echo",{bowl:16,bot:52,arcs:A([28],6,.8,55)}],
+  ["Drei Echos",{bowl:14,bot:50,arcs:A([24,33,42],[6,5,4],fade(3,.8,.25),60)}],
+  ["Mit Kern",{bowl:14,bot:50,dot:4,dotx:7,arcs:A([24,34],[6,5],[.75,.4],60)}],
+  ["Schwer",{bowl:14,bw:10,bot:50,arcs:A([26,36],[6,4],[.8,.45],58)}],
+  ["Fächer",{bowl:14,bot:50,arcs:A([24,34],[6,5],[.8,.45],[62,44])}],
+  ["Linie",{bowl:14,sw:4.5,bot:50,arcs:A([23,32,41],4.5,1,60)}],
+  ["Breit",{bowl:12,bot:46,arcs:A([22,32],[6,5],[.8,.45],72)}],
+  ["Funk",{bowl:14,bot:50,arcs:[...A([24],6,.8,60),...A([34],5,.5,60,{dash:"2 8"})]}],
+  ["Kompakt",{bowl:15,bot:34,arcs:A([25,35],[6,5],[.75,.4],60)}]]
+};
+// measure each glyph, then center its bbox (stroke included) and normalize size
+const probe=document.getElementById('defs');
+function centered(v,box=64){
+  const g=document.createElementNS('http://www.w3.org/2000/svg','g'); g.innerHTML=glyph(v); probe.appendChild(g);
+  const b=g.getBBox(); probe.removeChild(g);
+  const pad=Math.max(v.sw??8,v.bw??0,...v.arcs.map(a=>a.w))/2;
+  const w=b.width+2*pad,h=b.height+2*pad,k=box/Math.max(w,h);
+  const cx=b.x+b.width/2,cy=b.y+b.height/2;
+  return `<g transform="translate(50 50) scale(${k.toFixed(4)}) translate(${(-cx).toFixed(2)} ${(-cy).toFixed(2)})">${glyph(v)}</g>`;
+}
+let html='';
+const page=+(location.hash.match(/p=(\d)/)||[])[1];
+if(page){
+  document.body.classList.add('big');
+  const all=Object.entries(F).flatMap(([fam,vs])=>vs.map((x,i)=>[fam,i,...x]));
+  for(const [i,el] of [...document.body.children].entries()) if(el.tagName!=='SCRIPT'&&el.id!=='defs'&&el.id!=='out') el.remove();
+  html=`<h1>P Echo · Bild ${page} von 5</h1><div class="row">`;
+  all.slice((page-1)*6,page*6).forEach(([fam,i,n,v],k)=>{const num=(page-1)*6+k+1;html+=card(fam,i,n,v,num);});
+  document.getElementById('out').innerHTML=html+'</div>';
+} else {
+for(const [fam,vs] of Object.entries(F)){
+  html+=`<h2>${fam}</h2><div class="row">`;
+  vs.forEach(([n,v],i)=>{html+=card(fam,i,n,v,i+1);});
+  html+='</div>';
+}
+document.getElementById('out').innerHTML=html;
+}
+function card(fam,i,n,v,num){
+    let html='';
+    const [a,b,halo,col]=PAL[i], g=centered(v), gs=centered(v,92), id=fam+i;
+    html+=`<div class="card"><svg class="icon" viewBox="0 0 120 120"><defs>
+      <linearGradient id="bg${id}" x1="0" y1="0" x2=".3" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient>
+      <radialGradient id="h${id}"><stop offset="0" stop-color="${halo}" stop-opacity=".55"/><stop offset="1" stop-color="${halo}" stop-opacity="0"/></radialGradient></defs>
+      <rect width="120" height="120" rx="27" fill="url(#bg${id})"/><circle cx="60" cy="60" r="46" fill="url(#h${id})"/>
+      <svg x="10" y="10" width="100" height="100" viewBox="0 0 100 100" style="color:${col}" filter="url(#glow)">${g}</svg>
+      <rect width="120" height="120" rx="27" fill="url(#sheen)"/>
+      <rect x=".75" y=".75" width="118.5" height="118.5" rx="26.3" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="1.5"/></svg>
+      <div class="name">${num} · ${page?fam+' · ':''}${n}</div>
+      <div class="bars"><div class="bar l"><svg viewBox="0 0 100 100">${gs}</svg></div><div class="bar d"><svg viewBox="0 0 100 100">${gs}</svg></div></div></div>`;
+    return html;
+}
+</script>
+</body></html>

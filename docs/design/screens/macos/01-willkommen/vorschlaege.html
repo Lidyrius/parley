@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Willkommen Vorschläge</title>
+<style>
+:root{--clay:#d97757;--ink:#f3f1ec;--sec:#9a968e;--line:rgba(255,255,255,.09)}
+*{box-sizing:border-box}body{margin:0;background:#cfccc4;font:14px -apple-system,system-ui,sans-serif;color:var(--ink)}
+.stage{display:grid;grid-template-columns:repeat(3,640px);gap:30px;padding:30px}
+.win{width:640px;height:560px;border-radius:16px;overflow:hidden;position:relative;background:radial-gradient(120% 90% at 50% 0%,#34302b 0%,#1e1c19 60%,#171614 100%);box-shadow:0 22px 50px rgba(0,0,0,.35),0 0 0 1px rgba(0,0,0,.4);display:flex;flex-direction:column}
+.tl{position:absolute;top:14px;left:16px;display:flex;gap:8px;z-index:3}.tl i{width:12px;height:12px;border-radius:50%;background:#ff5f57}.tl i:nth-child(2){background:#febc2e}.tl i:nth-child(3){background:#28c840}
+.prog{display:flex;gap:6px;justify-content:center;padding-top:22px;flex:none}.prog i{height:6px;width:8px;border-radius:9px;background:rgba(255,255,255,.18)}.prog i.a{width:22px;background:var(--clay)}
+.mid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 56px;text-align:center}
+.bar{flex:none;display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:0 40px 26px}
+.btn{background:var(--clay);color:#fff;border-radius:9px;padding:8px 18px;font-weight:600;font-size:13.5px}
+.btn2{background:rgba(255,255,255,.1);color:var(--ink);border-radius:9px;padding:8px 16px;font-weight:500;font-size:13.5px}
+h1{font:700 30px -apple-system,system-ui,sans-serif;margin:0;letter-spacing:-.4px}
+.sub{color:var(--sec);font-size:14.5px;line-height:1.45;margin-top:10px}
+.cap{margin-top:12px;font:600 17px -apple-system,system-ui,sans-serif;color:#1f1e1c;width:640px}.cap small{display:block;font-weight:400;color:#5e5c57;font-size:13px;margin-top:3px;line-height:1.4}
+.logo{width:112px;height:112px;border-radius:26px;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+.ic{width:16px;height:16px;object-fit:contain}
+.wave{display:flex;gap:3px;align-items:center;height:44px}.wave i{width:4px;border-radius:3px;background:var(--clay)}
+.card{background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:14px}
+.mono{font:12.5px ui-monospace,Menlo,monospace}
+</style></head><body>
+<div class="stage" id="stage"></div>
+<script>
+const S='symbole/', I=(n,c='c',s=16)=>`<img class="ic" style="width:${s}px;height:${s}px" src="${S}${n}-${c}.png">`;
+const LOGO='../../../../logo/final-v2/png/03-graphit-Dark.png';
+const prog=`<div class="prog">${Array.from({length:8},(_,i)=>`<i class="${i?'':'a'}"></i>`).join('')}</div>`;
+const bar=(r='<span class="btn">Weiter</span>',l='')=>`<div class="bar">${l}${l?'<span style="flex:1"></span>':''}${r}</div>`;
+const wave=(n=38,h=40,seed=3)=>`<div class="wave">${Array.from({length:n},(_,i)=>`<i style="height:${6+Math.abs(Math.sin(i*0.55+seed)*Math.cos(i*0.21))*h}px;opacity:${.45+.55*Math.abs(Math.sin(i*.3))}"></i>`).join('')}</div>`;
+const W=(b)=>`<div class="tl"><i></i><i></i><i></i></div>${b}`;
+
+// Ist
+const IST=W(`${prog}<div class="mid"><div style="width:60px;height:60px;border-radius:17px;background:rgba(217,119,87,.14);display:grid;place-items:center">${I('waveform','c',28)}</div>
+<h1 style="font-size:28px;margin-top:16px">Willkommen bei Parley</h1><div class="sub" style="font-size:14px">Deine Sprachschicht für Claude Code und Codex. Am Ende jeder Antwort spricht Parley die Zusammenfassung, hört deine Antwort und speist sie zurück — freihändig, im Charakter eines ruhigen Butlers.</div></div>${bar()}`);
+
+// A · Logo mit Echo
+const rings=[150,210,270].map((d,i)=>`<span style="position:absolute;left:50%;top:50%;width:${d}px;height:${d}px;margin:${-d/2}px 0 0 ${-d/2}px;border-radius:50%;border:1.5px solid rgba(217,119,87,${.35-i*.1})"></span>`).join('');
+const A=W(`${prog}<div class="mid"><div style="position:relative;width:280px;height:200px;display:grid;place-items:center">${rings}<img class="logo" src="${LOGO}" style="position:relative"></div>
+<h1 style="margin-top:6px">Guten Tag, Sir.</h1><div class="sub">Parley spricht Claude Codes Antworten – und hört Ihre.</div></div>${bar('<span class="btn">Einrichten · 2 Min.</span>')}`);
+
+// B · Erst hören
+const B=W(`${prog}<div class="mid"><div style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--clay)">Bitte einmal hinhören</div>
+<div style="display:flex;align-items:center;gap:18px;margin:22px 0 18px"><span style="width:64px;height:64px;border-radius:50%;background:var(--clay);display:grid;place-items:center;box-shadow:0 0 0 10px rgba(217,119,87,.15)">${I('play.fill','w',24)}</span>${wave(30,38)}</div>
+<div style="font-size:21px;line-height:1.4;font-style:italic;max-width:470px">„Die Tests sind grün, Sir. Soll ich den Release taggen?“</div>
+<div class="sub" style="margin-top:16px">So klingt Parley am Ende jeder Antwort. Sie antworten einfach – mit der Stimme.</div></div>${bar()}`);
+
+// C · Der Kreislauf in drei Schritten
+const step=(n,sym,t,d)=>`<div class="card" style="flex:1;padding:16px 14px;text-align:left"><div style="display:flex;align-items:center;gap:8px"><span style="width:30px;height:30px;border-radius:9px;background:rgba(217,119,87,.16);display:grid;place-items:center">${I(sym,'c',16)}</span><span style="color:var(--sec);font-size:12px">${n}</span></div><div style="font-weight:600;font-size:15px;margin-top:12px">${t}</div><div style="color:var(--sec);font-size:12.5px;line-height:1.4;margin-top:4px">${d}</div></div>`;
+const arrow=`<span style="align-self:center;opacity:.5">${I('chevron.right','g',12)}</span>`;
+const C=W(`${prog}<div class="mid"><img src="${LOGO}" style="width:58px;height:58px;border-radius:14px"><h1 style="margin-top:14px">So funktioniert Parley</h1>
+<div style="display:flex;gap:8px;margin-top:26px;width:100%">${step('1','terminal','Claude arbeitet','Wie immer im Terminal oder in der App.')}${arrow}${step('2','speaker.wave.2.fill','Parley spricht','Ein, zwei Sätze Zusammenfassung.')}${arrow}${step('3','mic.fill','Sie antworten','Laut – Parley tippt es zurück.')}</div></div>${bar()}`);
+
+// D · Geteilt: Marke links, Plan rechts
+const todo=(sym,t,d)=>`<div style="display:flex;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)"><span style="width:30px;height:30px;border-radius:9px;background:rgba(255,255,255,.07);display:grid;place-items:center">${I(sym,'g',15)}</span><div style="flex:1"><div style="font-weight:600;font-size:13.5px">${t}</div><div style="color:var(--sec);font-size:12px">${d}</div></div></div>`;
+const D=W(`<div style="display:flex;height:100%"><div style="width:250px;background:linear-gradient(170deg,#3a2a22,#1b1715);display:flex;flex-direction:column;justify-content:flex-end;padding:30px 26px">
+<img src="${LOGO}" style="width:76px;height:76px;border-radius:18px;margin-bottom:auto;margin-top:40px"><h1 style="font-size:28px;line-height:1.1">Willkommen<br>bei Parley</h1><div class="sub" style="font-size:13px">Die Stimme für Claude Code und Codex.</div></div>
+<div style="flex:1;display:flex;flex-direction:column;padding:56px 34px 26px"><div style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--sec)">In etwa 2 Minuten</div>
+<div style="margin-top:8px">${todo('rectangle.2.swap','Clients verbinden','Claude Code, Codex')}${todo('key.fill','Zwei Schlüssel','Google &amp; Groq, praktisch gratis')}${todo('globe','Sprache &amp; Stimme','Probe hören')}${todo('mic.fill','Mikrofon erlauben','')}${todo('person.wave.2.fill','Kurze Probe','Ein echtes Gespräch')}</div>
+<span style="flex:1"></span><div style="display:flex;justify-content:flex-end"><span class="btn">Los geht’s</span></div></div></div>`);
+
+// E · Gespräch als Vorschau
+const E=W(`${prog}<div class="mid" style="padding:0 48px"><div class="card" style="width:100%;text-align:left;padding:14px 16px">
+<div class="mono" style="color:var(--sec)">claude › Export-Knopf einbauen</div>
+<div class="mono" style="margin-top:8px;color:#cfcac0">✓ CSVExport.swift erstellt · Tests grün</div></div>
+<div style="width:100%;display:flex;flex-direction:column;gap:10px;margin-top:14px">
+<div style="align-self:flex-start;display:flex;gap:10px;align-items:center;background:rgba(217,119,87,.16);border-radius:16px 16px 16px 5px;padding:11px 14px;max-width:80%;text-align:left">${I('speaker.wave.2.fill','c',15)}<span style="font-style:italic">Der Export ist drin, Sir. Soll ich taggen?</span></div>
+<div style="align-self:flex-end;display:flex;gap:10px;align-items:center;background:var(--clay);border-radius:16px 16px 5px 16px;padding:11px 14px">${I('mic.fill','w',14)}<span>Ja, mach.</span></div></div>
+<h1 style="font-size:24px;margin-top:26px">Sprechen statt tippen.</h1><div class="sub" style="margin-top:6px">Parley liest vor, was Claude getan hat, und gibt Ihre Antwort zurück.</div></div>${bar()}`);
+
+const V=[["Ist · nachgebaut","Symbol, Titel, langer Absatz – sagt viel, zeigt nichts. Kein Logo.",IST],
+["A · Logo mit Echo","Das neue P-Echo groß, die Ringe greifen das Logo auf. Eine Zeile Text, Knopf nennt den Aufwand.",A],
+["B · Erst hören","Die App stellt sich mit ihrer Stimme vor: Abspielen startet einen echten Parley-Satz in der gewählten Sprache.",B],
+["C · Drei Schritte","Der Kreislauf auf einen Blick: Claude arbeitet → Parley spricht → du antwortest.",C],
+["D · Plan vorab","Links Marke, rechts die Einrichtung als Liste mit Zeitangabe – man weiß, was kommt.",D],
+["E · Gespräch als Vorschau","Ein Mini-Gespräch zeigt das Produkt selbst: Terminal, gesprochener Satz, Antwort.",E]];
+const only=new URLSearchParams(location.search).get('v');
+document.getElementById('stage').innerHTML=V.filter((_,i)=>only==null||+only===i).map(([t,d,b])=>`<div><div class="win">${b}</div><div class="cap">${t}<small>${d}</small></div></div>`).join('');
+if(only!=null)document.getElementById('stage').style.gridTemplateColumns='640px';
+</script></body></html>

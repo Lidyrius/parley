@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Kopplung Vorschläge</title>
+<style>
+:root{--bg:#161615;--card:#242322;--ink:#f3f1ec;--sec:#9a968e;--line:rgba(255,255,255,.08);--clay:#d97757;--soft:rgba(217,119,87,.15)}
+*{box-sizing:border-box}body{margin:0;background:#cfccc4;font:15px -apple-system,system-ui,sans-serif;color:var(--ink)}
+.stage{display:flex;gap:28px;padding:28px;align-items:flex-start}
+.ph{width:402px;height:874px;background:var(--bg);border-radius:54px;overflow:hidden;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.25);flex:none;display:flex;flex-direction:column}
+.sb{height:54px;flex:none;display:flex;justify-content:space-between;align-items:center;padding:0 34px;font:600 16px -apple-system,system-ui,sans-serif}
+.di{position:absolute;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000}
+.body{flex:1;display:flex;flex-direction:column;padding:0 24px 34px}
+.cap{margin-top:12px;font:600 17px -apple-system,system-ui,sans-serif;width:402px;color:#1f1e1c}.cap small{display:block;font-weight:400;color:#5e5c57;font-size:13px;margin-top:3px;line-height:1.4}
+h1{font:700 32px -apple-system,system-ui,sans-serif;margin:0;letter-spacing:-.5px;text-align:center}
+.sub{color:var(--sec);font-size:16px;line-height:1.4;text-align:center;margin-top:8px}
+.ic{width:18px;height:18px;object-fit:contain;flex:none}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;background:var(--clay);color:#fff;border-radius:99px;height:54px;font-weight:600;font-size:17px}
+.btn2{display:flex;align-items:center;justify-content:center;gap:8px;color:var(--clay);height:46px;font-weight:600;font-size:16px}
+.btn3{display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(255,255,255,.08);border-radius:99px;height:50px;font-weight:600;font-size:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px}.row+.row{border-top:1px solid var(--line)}
+.tile{width:34px;height:34px;border-radius:10px;background:var(--soft);display:grid;place-items:center;flex:none}
+.t{flex:1;min-width:0}.t b{display:block;font-weight:600;font-size:15px}.t small{display:block;color:var(--sec);font-size:13px;line-height:1.3;margin-top:1px}
+.foot{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--sec);font-size:12.5px}
+.logo{border-radius:24%;box-shadow:0 12px 30px rgba(0,0,0,.5)}
+.dots{display:flex;gap:7px;justify-content:center}.dots i{width:7px;height:7px;border-radius:9px;background:rgba(255,255,255,.2)}.dots i.a{width:20px;background:var(--clay)}
+.qr{display:grid;gap:1px}.qr i{background:#1f1e1c;border-radius:1px}.qr i.o{background:transparent}
+.menu{background:rgba(40,39,37,.96);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:5px;font-size:12.5px;box-shadow:0 10px 24px rgba(0,0,0,.5)}
+.menu div{padding:5px 9px;border-radius:6px;color:#d8d4cc}.menu .h{background:var(--clay);color:#fff;font-weight:600}
+.mono{font:12px ui-monospace,Menlo,monospace}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;font-size:12px;font-weight:600}
+</style></head><body>
+<div class="stage" id="stage"></div>
+<script>
+const S='symbole/', I=(n,c='c',s=18)=>`<img class="ic" style="width:${s}px;height:${s}px" src="${S}${n}-${c}.png">`;
+const LOGO='../../../../logo/final-v2/png/03-graphit-Dark.png';
+const SB=`<div class="di"></div><div class="sb"><span>09:41</span><span style="letter-spacing:2px">▮▮▮ ◔</span></div>`;
+// pseudo QR code
+const qr=(px=150,n=25,seed=7)=>{let r=seed,c='';const rnd=()=>(r=(r*9301+49297)%233280)/233280;
+ const fin=(x,y)=>[[0,0],[n-7,0],[0,n-7]].some(([a,b])=>x>=a&&x<a+7&&y>=b&&y<b+7);
+ const finOn=(x,y)=>{for(const[a,b]of[[0,0],[n-7,0],[0,n-7]]){if(x>=a&&x<a+7&&y>=b&&y<b+7){const u=x-a,v=y-b;return u==0||v==0||u==6||v==6||(u>=2&&u<=4&&v>=2&&v<=4)}}};
+ for(let y=0;y<n;y++)for(let x=0;x<n;x++){const on=fin(x,y)?finOn(x,y):rnd()>.5;c+=`<i class="${on?'':'o'}"></i>`}
+ return `<div style="background:#fff;padding:${px/14}px;border-radius:${px/10}px;display:inline-block"><div class="qr" style="grid-template-columns:repeat(${n},${(px-n)/n}px);grid-auto-rows:${(px-n)/n}px">${c}</div></div>`};
+const rings=(sz,ds,a=.38)=>ds.map((d,i)=>`<span style="position:absolute;left:50%;top:50%;width:${d}px;height:${d}px;margin:${-d/2}px 0 0 ${-d/2}px;border-radius:50%;border:1.5px solid rgba(217,119,87,${a-i*.12})"></span>`).join('');
+const lock=`<div class="foot">${I('lock.fill','g',12)}Verschlüsselt · nur Ihr Mac und Ihr iPhone</div>`;
+
+// Ist (nachgebaut, alt)
+const IST=`${SB}<div class="body" style="padding-top:40px">
+<div style="align-self:center;width:84px;height:84px;border-radius:22px;background:linear-gradient(#e4906f,var(--clay));display:grid;place-items:center;box-shadow:0 6px 20px rgba(217,119,87,.35)">${I('waveform','w',40)}</div>
+<h1 style="margin-top:14px">Parley auf dem iPhone</h1><div class="sub">Alle Sessions deines Macs im Blick – und mit einem Tipp fortgesetzt.</div>
+<div class="card" style="padding:16px;margin-top:30px;display:flex;flex-direction:column;gap:12px">${['Öffne Parley auf dem Mac.','Wähle im Menü „iPhone verbinden…“.','Scanne den QR-Code – oder füge den Link hier ein.'].map((t,i)=>`<div style="display:flex;gap:12px"><span style="width:26px;height:26px;border-radius:50%;background:var(--clay);display:grid;place-items:center;font-weight:700;font-size:14px;flex:none">${i+1}</span><span>${t}</span></div>`).join('')}</div>
+<div class="btn" style="margin-top:30px">${I('qrcode.viewfinder','w',20)}QR-Code scannen</div>
+<div style="display:flex;gap:10px;margin-top:14px"><div class="card" style="flex:1;border-radius:12px;padding:13px 14px;color:#6c6963">parley://pair?…</div><div style="width:48px;border-radius:12px;background:rgba(217,119,87,.25);display:grid;place-items:center">${I('doc.on.clipboard','c',18)}</div></div></div>`;
+
+// A · Logo mit Echo
+const A=`${SB}<div class="body">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center">
+<div style="position:relative;width:300px;height:250px;display:grid;place-items:center">${rings(0,[170,236,302])}<img class="logo" src="${LOGO}" style="width:120px;height:120px;position:relative"></div>
+<h1 style="margin-top:4px">Guten Tag, Sir.</h1><div class="sub">Ein Code vom Mac, und Ihre Sessions sind hier.</div>
+<div class="card" style="margin-top:28px;width:100%"><div class="row"><div class="tile">${I('desktopcomputer','c',17)}</div><div class="t"><b>Auf dem Mac</b><small>Parley-Menü → „Handy verbinden…“</small></div></div></div></div>
+<div class="btn">${I('qrcode.viewfinder','w',20)}Code scannen</div>
+<div class="btn2" style="margin-top:4px">${I('doc.on.clipboard','c',16)}Link einfügen</div>
+<div style="margin-top:8px">${lock}</div></div>`;
+
+// B · Kamera gleich an
+const B=`${SB}<div class="body" style="padding-top:12px">
+<div style="display:flex;align-items:center;gap:12px"><img class="logo" src="${LOGO}" style="width:44px;height:44px;box-shadow:none"><div><div style="font:700 22px -apple-system,system-ui">Mit dem Mac koppeln</div><div style="color:var(--sec);font-size:14px">Halten Sie das iPhone auf den Code.</div></div></div>
+<div style="margin-top:22px;height:390px;border-radius:30px;position:relative;overflow:hidden;background:radial-gradient(80% 60% at 50% 45%,#3b3a37,#121211)">
+<div style="position:absolute;inset:0;display:grid;place-items:center;filter:blur(1.2px);opacity:.85"><div style="background:#2c2b29;padding:22px;border-radius:12px;box-shadow:0 0 0 30px #222">${qr(150)}</div></div>
+${[[0,0],[1,0],[0,1],[1,1]].map(([x,y])=>`<span style="position:absolute;${x?'right':'left'}:62px;${y?'bottom':'top'}:68px;width:42px;height:42px;border:4px solid var(--clay);border-${x?'left':'right'}:none;border-${y?'top':'bottom'}:none;border-radius:${y?(x?'0 0 16px 0':'0 0 0 16px'):(x?'0 16px 0 0':'16px 0 0 0')}"></span>`).join('')}
+<span style="position:absolute;left:70px;right:70px;top:190px;height:2px;background:var(--clay);box-shadow:0 0 14px 3px rgba(217,119,87,.7)"></span>
+<div style="position:absolute;left:0;right:0;bottom:16px;text-align:center"><span class="pill" style="background:rgba(0,0,0,.55);color:#fff;font-weight:500">Kamera aktiv · sucht Code …</span></div></div>
+<div class="card" style="margin-top:16px"><div class="row"><div class="tile">${I('menubar.rectangle','c',17)}</div><div class="t"><b>Wo ist der Code?</b><small>Mac: Parley-Menü → „Handy verbinden…“</small></div></div></div>
+<span style="flex:1"></span>
+<div class="btn3">${I('doc.on.clipboard','w',16)}Link einfügen</div></div>`;
+
+// C · Der Weg als Bild
+const C=`${SB}<div class="body" style="padding-top:18px">
+<h1 style="text-align:left">Ein Code,<br>fertig.</h1><div class="sub" style="text-align:left">So koppeln Sie das iPhone mit Parley auf dem Mac.</div>
+<div style="margin-top:22px;border-radius:24px;background:linear-gradient(160deg,#2c3540,#1d2025);height:300px;position:relative;overflow:hidden;border:1px solid var(--line)">
+<div style="height:24px;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:0 12px;font-size:11px;color:#ddd"><img src="${LOGO}" style="width:15px;height:15px;border-radius:4px;outline:2px solid var(--clay);outline-offset:1px"><span>Wi-Fi</span><span>09:41</span></div>
+<div class="menu" style="position:absolute;right:58px;top:30px;width:170px"><div>Zentrale öffnen</div><div class="h">Handy verbinden…</div><div>Einstellungen…</div></div>
+<div style="position:absolute;left:22px;bottom:20px;background:#2a2927;border-radius:14px;padding:12px;border:1px solid rgba(255,255,255,.1);box-shadow:0 12px 28px rgba(0,0,0,.5);text-align:center">${qr(110,21,3)}<div style="font-size:11.5px;color:#cfcac0;margin-top:6px">Mit dem iPhone scannen</div></div>
+${[[1,'right:30px;top:50px'],[2,'left:150px;bottom:100px']].map(([n,p])=>`<span style="position:absolute;${p};width:26px;height:26px;border-radius:50%;background:var(--clay);display:grid;place-items:center;font-weight:700;font-size:14px;box-shadow:0 0 0 4px rgba(217,119,87,.25)">${n}</span>`).join('')}</div>
+<div style="display:flex;gap:10px;margin-top:14px;font-size:13.5px;color:var(--sec)">${['Parley-Symbol oben in der Menüleiste','„Handy verbinden…“ – ein Code erscheint','Hier scannen'].map((t,i)=>`<div style="flex:1;display:flex;gap:7px"><b style="color:var(--clay)">${i+1}</b><span>${t}</span></div>`).join('')}</div>
+<span style="flex:1"></span>
+<div class="btn">${I('qrcode.viewfinder','w',20)}Code scannen</div>
+<div class="btn2" style="margin-top:4px">Link einfügen</div></div>`;
+
+// D · Erst zeigen, was kommt
+const mini=(dot,t,s,st)=>`<div class="card" style="padding:11px 13px;display:flex;gap:10px;align-items:center;border-radius:16px"><span style="width:9px;height:9px;border-radius:50%;background:${dot};flex:none"></span><div class="t"><b style="font-size:14px">${t}</b><small style="font-size:12px">${s}</small></div><span class="pill" style="background:${st[1]};color:${st[2]}">${st[0]}</span></div>`;
+const D=`${SB}<div class="body" style="padding-top:20px">
+<div style="position:relative;height:330px">
+<div style="position:absolute;inset:0 6px;display:flex;flex-direction:column;gap:9px;transform:rotate(-2deg);margin-top:10px">
+${mini('#4fa36a','vloude','Tests grün · wartet auf Sie',['Fortsetzen','var(--clay)','#fff'])}
+${mini('var(--clay)','shop-api','arbeitet · 4 Min.',['läuft','rgba(255,255,255,.1)','#cfcac0'])}
+${mini('#7d8cc4','blog','Rückruf in 12 Min.',['Wiedervorlage','rgba(125,140,196,.2)','#aab6e6'])}</div>
+<div style="position:absolute;left:30px;right:30px;bottom:6px;background:#2d2c2a;border-radius:22px;padding:12px 14px;display:flex;gap:12px;align-items:center;box-shadow:0 14px 30px rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.08)">
+<img src="${LOGO}" style="width:40px;height:40px;border-radius:10px"><div class="t"><b>Parley · vloude</b><small>„Die Tests sind grün, Sir.“</small></div><span style="width:40px;height:40px;border-radius:50%;background:#34c759;display:grid;place-items:center">${I('phone.fill','w',18)}</span></div></div>
+<h1 style="margin-top:22px">Ihre Sessions,<br>in der Tasche.</h1>
+<div class="sub">Sehen, was Claude tut. Rangehen, wenn es fertig ist – auch im Auto.</div>
+<span style="flex:1"></span><div class="dots" style="margin-bottom:18px"><i class="a"></i><i></i><i></i></div>
+<div class="btn">Mit dem Mac koppeln</div>
+<div class="btn2" style="margin-top:4px">${I('play.fill','c',13)}Erst ansehen – Demo</div></div>`;
+
+// E · Zwei Wege
+const way=(ic,t,s,cta,prim)=>`<div class="card" style="padding:16px;${prim?'border-color:rgba(217,119,87,.45);background:linear-gradient(180deg,rgba(217,119,87,.12),var(--card))':''}"><div style="display:flex;gap:12px;align-items:center"><div class="tile" style="width:42px;height:42px;border-radius:12px">${I(ic,'c',21)}</div><div class="t"><b style="font-size:16.5px">${t}</b><small style="font-size:13.5px">${s}</small></div></div><div class="${prim?'btn':'btn3'}" style="margin-top:14px;height:46px;font-size:15.5px">${cta}</div></div>`;
+const E=`${SB}<div class="body" style="padding-top:26px">
+<div style="display:flex;justify-content:center"><img class="logo" src="${LOGO}" style="width:76px;height:76px"></div>
+<h1 style="margin-top:16px">Willkommen, Sir.</h1><div class="sub">Parley lebt auf Ihrem Mac. Das iPhone ist die Fernbedienung.</div>
+<div style="display:flex;flex-direction:column;gap:12px;margin-top:26px">
+${way('desktopcomputer','Parley läuft auf dem Mac','Menü → „Handy verbinden…“ zeigt den Code.',`${I('qrcode.viewfinder','w',18)}Code scannen`,1)}
+${way('laptopcomputer','Noch nicht installiert','Wir schicken den Download an Ihren Mac.',`${I('square.and.arrow.up','w',16)}Link an den Mac senden`,0)}</div>
+<span style="flex:1"></span>
+<div style="display:flex;justify-content:space-between"><span class="btn2">${I('doc.on.clipboard','c',15)}Link einfügen</span><span class="btn2">${I('play.fill','c',12)}Demo ansehen</span></div></div>`;
+
+const V=[["Ist · nachgebaut","Altes Wellen-Symbol statt P-Echo, drei Schritte als Text, Du-Form.",IST],
+["A · Logo mit Echo","Wie das neue Mac-Onboarding: P-Echo mit Ringen, „Guten Tag, Sir.“, eine Hinweiszeile, ein Knopf.",A],
+["B · Kamera gleich an","Der Sucher ist schon im Screen – Code hinhalten, fertig. Fragt sofort nach Kamera-Zugriff.",B],
+["C · Der Weg als Bild","Menüleiste und Code-Fenster des Macs als Bild mit Nummern statt Textanleitung.",C],
+["D · Erst zeigen, was kommt","Vorschau auf Sessions und Anruf, dann koppeln. Demo zum Ausprobieren ohne Mac.",D],
+["E · Zwei Wege","Für alle, die das iPhone zuerst haben: koppeln – oder den Mac-Download per Link schicken.",E]];
+const only=new URLSearchParams(location.search).get('v');
+document.getElementById('stage').innerHTML=V.filter((_,i)=>only==null||+only===i).map(([t,d,b])=>`<div><div class="ph">${b}</div><div class="cap">${t}<small>${d}</small></div></div>`).join('');
+</script></body></html>

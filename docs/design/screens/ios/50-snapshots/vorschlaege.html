@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Snapshots Vorschläge</title>
+<style>
+:root{--bg:#f8f7f3;--card:#fff;--ink:#1f1e1c;--sec:#8a8781;--line:#ece9e2;--clay:#dc7a5a;--blue:#5b8def;--amber:#c99a2e;--purple:#8f7cf0;--green:#4fa36a;--grey:#a8a6a0}
+*{box-sizing:border-box}body{margin:0;background:#e6e4de;font:15px -apple-system,system-ui,Helvetica Neue,sans-serif;color:var(--ink)}
+.stage{display:flex;gap:28px;padding:28px;align-items:flex-start;flex-wrap:wrap}
+.ph{width:402px;height:874px;background:var(--bg);border-radius:54px;overflow:hidden;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.18);flex:none}
+.sb{height:54px;display:flex;justify-content:space-between;align-items:center;padding:0 34px;font:600 16px -apple-system,system-ui,Helvetica Neue,sans-serif}
+.cap{text-align:center;margin-top:12px;font:600 17px -apple-system,system-ui,Helvetica Neue,sans-serif;width:402px}.cap small{display:block;font-weight:400;color:#6e6c66;font-size:13px;margin-top:3px;line-height:1.35}
+.pad{padding:0 18px}
+h1{font:700 34px -apple-system,system-ui,Helvetica Neue,sans-serif;margin:4px 0 10px;letter-spacing:-.5px}
+.row{display:flex;align-items:center;gap:8px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:99px;font:600 15px -apple-system,system-ui,Helvetica Neue,sans-serif}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.rb{width:44px;height:44px;border-radius:50%;background:#fff;display:grid;place-items:center;color:var(--clay);box-shadow:0 1px 6px rgba(0,0,0,.07)}
+.card{background:var(--card);border-radius:20px;border:1px solid var(--line)}
+.btn{background:var(--clay);color:#fff;border-radius:99px;padding:8px 16px;font:600 15px -apple-system,system-ui,Helvetica Neue,sans-serif;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn.ghost{background:#f8e7df;color:var(--clay)}
+.muted{color:var(--sec)}.sm{font-size:13px}
+.new{outline:3px solid rgba(220,122,87,.55);outline-offset:3px}
+.note{position:absolute;background:#1f1e1c;color:#fff;font:600 12px -apple-system,system-ui,Helvetica Neue,sans-serif;padding:6px 10px;border-radius:10px;white-space:nowrap}
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.28)}
+.sheet{position:absolute;left:0;right:0;bottom:0;top:64px;background:var(--bg);border-radius:30px 30px 0 0;padding:10px 18px 0}
+.grab{width:38px;height:5px;border-radius:3px;background:#d6d3cc;margin:0 auto 12px}
+.h2{font:700 24px -apple-system,system-ui,Helvetica Neue,sans-serif;margin:4px 0 4px}
+.lbl{font:600 13px -apple-system,system-ui,Helvetica Neue,sans-serif;color:var(--sec);text-transform:uppercase;letter-spacing:.5px;margin:18px 4px 8px}
+.chk{width:24px;height:24px;border-radius:50%;flex:none;display:grid;place-items:center;font:700 13px -apple-system,system-ui,Helvetica Neue,sans-serif}
+.chk.on{background:var(--clay);color:#fff}.chk.off{border:2px solid #d6d3cc}
+.path{font:12px ui-monospace,Menlo,monospace;color:var(--sec)}
+.chip{display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--line);border-radius:99px;padding:8px 13px;font:600 14px -apple-system,system-ui,Helvetica Neue,sans-serif}
+.chip b{font-weight:600;color:var(--sec)}
+.mac{width:402px;background:#ecebe8;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:6px;font:13px -apple-system,system-ui,Helvetica Neue,sans-serif}
+.mi{padding:5px 10px;border-radius:6px;display:flex;gap:8px}.mi.hi{background:#3478f6;color:#fff}.sep{height:1px;background:#d5d3cf;margin:5px 8px}
+</style></head><body>
+<div class="stage" id="stage"></div>
+<script>
+const stack=(c='currentColor',s=20)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round"><rect x="7" y="3" width="14" height="14" rx="3"/><path d="M3 8v10a3 3 0 0 0 3 3h10"/></svg>`;
+const gear=`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>`;
+const sb='<div class="sb"><span>9:41</span><span style="letter-spacing:2px">▂▄▆ ▮</span></div>';
+const SNAP=[["Kunde Müller",4,"Website · Shop · Angebote · Doku","heute 14:02"],["Parley intern",3,"Parley · Relay · Zentrale","gestern"],["Recherche",2,"GTA 6 Research · Polymarket","12.10."]];
+const SES=[["Parley","spricht","var(--clay)","0:30"],["Shirts","arbeitet","var(--blue)","2:35"],["Angebote","pausiert","var(--amber)","3:50"],["Relay","Agent im Hintergrund","var(--purple)","3:44"],["Edge Army","geparkt","var(--grey)","10:32"]];
+
+const header=(extra='')=>`${sb}<div class="pad" style="position:relative"><div class="row" style="justify-content:flex-end;gap:10px;margin-top:6px">${extra}<span class="rb">${gear}</span></div>
+ <h1>Parley</h1>
+ <div class="row"><span class="pill" style="background:#e3f0e3"><span class="dot" style="background:var(--green)"></span>Verbunden</span><span style="flex:1"></span><span class="pill" style="background:var(--clay);color:#fff">🚗 Unterwegs</span><span class="pill" style="background:var(--clay);color:#fff">🔕 Stumm</span></div>
+ <div class="card" style="padding:16px 18px;margin-top:14px"><div class="row" style="justify-content:space-between"><div><div style="font:700 26px -apple-system,system-ui,Helvetica Neue,sans-serif">$13.61</div><div class="sm muted">Kosten heute</div></div><div><div style="font:700 26px -apple-system,system-ui,Helvetica Neue,sans-serif">65</div><div class="sm muted">Updates</div></div><div style="text-align:right"><div style="font:700 26px -apple-system,system-ui,Helvetica Neue,sans-serif">13 min</div><div class="sm muted">gesprochen</div></div></div>
+ <div class="row sm" style="margin-top:12px"><span class="muted" style="width:80px">5-h-Limit</span><span style="flex:1;height:7px;border-radius:4px;background:#ece9e2;position:relative"><span style="position:absolute;inset:0 58% 0 0;background:var(--clay);border-radius:4px"></span></span><span style="width:44px;text-align:right">42 %</span></div></div>`;
+const sessHead=`<div class="row" style="margin:20px 2px 10px"><b style="font-size:22px">Sessions</b><span class="muted" style="font-size:22px">7</span><span class="pill" style="background:#ecebe6;padding:5px 8px;font-size:13px">▦ ☰</span><span style="flex:1"></span><span class="btn">Anrufen</span></div>`;
+const list=(rows)=>`<div class="card">`+rows.map((s,i)=>`<div class="row" style="padding:13px 14px;${i?'border-top:1px solid var(--line)':''}"><span style="width:22px;height:22px;border-radius:50%;border:3px solid ${s[2]};flex:none"></span><b style="font-size:16px">${s[0]}</b><span style="color:${s[2]}">${s[1]}</span><span class="muted sm" style="margin-left:auto">${s[3]}</span></div>`).join('')+`</div>`;
+
+// A · Knopf in der Kopfzeile → eigenes Blatt
+function A(){return header(`<span class="rb new" style="position:relative">${stack()}</span>`)+sessHead+list(SES.slice(0,4))+`</div>
+ <div class="note" style="top:112px;right:118px">Neu: Snapshots</div>`}
+function A2(){return header(`<span class="rb">${stack()}</span>`)+sessHead+`</div><div class="scrim"></div>
+ <div class="sheet"><div class="grab"></div><div class="row"><div class="h2">Snapshots</div><span style="flex:1"></span><span class="muted" style="font-weight:600">Fertig</span></div>
+ <div class="sm muted" style="margin:2px 2px 14px">Ein Snapshot merkt sich Name, Session-ID und Ordner jeder Session.</div>
+ <div class="btn" style="width:100%;justify-content:center;padding:13px;font-size:16px">${stack('#fff',18)} Aktuellen Stand sichern</div>
+ <div class="lbl">Gesichert · 3</div>
+ ${SNAP.map(s=>`<div class="card" style="padding:14px 16px;margin-bottom:10px"><div class="row"><b style="font-size:17px">${s[0]}</b><span class="muted sm">${s[1]} Sessions</span><span style="flex:1"></span><span class="muted" style="font-size:20px;line-height:0">···</span></div>
+  <div class="sm muted" style="margin:5px 0 10px">${s[2]}</div><div class="row"><span class="btn">▶ Öffnen</span><span class="muted sm" style="margin-left:auto">${s[3]}</span></div></div>`).join('')}
+ </div>`}
+
+// B · Leiste über den Sessions: ein Tipp öffnet
+function B(){return header()+`<div class="row" style="margin:18px 2px 8px"><b style="font-size:17px">Snapshots</b><span style="flex:1"></span><span class="muted sm" style="font-weight:600">+ Sichern</span></div>
+ <div style="display:flex;flex-wrap:wrap;gap:8px" class="new" >${SNAP.map(s=>`<span class="chip">${stack('var(--clay)',16)}${s[0]} <b>${s[1]}</b></span>`).join('')}</div>`+sessHead+list(SES.slice(0,3))+`</div>`}
+
+// C · Eigener Abschnitt unter den Sessions
+function C(){return `${sb}<div class="pad">`+list(SES.slice(1))+`
+ <div class="row" style="margin:22px 2px 10px"><b style="font-size:22px">Snapshots</b><span class="muted" style="font-size:22px">3</span><span style="flex:1"></span><span class="btn ghost">${stack('var(--clay)',16)} Sichern</span></div>
+ <div class="card new">`+SNAP.map((s,i)=>`<div class="row" style="padding:13px 14px;${i?'border-top:1px solid var(--line)':''}"><span style="color:var(--clay)">${stack('var(--clay)',22)}</span><div style="flex:1;min-width:0"><b style="font-size:16px">${s[0]}</b><div class="sm muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s[1]} · ${s[2]}</div></div><span class="btn" style="padding:7px 13px">Öffnen</span></div>`).join('')+`</div>
+ <div class="sm muted" style="text-align:center;margin-top:12px">Ganz unten auf der Übersicht – nach den Sessions</div></div>`}
+
+// Gemeinsam: Sichern
+function S1(){return header()+`</div><div class="scrim"></div><div class="sheet"><div class="grab"></div>
+ <div class="row"><span class="muted" style="font-weight:600">Abbrechen</span><span style="flex:1"></span><span style="font-weight:700;color:var(--clay)">Sichern</span></div>
+ <div class="h2" style="margin-top:10px">Snapshot sichern</div>
+ <div class="card" style="padding:13px 16px;margin-top:12px;font-size:17px">Kunde Müller<span style="display:inline-block;width:2px;height:20px;background:var(--clay);vertical-align:middle;margin-left:1px"></span></div>
+ <div class="lbl">Diese Sessions · 4 von 6</div><div class="card">`+[
+  ["Website","~/kunden/mueller/website",1],["Shop","~/kunden/mueller/shop",1],["Angebote","~/kunden/mueller/angebote",1],["Doku","~/kunden/mueller/doku",1],["Parley","~/workspace/privat/vloude",0],["Zentrale","~/workspace",0]]
+  .map((r,i)=>`<div class="row" style="padding:12px 14px;gap:12px;${i?'border-top:1px solid var(--line)':''}"><span class="chk ${r[2]?'on':'off'}">${r[2]?'✓':''}</span><div><b>${r[0]}</b><div class="path">${r[1]}</div></div></div>`).join('')+`</div>
+ <div class="sm muted" style="margin:10px 4px">Gemerkt werden Name, Session-ID und Ordner. Die Liste ist mit allen laufenden Sessions vorbelegt.</div></div>`}
+
+// Gemeinsam: Öffnen
+function S2(){const R=[["Website","läuft schon","var(--green)","✓"],["Shop","wird fortgesetzt","var(--blue)","↻"],["Angebote","wird fortgesetzt","var(--blue)","↻"],["Doku","nicht gefunden – neu im Ordner gestartet","var(--amber)","+"]];
+ return header(`<span class="rb">${stack()}</span>`)+`</div><div class="scrim"></div><div class="sheet" style="top:300px"><div class="grab"></div>
+ <div class="h2">Kunde Müller</div><div class="sm muted" style="margin-bottom:14px">4 Sessions öffnen sich auf dem Mac im Hintergrund.</div><div class="card">`+
+ R.map((r,i)=>`<div class="row" style="padding:12px 14px;gap:12px;${i?'border-top:1px solid var(--line)':''}"><span class="chk" style="background:${r[2]};color:#fff">${r[3]}</span><div><b>${r[0]}</b><div class="sm" style="color:${r[2]}">${r[1]}</div></div></div>`).join('')+`</div></div>`}
+
+function M(){return `<div class="mac"><div class="mi muted">Parley · verbunden</div><div class="sep"></div><div class="mi">▶ Edge Army fortsetzen</div><div class="sep"></div>
+ <div class="mi hi">${stack('#fff',14)} Snapshots <span style="margin-left:auto">›</span></div><div class="sep"></div><div class="mi">Einstellungen …</div><div class="mi">Beenden</div></div>
+ <div class="mac" style="width:260px;margin:-110px 0 0 300px;position:relative">`+SNAP.map(s=>`<div class="mi">${s[0]}<span class="muted" style="margin-left:auto">${s[1]}</span></div>`).join('')+`<div class="sep"></div><div class="mi">Aktuellen Stand sichern …</div></div>`}
+
+const V={a:[[A,"A · Knopf oben rechts","Neben dem Zahnrad. Führt in einen eigenen Bereich."],[A2,"A · Der Bereich „Snapshots“","Sichern oben, darunter alle Snapshots mit „Öffnen“."]],
+ b:[[B,"B · Leiste über den Sessions","Jeder Snapshot ein Chip. Tippen öffnet sofort, Halten zeigt das Menü."]],
+ c:[[C,"C · Abschnitt unter den Sessions","Eigener Abschnitt am Ende der Übersicht."]],
+ s:[[S1,"Für alle · Sichern","Name eingeben, Sessions abhaken."],[S2,"Für alle · Öffnen","Rückmeldung pro Session."]]};
+const only=location.hash.slice(1);
+document.getElementById('stage').innerHTML=Object.entries(V).filter(([k])=>!only||only.split(',').includes(k)).flatMap(([k,l])=>l).map(([f,t,d])=>`<div><div class="ph">${f()}</div><div class="cap">${t}<small>${d}</small></div></div>`).join('')
+ +(!only||only.includes('m')?`<div style="width:402px"><div style="height:120px"></div>${M()}<div class="cap" style="margin-top:130px">Mac-Menü und Windows-Tray<small>Dieselben Snapshots, dazu „Aktuellen Stand sichern“.</small></div></div>`:'');
+</script></body></html>

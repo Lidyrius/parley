@@ -1,0 +1,19 @@
+01-uebersicht	Übersicht
+02-uebersicht-gescrollt	Übersicht (gescrollt)
+03-session-detail	Session-Detail
+10-einstellungen	Einstellungen
+11-einstellungen-mitte	Einstellungen (Mitte)
+12-farbpalette	Farbpalette
+13-parley-im-anruf	Parley im Anruf (Kugel)
+14-anruf-animation	Anruf-Animation
+15-diagramm-aufbau	Diagramm-Aufbau
+16-einstellungen-unten-entwickler	Einstellungen (unten, Entwickler)
+17-kugel-regler	Kugel-Regler
+19-anruf-regler	Anruf-Regler
+21-palette-bauen	Palette bauen
+30-anruf-incoming	Anruf: eingehend
+31-anruf-connecting	Anruf: verbindet
+32-anruf-speaking	Anruf: Parley spricht
+33-anruf-listening	Anruf: hört zu
+34-anruf-idle	Anruf: still
+40-kopplung	Kopplung (nicht verbunden)

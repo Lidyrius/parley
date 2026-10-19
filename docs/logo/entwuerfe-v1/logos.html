@@ -1,0 +1,65 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Parley Logos</title>
+<style>
+  body{margin:0;background:#f2f2f4;font:13px -apple-system,"SF Pro Text",sans-serif;color:#1d1d1f}
+  h1{font:600 22px -apple-system,"SF Pro Display";margin:28px 32px 4px}
+  p.sub{margin:0 32px 20px;color:#6e6e73}
+  .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:20px;padding:0 32px 32px}
+  .card{background:#fff;border-radius:22px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .icon{width:150px;height:150px;filter:drop-shadow(0 8px 14px rgba(0,0,0,.22))}
+  .name{font-weight:600}.dir{color:#86868b;font-size:11px;margin-top:-10px}
+  .bars{display:flex;gap:8px}
+  .bar{width:64px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center}
+  .bar.l{background:#e8e8ed;color:#000}.bar.d{background:#1e1e20;color:#fff}
+  .bar svg{width:18px;height:18px}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute">
+ <defs>
+  <!-- glyphs: 100x100, currentColor only, so they double as menu-bar templates -->
+  <symbol id="g1" viewBox="0 0 100 100"><circle cx="50" cy="50" r="30" fill="currentColor" opacity=".22"/><circle cx="50" cy="50" r="30" fill="none" stroke="currentColor" stroke-width="7"/><path d="M36 40 A17 17 0 0 1 50 31" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></symbol>
+  <symbol id="g2" viewBox="0 0 100 100"><circle cx="50" cy="50" r="33" fill="none" stroke="currentColor" stroke-width="7"/><path d="M29 50 Q34.5 36 40 50 T51 50 T62 50 T71 50" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="g3" viewBox="0 0 100 100"><path d="M12 50 Q25 18 38 50 T64 50 T88 50" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round"/></symbol>
+  <symbol id="g4" viewBox="0 0 100 100" stroke="currentColor" stroke-width="9" stroke-linecap="round"><path d="M20 42v16M35 30v40M50 18v64M65 30v40M80 42v16"/></symbol>
+  <symbol id="g5" viewBox="0 0 100 100"><path d="M33 84V20h21a20 20 0 0 1 0 40H33" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="53" cy="40" r="5" fill="currentColor"/></symbol>
+  <symbol id="g6" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M30 86V14" stroke-width="8"/><path d="M30 18a22 22 0 0 1 0 44" stroke-width="8"/><path d="M30 30a10 10 0 0 1 0 20" stroke-width="8"/><path d="M30 6a34 34 0 0 1 0 68" stroke-width="5" opacity=".5"/></symbol>
+  <symbol id="g7" viewBox="0 0 100 100" fill="currentColor"><path d="M44 50 16 31q-7 19 0 38Z" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><path d="M56 50 84 31q7 19 0 38Z" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><rect x="42" y="41" width="16" height="18" rx="5"/></symbol>
+  <symbol id="g8" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-linecap="round"><circle cx="44" cy="44" r="27" stroke-width="7"/><path d="M30 44q7-11 14 0t14 0" stroke-width="6"/><path d="M63 64q6 16 22 22" stroke-width="4" stroke-dasharray="1 7"/></symbol>
+  <symbol id="g9" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"><path d="M40 66a24 24 0 1 1 20-11l4 12-12-4"/><path d="M60 34a24 24 0 1 1-20 11" opacity=".55"/></symbol>
+  <symbol id="g10" viewBox="0 0 100 100" fill="none" stroke="currentColor"><circle cx="50" cy="50" r="36" stroke-width="5" stroke-dasharray="20 7.6" stroke-linecap="round"/><circle cx="50" cy="50" r="20" stroke-width="7"/><circle cx="50" cy="50" r="6" fill="currentColor" stroke="none"/></symbol>
+
+  <!-- shared glass: top sheen + hairline rim -->
+  <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+ </defs>
+</svg>
+<h1>Parley — zehn Logo-Richtungen</h1>
+<p class="sub">Je ein App-Icon (macOS-Squircle, Glas-Schimmer) und dieselbe Glyphe als Menüleisten-Template, hell und dunkel, 18 pt.</p>
+<div class="grid" id="grid"></div>
+<script>
+const L=[
+ ["Orb","Orb","#3a3f63","#0b0d17","#8f7bff"],
+ ["Orb Wave","Orb + Welle","#5b3fd0","#160b45","#c3b4ff"],
+ ["Sine","Welle","#14a3a8","#063a46","#9ff6ee"],
+ ["Pulse","Welle · Sprechen","#2c2c2e","#000","#ffb86b"],
+ ["P Bubble","Monogramm","#ff8a50","#c2361b","#ffe0c8"],
+ ["P Echo","Monogramm + Welle","#5e5ce6","#1e1b6b","#bdbcff"],
+ ["Bow Tie","Butler","#2c2c2e","#111","#e9e9ee"],
+ ["Monocle","Butler + Welle","#d4ad57","#6f4f12","#fff3cf"],
+ ["Dialogue","Gespräch","#5ac8fa","#0040dd","#e3f6ff"],
+ ["Reactor","JARVIS-Ring","#0f1c3d","#000814","#64e3ff"]];
+document.getElementById('grid').innerHTML=L.map(([n,d,a,b,glow],i)=>`
+ <div class="card">
+  <svg class="icon" viewBox="0 0 120 120">
+   <defs><linearGradient id="bg${i}" x1="0" y1="0" x2=".3" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient>
+   <radialGradient id="halo${i}"><stop offset="0" stop-color="${glow}" stop-opacity=".55"/><stop offset="1" stop-color="${glow}" stop-opacity="0"/></radialGradient></defs>
+   <rect width="120" height="120" rx="27" fill="url(#bg${i})"/>
+   <circle cx="60" cy="62" r="46" fill="url(#halo${i})"/>
+   <use href="#g${i+1}" x="22" y="22" width="76" height="76" style="color:#fff" filter="url(#glow)"/>
+   <rect width="120" height="120" rx="27" fill="url(#sheen)"/>
+   <rect x=".75" y=".75" width="118.5" height="118.5" rx="26.3" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="1.5"/>
+  </svg>
+  <div class="name">${i+1} · ${n}</div><div class="dir">${d}</div>
+  <div class="bars"><div class="bar l"><svg><use href="#g${i+1}"/></svg></div><div class="bar d"><svg><use href="#g${i+1}"/></svg></div></div>
+ </div>`).join('');
+</script>
+</body></html>

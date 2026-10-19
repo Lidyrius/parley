@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Multiplayer Entwurf</title>
+<style>
+:root{--bg:#f8f7f3;--card:#fff;--ink:#1f1e1c;--sec:#8a8781;--line:#ece9e2;--clay:#dc7a5a;--blue:#5b8def;--amber:#c99a2e;--purple:#8f7cf0;--green:#4fa36a;--teal:#2e9e86}
+*{box-sizing:border-box}body{margin:0;background:#e6e4de;font:15px -apple-system,system-ui,Helvetica Neue,sans-serif;color:var(--ink)}
+.stage{display:flex;gap:28px;padding:28px;align-items:flex-start;flex-wrap:wrap;width:2160px}
+.ph{width:402px;height:874px;background:var(--bg);border-radius:54px;overflow:hidden;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.18);flex:none}
+.sb{height:54px;display:flex;justify-content:space-between;align-items:center;padding:0 34px;font-weight:600;font-size:16px}
+.cap{text-align:center;margin-top:12px;font-weight:600;font-size:17px;width:402px}.cap small{display:block;font-weight:400;color:#6e6c66;font-size:13px;margin-top:3px;line-height:1.35}
+.pad{padding:0 18px}.row{display:flex;align-items:center;gap:8px}
+.card{background:var(--card);border-radius:20px;border:1px solid var(--line)}
+.btn{background:var(--clay);color:#fff;border-radius:99px;padding:9px 16px;font-weight:600;font-size:15px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn.ghost{background:#f3eee6;color:var(--ink)}
+.muted{color:var(--sec)}.sm{font-size:13px}.xs{font-size:12px}
+.h1{font-weight:700;font-size:30px;margin:8px 0 4px}.h2{font-weight:700;font-size:24px;margin:4px 0}
+.lbl{font-weight:600;font-size:12px;color:var(--sec);text-transform:uppercase;letter-spacing:.5px;margin:18px 4px 8px}
+.av{width:26px;height:26px;border-radius:50%;display:inline-grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex:none;border:2px solid #fff}
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.28)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--bg);border-radius:30px 30px 0 0;padding:10px 18px 0}
+.grab{width:38px;height:5px;border-radius:3px;background:#d6d3cc;margin:0 auto 12px}
+.field{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:16px}
+.seg{display:flex;background:#ecebe6;border-radius:12px;padding:3px}.seg span{flex:1;text-align:center;padding:8px;border-radius:9px;font-weight:600;font-size:14px}.seg .on{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.tog{width:46px;height:28px;border-radius:99px;background:var(--green);position:relative;flex:none}.tog::after{content:"";position:absolute;right:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff}
+.who{font-weight:600;font-size:12px;margin:0 0 4px 2px;display:flex;align-items:center;gap:6px}
+.bub{border-radius:18px;padding:10px 13px;font-size:15px;line-height:1.35;max-width:300px}
+.note{font-size:12px;color:var(--sec);text-align:center;margin:10px 0}
+</style></head><body>
+<div class="stage" id="stage"></div>
+<script>
+const sb='<div class="sb"><span>9:41</span><span style="letter-spacing:2px">▂▄▆ ▮</span></div>';
+const av=(l,c,s=26)=>`<span class="av" style="background:${c};width:${s}px;height:${s}px;font-size:${Math.round(s*.45)}px">${l}</span>`;
+const SIR=av('S','var(--clay)'), MAX=av('M','var(--teal)');
+const qr=()=>{let h='';for(let y=0;y<21;y++)for(let x=0;x<21;x++){const f=(x<7&&y<7)||(x>13&&y<7)||(x<7&&y>13);const on=f?((x%6==0||y%6==0||x==20||y==20)||(x>1&&x<5&&y>1&&y<5)||(x>15&&x<19&&y>1&&y<5)||(x>1&&x<5&&y>15&&y<19)):((x*7+y*13+x*y)%5<2);if(on)h+=`<rect x="${x}" y="${y}" width="1" height="1"/>`}return `<svg viewBox="-1 -1 23 23" width="170" height="170" style="background:#fff;border-radius:12px"><g fill="#1f1e1c">${h}</g></svg>`};
+
+// 1 · Einladen
+function P1(){return `${sb}<div class="pad"><div class="h1" style="font-size:26px">Website</div><div class="sm muted">developaway · arbeitet</div></div><div class="scrim"></div>
+<div class="sheet" style="top:150px"><div class="grab"></div><div class="row"><div class="h2">Session teilen</div><span style="flex:1"></span><span class="muted" style="font-weight:600">Fertig</span></div>
+<div class="sm muted" style="margin:2px 0 16px">Wer den Link öffnet, kann dieser einen Session folgen, mitschreiben und Anrufe zu seinem Bereich bekommen. Sie geben ihn vorher frei.</div>
+<div class="card" style="padding:18px;display:flex;flex-direction:column;align-items:center;gap:12px">${qr()}
+<div class="xs muted" style="font-family:ui-monospace,Menlo,monospace">parley.app/join#k7Qm…x2</div>
+<div class="row xs muted" style="gap:14px"><span>🔒 Ende-zu-Ende</span><span>① einmal nutzbar</span><span>⏱ 24 h</span></div></div>
+<div class="btn" style="width:100%;margin-top:14px;padding:13px">Link teilen …</div>
+<div class="lbl">Schon dabei</div><div class="card row" style="padding:12px 14px">${MAX}<div style="flex:1"><b>Max</b><div class="xs muted">Marketing und Rückfragen</div></div><span class="sm" style="color:#d4493f;font-weight:600">Entfernen</span></div></div>`}
+
+// 2 · Freigeben + Rolle
+function P2(){return `${sb}<div class="scrim" style="background:rgba(0,0,0,.12)"></div><div class="sheet" style="top:70px"><div class="grab"></div>
+<div class="row" style="flex-direction:column;gap:8px;margin:6px 0 14px">${av('M','var(--teal)',56)}<div class="h2" style="text-align:center">Max möchte beitreten</div><div class="sm muted">Session „Website“ · über Ihren Link, gerade eben</div></div>
+<div class="lbl">Wofür ist Max zuständig?</div><div class="field">Marketing und Rückfragen zu Texten<span style="display:inline-block;width:2px;height:18px;background:var(--clay);vertical-align:middle"></span></div>
+<div class="lbl">Darf</div><div class="seg"><span class="on">Lesen und schreiben</span><span>Nur zuhören</span></div>
+<div class="card" style="margin-top:12px"><div class="row" style="padding:12px 14px"><div style="flex:1"><b style="font-size:15px">Anrufe zu seinem Bereich</b><div class="xs muted">Keine Antwort nach 2 min → an Sie</div></div><span class="tog"></span></div>
+<div class="row" style="padding:12px 14px;border-top:1px solid var(--line)"><div style="flex:1"><b style="font-size:15px">Verlauf ab Beitritt</b><div class="xs muted">Ältere Nachrichten bleiben verborgen</div></div><span class="tog"></span></div></div>
+<div class="lbl">Und Ihre Rolle hier?</div><div class="field muted">Technik und Entscheidungen</div>
+<div class="row" style="margin-top:16px;gap:10px"><span class="btn ghost" style="flex:1">Ablehnen</span><span class="btn" style="flex:1">Zulassen</span></div>
+<div class="note">Freigaben für Befehle und Dateien kommen immer zu Ihnen.</div></div>`}
+
+// 3 · Übersicht mit geteilter Session
+function P3(){const row=(n,s,c,t,extra='')=>`<div class="row" style="padding:13px 14px;border-top:1px solid var(--line)"><span style="width:22px;height:22px;border-radius:50%;border:3px solid ${c};flex:none"></span><div style="flex:1;min-width:0"><div class="row"><b style="font-size:16px">${n}</b><span style="color:${c}">${s}</span></div>${extra}</div><span class="muted sm">${t}</span></div>`;
+return `${sb}<div class="pad"><div class="row" style="justify-content:flex-end;gap:10px"><span class="btn ghost" style="background:#fff;color:var(--clay);padding:9px 14px">⧉ Snapshots</span><span class="btn ghost" style="background:#fff;color:var(--clay);width:42px;padding:9px 0">⚙</span></div>
+<div class="h1">Parley</div><div class="row" style="margin:20px 2px 10px"><b style="font-size:22px">Sessions</b><span class="muted" style="font-size:22px">5</span></div>
+<div class="card" style="overflow:hidden">
+<div class="row" style="padding:13px 14px;background:linear-gradient(90deg,rgba(46,158,134,.10),transparent);border-left:4px solid var(--teal)"><span style="width:22px;height:22px;border-radius:50%;border:3px solid var(--blue);flex:none"></span><div style="flex:1"><div class="row"><b style="font-size:16px">Website</b><span style="color:var(--blue)">arbeitet</span></div>
+<div class="row xs" style="margin-top:5px;gap:6px;color:var(--teal);font-weight:600"><span style="display:flex">${SIR}${MAX.replace('class="av"','class="av" style="margin-left:-8px;background:var(--teal)"')}</span>geteilt mit Max · Marketing</div></div><span class="muted sm">2:35</span></div>
+${row('Shirts','arbeitet','var(--blue)','3:01')}${row('Angebote','pausiert','var(--amber)','3:24')}${row('Edge Army','geparkt','#a8a6a0','10:58')}${row('Relay','Agent im Hintergrund','var(--purple)','4:10')}</div>
+<div class="note">Geteilte Sessions: grüner Rand, Avatare, „geteilt mit …“</div></div>`}
+
+// 4 · Verlauf mit Sprechern
+function P4(){const me=(t)=>`<div style="display:flex;flex-direction:column;align-items:flex-end;margin:10px 0"><div class="who">Sie ${SIR}</div><div class="bub" style="background:#f6e3da">${t}</div></div>`;
+const max=(t,v)=>`<div style="margin:10px 0"><div class="who">${MAX} Max · Marketing ${v?'<span class="muted" style="font-weight:400">· gesprochen</span>':''}</div><div class="bub" style="background:#dff1ec">${t}</div></div>`;
+const cl=(t,to)=>`<div style="margin:10px 0"><div class="who"><span class="av" style="background:#1f1e1c">C</span>Claude ${to?`<span style="color:var(--teal)">→ an Max</span>`:''}</div><div class="bub card" style="border-radius:18px">${t}</div></div>`;
+return `${sb}<div class="pad"><div class="row"><span style="font-size:22px">‹</span><b style="font-size:18px">Website</b><span style="flex:1"></span><span style="display:flex">${SIR}${MAX.replace('class="av"','class="av" style="margin-left:-8px;background:var(--teal)"')}</span></div>
+<div class="xs" style="color:var(--teal);font-weight:600;margin:4px 0 6px">Geteilt mit Max · Marketing und Rückfragen</div>
+${me('Bau die neue Landingpage für den Herbst-Sale.')}${cl('Die Seite steht. Für die Überschrift habe ich zwei Varianten – welche passt zur Kampagne?',true)}
+${max('Nimm „Jetzt sparen, bevor der Herbst geht“, und der Button soll „Zum Sale“ heißen.',true)}
+<div class="note">Max ist der Kampagne zugeordnet → Anruf ging an Max</div>
+${cl('Erledigt. Soll ich auf Produktion deployen?')}${me('Ja, deploy.')}</div>
+<div style="position:absolute;left:14px;right:14px;bottom:28px" class="card row"><span style="padding:12px 14px;flex:1" class="muted">Nachricht als Sie …</span><span class="btn" style="margin:5px;padding:8px 12px">↑</span></div>`}
+
+// 5 · Beim Gast
+function P5(){return `<div style="height:100%;background:linear-gradient(180deg,#123b34,#0f2a26);color:#fff">${sb.replace('class="sb"','class="sb" style="color:#fff"')}
+<div style="text-align:center;margin-top:80px"><div class="xs" style="opacity:.7;letter-spacing:.5px">PARLEY · GETEILT VON SYDNEY</div><div style="font-weight:700;font-size:34px;margin:10px 0 6px">Website</div><div style="opacity:.8">Rückfrage für Max · Marketing</div></div>
+<div style="margin:60px auto 0;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#8fe0cc,#2e9e86 60%,#1d6b5b);box-shadow:0 0 60px rgba(46,158,134,.6)"></div>
+<div style="margin:40px 28px 0;font-size:17px;line-height:1.4;text-align:center;opacity:.92">„Max, für die Überschrift habe ich zwei Varianten – welche passt zur Kampagne?“</div>
+<div class="row" style="position:absolute;bottom:70px;left:0;right:0;justify-content:space-around"><div style="text-align:center"><span style="width:70px;height:70px;border-radius:50%;background:#d4493f;display:grid;place-items:center;font-size:28px">✕</span><div class="sm" style="margin-top:8px">Später</div></div><div style="text-align:center"><span style="width:70px;height:70px;border-radius:50%;background:#34c759;display:grid;place-items:center;font-size:28px">✆</span><div class="sm" style="margin-top:8px">Annehmen</div></div></div></div>`}
+
+const V=[[P1,"1 · Einladen","Einmal-Link mit Schlüssel, läuft nach 24 h ab. Teilnehmer jederzeit entfernen."],[P2,"2 · Freigeben und Rolle","Sie lassen zu, vergeben die Rolle – und sagen einmal, wofür Sie zuständig sind."],[P3,"3 · Übersicht","Geteilte Session hervorgehoben: Rand, Avatare, „geteilt mit …“."],[P4,"4 · Verlauf","Jede Nachricht mit Sprecher. Claude zeigt, an wen die Frage ging."],[P5,"5 · Beim Gast","Max bekommt nur die Rückfragen seines Bereichs – mit seinem Namen."]];
+document.getElementById('stage').innerHTML=V.map(([f,t,d])=>`<div><div class="ph">${f()}</div><div class="cap">${t}<small>${d}</small></div></div>`).join('');
+</script></body></html>

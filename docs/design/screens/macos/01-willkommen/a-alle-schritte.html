@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Onboarding A</title>
+<style>
+:root{--clay:#d97757;--ink:#f3f1ec;--sec:#9a968e;--line:rgba(255,255,255,.09);--green:#5fbf7d}
+*{box-sizing:border-box}body{margin:0;background:#cfccc4;font:14px -apple-system,system-ui,sans-serif;color:var(--ink)}
+.stage{display:grid;grid-template-columns:repeat(4,640px);gap:30px;padding:30px}
+.win{width:640px;height:560px;border-radius:16px;overflow:hidden;position:relative;background:radial-gradient(120% 90% at 50% 0%,#34302b 0%,#1e1c19 60%,#171614 100%);box-shadow:0 22px 50px rgba(0,0,0,.35),0 0 0 1px rgba(0,0,0,.4);display:flex;flex-direction:column}
+.tl{position:absolute;top:14px;left:16px;display:flex;gap:8px;z-index:3}.tl i{width:12px;height:12px;border-radius:50%;background:#ff5f57}.tl i:nth-child(2){background:#febc2e}.tl i:nth-child(3){background:#28c840}
+.prog{display:flex;gap:6px;justify-content:center;padding-top:22px;flex:none}.prog i{height:6px;width:8px;border-radius:9px;background:rgba(255,255,255,.18)}.prog i.d{background:rgba(217,119,87,.55)}.prog i.a{width:22px;background:var(--clay)}
+.mid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 64px;text-align:center}
+.bar{flex:none;display:flex;align-items:center;gap:10px;padding:0 40px 26px}
+.btn{background:var(--clay);color:#fff;border-radius:9px;padding:8px 18px;font-weight:600;font-size:13.5px;display:inline-flex;gap:7px;align-items:center}
+.btn2{background:rgba(255,255,255,.1);color:var(--ink);border-radius:9px;padding:8px 16px;font-weight:500;font-size:13.5px;display:inline-flex;gap:7px;align-items:center}
+h1{font:700 26px -apple-system,system-ui,sans-serif;margin:0;letter-spacing:-.3px}
+.sub{color:var(--sec);font-size:14px;line-height:1.45;margin-top:7px}
+.cap{margin-top:12px;font:600 17px -apple-system,system-ui,sans-serif;color:#1f1e1c}.cap small{display:block;font-weight:400;color:#5e5c57;font-size:13px;margin-top:3px;line-height:1.4}
+.ic{object-fit:contain}
+.echo{position:relative;display:grid;place-items:center;flex:none}
+.echo span{position:absolute;left:50%;top:50%;border-radius:50%;border:1.5px solid}
+.card{background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:14px}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;text-align:left}
+.sel{border-color:rgba(217,119,87,.7);background:rgba(217,119,87,.1)}
+.chk{width:20px;height:20px;border-radius:50%;border:1.5px solid rgba(255,255,255,.25);flex:none;display:grid;place-items:center}
+.chk.on{background:var(--clay);border-color:var(--clay)}
+.t{font-weight:600;font-size:14px}.s{color:var(--sec);font-size:12px;margin-top:1px}
+.field{flex:1;height:32px;border-radius:8px;background:rgba(0,0,0,.25);border:1px solid var(--line);display:flex;align-items:center;padding:0 10px;font:12.5px ui-monospace,Menlo,monospace;color:#cfcac0}
+.ok{color:var(--green);font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+.link{color:var(--clay);font-size:12px;font-weight:500}
+.mono{font:13px ui-monospace,Menlo,monospace}
+.q{position:absolute;width:6px;height:6px;background:#111}
+.wave{display:flex;gap:3px;align-items:center}.wave i{width:3px;border-radius:3px;background:var(--clay)}
+</style></head><body>
+<div class="stage" id="stage"></div>
+<script>
+const S='symbole/', I=(n,c='c',s=16)=>`<img class="ic" style="width:${s}px;height:${s}px" src="${S}${n}-${c}.png">`;
+const LOGO='../../../../logo/final-v2/png/03-graphit-Dark.png';
+const prog=k=>`<div class="prog">${Array.from({length:10},(_,i)=>`<i class="${i===k?'a':i<k?'d':''}"></i>`).join('')}</div>`;
+const W=(k,b,bar)=>`<div class="tl"><i></i><i></i><i></i></div>${prog(k)}<div class="mid">${b}</div><div class="bar">${bar}</div>`;
+const back='<span class="btn2">Zurück</span><span style="flex:1"></span>';
+const next=(t='Weiter',dis)=>`<span class="btn" style="${dis?'opacity:.4':''}">${t}</span>`;
+// Echo-Motiv: Inhalt mit drei Ringen wie im Logo
+const echo=(inner,size,ring=[1.35,1.8,2.25],alpha=.32)=>`<div class="echo" style="width:${size*2.3}px;height:${size*1.75}px">${ring.map((r,i)=>{const d=size*r;return `<span style="width:${d}px;height:${d}px;margin:${-d/2}px 0 0 ${-d/2}px;border-color:rgba(217,119,87,${alpha-i*.1})"></span>`}).join('')}<div style="position:relative">${inner}</div></div>`;
+const badge=(sym,s=58)=>echo(`<div style="width:${s}px;height:${s}px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#3a332d,#211e1b);border:1px solid rgba(217,119,87,.45);display:grid;place-items:center;box-shadow:0 8px 24px rgba(0,0,0,.4)">${I(sym,'c',s*.42)}</div>`,s,[1.45,1.95,2.45],.3);
+const head=(sym,t,s)=>`${badge(sym)}<h1 style="margin-top:2px">${t}</h1><div class="sub">${s}</div>`;
+const wave=(n,h,seed=1)=>`<div class="wave" style="height:${h}px">${Array.from({length:n},(_,i)=>`<i style="height:${4+Math.abs(Math.sin(i*.55+seed)*Math.cos(i*.21))*h}px"></i>`).join('')}</div>`;
+
+const V=[];
+// 1 Willkommen
+V.push(["1 · Willkommen","Logo mit Echo-Ringen, kurzer Gruß, Aufwand im Knopf.",W(0,
+ `${echo(`<img src="${LOGO}" style="width:112px;height:112px;border-radius:26px;box-shadow:0 10px 30px rgba(0,0,0,.45);display:block">`,112,[1.35,1.9,2.45])}
+ <h1 style="font-size:30px;margin-top:0">Guten Tag, Sir.</h1><div class="sub" style="font-size:14.5px">Parley spricht Claude Codes Antworten – und hört Ihre.</div>`,
+ `<span style="flex:1"></span>${next('Einrichten · 2 Min.')}`)]);
+// 2 Clients
+const client=(n,d,on,det)=>`<div class="card row ${on?'sel':''}" style="width:100%"><span style="width:34px;height:34px;border-radius:9px;background:${n==='Claude Code'?'#d97757':'#e9e6df'};display:grid;place-items:center;flex:none">${I('terminal',n==='Claude Code'?'w':'g',17)}</span><div style="flex:1"><div class="t">${n} ${det?'<span style="font-size:11px;color:var(--green);font-weight:600;margin-left:6px">erkannt</span>':''}</div><div class="s">${d}</div></div><span class="chk ${on?'on':''}">${on?I('checkmark.circle.fill','w',0).replace('width:0px','width:10px'):''}</span></div>`;
+V.push(["2 · Wo soll Parley laufen?","Erkannte Clients vorausgewählt, Auswahl als Karten.",W(1,
+ `${head('rectangle.2.swap','Wo soll Parley laufen?','Erkannte Clients sind schon ausgewählt.')}
+ <div style="display:flex;flex-direction:column;gap:9px;width:100%;margin-top:22px">${client('Claude Code','Stop-Hook und /parley:voice',1,1)}${client('Codex','Plugin und $parley-voice',0,0)}</div>`,back+next())]);
+// 3 Schlüssel
+const key=(n,h,val)=>`<div class="card" style="width:100%;padding:12px 14px;text-align:left"><div style="display:flex;align-items:center;gap:8px"><span class="t">${n}</span><span class="s" style="margin:0">· ${h}</span><span style="flex:1"></span><span class="link">Konsole öffnen</span></div>
+<div style="display:flex;align-items:center;gap:10px;margin-top:9px"><span class="field">${val}</span><span class="ok">${I('checkmark.circle.fill','w',0).replace('-w.png','-c.png').replace('width:0px','width:0px')}<span style="width:16px;height:16px;border-radius:50%;background:var(--green);display:grid;place-items:center;color:#fff;font-size:10px">✓</span>gültig</span></div></div>`;
+V.push(["3 · Zwei Schlüssel","Pro Schlüssel eine Karte, Prüfen passiert beim Einfügen – kein eigener Knopf.",W(2,
+ `${head('key.fill','Zwei Schlüssel','Beide praktisch gratis. Einfügen – Parley prüft sofort.')}
+ <div style="display:flex;flex-direction:column;gap:9px;width:100%;margin-top:20px">${key('Google Cloud TTS','1 Mio. Zeichen gratis','AIzaSy••••••••••••••••Qk')}${key('Groq','Developer-Key','gsk_••••••••••••••••••7f')}</div>`,back+next())]);
+// 4 Sprache & Stimme
+const pick=(l,v)=>`<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)"><span class="s" style="width:70px;text-align:left;margin:0;font-size:13px">${l}</span><span style="flex:1;text-align:left;font-weight:500">${v}</span><span style="color:var(--sec)">⌄</span></div>`;
+V.push(["4 · Sprache & Stimme","Stimme direkt mit Wellenform probehören.",W(3,
+ `${head('globe','Sprache & Stimme','Worin spreche ich, und mit welcher Stimme?')}
+ <div class="card" style="width:100%;margin-top:20px;overflow:hidden">${pick('Sprache','Deutsch')}${pick('Stimme','Charon · ruhig, tief')}
+ <div style="display:flex;align-items:center;gap:12px;padding:12px 14px"><span style="width:34px;height:34px;border-radius:50%;background:var(--clay);display:grid;place-items:center;flex:none">${I('play.fill','w',13)}</span>${wave(44,26,2)}<span class="s" style="margin:0 0 0 auto">0:04</span></div></div>`,back+next())]);
+// 5 Benachrichtigungen
+const opt=(sym,t,d,on,prev)=>`<div class="card ${on?'sel':''}" style="flex:1;padding:12px;text-align:left"><div style="height:62px;border-radius:9px;background:rgba(0,0,0,.25);margin-bottom:10px;position:relative;overflow:hidden">${prev}</div><div style="display:flex;align-items:center;gap:7px">${I(sym,on?'c':'g',14)}<span class="t" style="font-size:13px">${t}</span></div><div class="s">${d}</div></div>`;
+V.push(["5 · Benachrichtigungen","Drei Karten mit Mini-Vorschau, wie es aussieht.",W(4,
+ `${head('bell.badge','Benachrichtigungen','Wie sage ich Bescheid, wenn ein Projekt wartet?')}
+ <div style="display:flex;gap:9px;width:100%;margin-top:20px">
+ ${opt('waveform','In der Pill','Unten mittig',1,'<span style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:84px;height:16px;border-radius:9px;background:var(--clay)"></span>')}
+ ${opt('bell.badge','Mitteilung','macOS-Standard',0,'<span style="position:absolute;right:6px;top:6px;width:70px;height:22px;border-radius:6px;background:rgba(255,255,255,.18)"></span>')}
+ ${opt('bell.badge','Keine','Ganz still',0,'')}</div>`,back+next())]);
+// 6 Berechtigungen – alle auf einmal
+const perm=(sym,t,d,st)=>`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);text-align:left"><span style="width:30px;height:30px;border-radius:9px;background:rgba(255,255,255,.07);display:grid;place-items:center;flex:none">${I(sym,st==='ok'?'c':'g',15)}</span><div style="flex:1"><div class="t" style="font-size:13.5px">${t}</div><div class="s">${d}</div></div>${st==='ok'?'<span class="ok"><span style="width:16px;height:16px;border-radius:50%;background:var(--green);display:grid;place-items:center;color:#fff;font-size:10px">✓</span>erlaubt</span>':st==='wait'?'<span class="s" style="margin:0">macOS fragt …</span>':'<span class="link">Erlauben</span>'}</div>`;
+V.push(["6 · Berechtigungen","Ersetzt den Mikrofon-Schritt: alles, was Parley braucht, in einer Liste. „Alle erlauben“ ruft die macOS-Abfragen nacheinander auf, Häkchen erscheinen live.",W(5,
+ `${head('lock.shield.fill','Berechtigungen','Einmal erlauben – danach fragt Parley nie wieder.')}
+ <div class="card" style="width:100%;margin-top:16px;overflow:hidden">${perm('mic.fill','Mikrofon','Ihre Antworten aufnehmen','ok')}${perm('waveform','Spracherkennung','Reinreden unterbricht Parley','ok')}${perm('bell.fill','Mitteilungen','Wenn ein Projekt wartet','ok')}${perm('terminal','Terminal steuern','Sessions starten und schließen','wait')}<div style="margin-bottom:-1px">${perm('music.note','Musik pausieren','Optional – während Parley spricht','')}</div></div>`,
+ back+`<span class="btn2">Alle erlauben</span>`+next('Weiter',1))]);
+// 7 Relais
+const rstep=(t,st)=>`<div style="display:flex;align-items:center;gap:9px;font-size:12.5px;padding:3px 0;color:${st?'var(--ink)':'var(--sec)'}">${st==='ok'?'<span style="width:15px;height:15px;border-radius:50%;background:var(--green);display:grid;place-items:center;color:#fff;font-size:9px">✓</span>':st==='run'?'<span style="width:15px;height:15px;border-radius:50%;border:2px solid var(--clay);border-right-color:transparent"></span>':'<span style="width:15px;height:15px;border-radius:50%;border:1.5px solid rgba(255,255,255,.25)"></span>'}${t}</div>`;
+V.push(["7 · Handy: Relais","Neu. Ein Klick: Parley meldet sich bei Cloudflare an (Sie bestätigen im Browser), stellt das Relais bereit, trägt die Adresse ein und prüft sie. Wer schon eines hat, fügt nur die Adresse ein. „Später“ überspringt Handy-Schritte.",W(6,
+ `${head('antenna.radiowaves.left.and.right','Parley aufs Handy','Unterwegs klingelt Parley auf Ihrem iPhone. Dafür braucht es ein kleines Relais – einmalig, kostenlos.')}
+ <div style="display:flex;gap:9px;width:100%;margin-top:16px;text-align:left">
+ <div class="card sel" style="flex:1.35;padding:12px 14px"><div style="display:flex;align-items:center;gap:8px">${I('cloud.fill','c',16)}<span class="t">Eigenes Relais</span><span style="margin-left:auto;font-size:11px;font-weight:600;color:var(--clay)">1 Klick</span></div>
+ <div style="margin-top:8px">${rstep('Bei Cloudflare angemeldet','ok')}${rstep('Relais bereitgestellt','ok')}${rstep('Verbindung prüfen …','run')}</div>
+ <div class="mono" style="font-size:11px;color:var(--sec);margin-top:6px">parley-relay.sydney.workers.dev</div></div>
+ <div class="card" style="flex:1;padding:12px 14px"><div style="display:flex;align-items:center;gap:8px">${I('link','g',15)}<span class="t">Adresse einfügen</span></div><div class="s" style="margin-top:6px;line-height:1.4">Sie haben schon ein Relais oder bekommen eines gestellt.</div></div></div>`,
+ back+`<span class="btn2">Später</span>`+next('Weiter',1))]);
+// 8 Koppeln
+let qr='';{let x=7;const n=25;for(let r=0;r<n;r++)for(let c=0;c<n;c++){x=(x*1103515245+12345)%2147483648;const f=(r<7&&c<7)||(r<7&&c>=n-7)||(r>=n-7&&c<7);const on=f?((r%6===0||c%6===0||(r>=2&&r<=4&&c>=2&&c<=4)||(r>=2&&r<=4&&c>=n-5&&c<=n-3)||(r>=n-5&&r<=n-3&&c>=2&&c<=4)||r===n-1||c===n-1)&&!(r===7||c===7||r===n-8||c===n-8)):(x>>16)%2;if(on)qr+=`<i style="left:${c*6}px;top:${r*6}px"></i>`}}
+V.push(["8 · iPhone koppeln","Neu. Der QR-Code steht direkt im Fenster statt im Browser. Ein Code für beides: ohne App öffnet er den Download, mit App koppelt er. Sobald das Handy da ist, geht es von selbst weiter.",W(7,
+ `<div style="display:flex;gap:28px;align-items:center;text-align:left;width:100%"><div style="width:230px;flex:none;display:flex;justify-content:center">${echo(`<div style="background:#fff;border-radius:14px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.4)"><div style="position:relative;width:150px;height:150px">${qr.replace(/<i /g,'<i class="q" ')}</div></div>`,174,[1.15,1.4],.28)}</div>
+ <div style="flex:1;min-width:0"><h1 style="font-size:24px">iPhone koppeln</h1><div class="sub" style="margin-top:6px">Mit der Kamera scannen – fertig.</div>
+ <div style="margin-top:16px;display:flex;flex-direction:column;gap:9px;font-size:13px">
+ <div style="display:flex;gap:9px;align-items:center">${I('iphone','c',15)} Öffnet Parley oder lädt es</div>
+ <div style="display:flex;gap:9px;align-items:center">${I('lock.shield.fill','c',15)} Verschlüsselt, nur Ihr Raum</div>
+ <div style="display:flex;gap:9px;align-items:center">${I('antenna.radiowaves.left.and.right','c',15)} Android genauso</div></div>
+ <div style="margin-top:18px;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--clay);font-weight:600"><span style="width:8px;height:8px;border-radius:50%;background:var(--clay);box-shadow:0 0 0 4px rgba(217,119,87,.25)"></span>Warte auf Ihr Handy …</div></div></div>`,
+ back+`<span class="btn2">Später</span>`+next('Weiter',1))]);
+// 7 Probe
+V.push(["9 · Kurze Probe","Parley spricht, der Satz steht als Zitat da; Ausprobieren mit Mikro, Erfolg in einer Zeile.",W(8,
+ `${badge('hand.raised.fill'.replace('hand.raised.fill','speaker.wave.2.fill'))}<div style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--clay);margin-top:2px">Probe 2 von 6 · Halt mich an</div>
+ <div style="font-size:18px;line-height:1.42;font-style:italic;margin-top:10px">„Wann immer ich aufhören soll, sag es einfach in deinen Worten. Probier es: sag mir, dass ich anhalten soll.“</div>
+ <div style="display:flex;gap:10px;align-items:center;margin-top:18px"><span class="btn2">${I('mic.fill','c',13)} Ausprobieren</span><span class="ok"><span style="width:16px;height:16px;border-radius:50%;background:var(--green);display:grid;place-items:center;color:#fff;font-size:10px">✓</span>Genau so, Sir.</span></div>`,
+ `<span class="btn2">Zurück</span><span style="flex:1"></span><span class="btn2">Überspringen</span>${next()}`)]);
+// 8 Bereit
+const cmd=(n,c,brand)=>`<div class="card row" style="width:100%"><span style="width:30px;height:30px;border-radius:8px;background:${brand};display:grid;place-items:center;flex:none">${I('terminal',brand==='#d97757'?'w':'g',15)}</span><span class="t" style="flex:1">${n}</span><span class="mono" style="background:rgba(0,0,0,.3);padding:5px 10px;border-radius:7px">${c}</span><span class="link">Kopieren</span></div>`;
+V.push(["10 · Bereit, Sir","Logo kehrt zurück und schließt den Bogen; die Befehle zum Kopieren.",W(9,
+ `${echo(`<img src="${LOGO}" style="width:84px;height:84px;border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,.45);display:block">`,84,[1.35,1.9,2.45])}
+ <h1 style="margin-top:0">Bereit, Sir.</h1><div class="sub">Tippen Sie das in einer neuen Session – dann bin ich da.</div>
+ <div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:18px">${cmd('Claude Code','/parley:voice','#d97757')}${cmd('Codex','$parley-voice','#e9e6df')}</div>`,back+next('Los geht’s'))]);
+
+const q=new URLSearchParams(location.search), only=q.get('v'), grp=q.get('g');
+let list=V.map((x,i)=>[x,i]);
+if(only!=null)list=list.filter(([_,i])=>i===+only);
+if(grp!=null)list=list.filter(([_,i])=>Math.floor(i/3)===+grp);
+const st=document.getElementById('stage');
+st.innerHTML=list.map(([[t,d,b]])=>`<div><div class="win">${b}</div><div class="cap">${t}<small>${d}</small></div></div>`).join('');
+if(only!=null||grp!=null)st.style.gridTemplateColumns='640px';
+</script></body></html>

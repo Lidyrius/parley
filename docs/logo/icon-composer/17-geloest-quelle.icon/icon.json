@@ -1,0 +1,69 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "extended-srgb:0.18431,0.56078,0.41569,1.00000",
+      "extended-srgb:0.04314,0.20000,0.14902,1.00000"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0.5,
+        "y": 0
+      },
+      "stop": {
+        "x": 0.5,
+        "y": 0.85
+      }
+    }
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "P.png",
+          "name": "P",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.4
+      }
+    },
+    {
+      "layers": [
+        {
+          "image-name": "echo1.png",
+          "name": "echo1",
+          "glass": true
+        },
+        {
+          "image-name": "echo2.png",
+          "name": "echo2",
+          "glass": true,
+          "opacity": 0.7
+        },
+        {
+          "image-name": "echo3.png",
+          "name": "echo3",
+          "glass": true,
+          "opacity": 0.4
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.4
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
