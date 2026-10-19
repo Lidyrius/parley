@@ -1,6 +1,7 @@
 // Parley relay: connects the Parley host app (Mac/Windows) and its paired iPhones from any
 // network. Both sides dial out to a per-room Durable Object. Protocol: docs/IPHONE.md.
 import { DurableObject } from "cloudflare:workers";
+import { APPLE_APP_SITE_ASSOCIATION, JOIN_HTML, JOIN_SCRIPT } from "./join";
 import { PAIR_HTML, PAIR_SCRIPT, QR_LIB } from "./pair";
 
 type Role = "host" | "phone";
@@ -18,6 +19,9 @@ export default {
 		const url = new URL(request.url);
 		if (url.pathname === "/") return text("parley relay ok");
 		if (url.pathname === "/pair") return pairPage();
+		if (url.pathname === "/join") return page(JOIN_HTML, JOIN_SCRIPT);
+		if (url.pathname === "/.well-known/apple-app-site-association")
+			return new Response(APPLE_APP_SITE_ASSOCIATION, { headers: { "content-type": "application/json", "cache-control": "public, max-age=3600" } });
 
 		const room = /^\/v1\/room\/([^/]+)$/.exec(url.pathname)?.[1];
 		if (room === undefined) return text("not found", 404);
@@ -126,8 +130,12 @@ export class Room extends DurableObject<Env> {
 }
 
 async function pairPage(): Promise<Response> {
-	const scriptHash = await sha256Base64(PAIR_SCRIPT);
-	return new Response(PAIR_HTML, {
+	return page(PAIR_HTML, PAIR_SCRIPT);
+}
+
+async function page(html: string, script: string): Promise<Response> {
+	const scriptHash = await sha256Base64(script);
+	return new Response(html, {
 		headers: {
 			"content-type": "text/html; charset=utf-8",
 			// Only the pinned QR library and the page's own script may run; nothing may be fetched.

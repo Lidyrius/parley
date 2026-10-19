@@ -130,8 +130,12 @@ struct JoinLink: Equatable, Sendable, Identifiable {
     var id: String { pairing.room }
 
     static func parse(_ text: String) -> JoinLink? {
-        guard var c = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
-              c.scheme?.lowercased() == "parley", c.host?.lowercased() == "join" else { return nil }
+        guard var c = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        // `https://<relay>/join#<parley://join?…>`: the link as sent (universal link / the relay's page).
+        if c.scheme?.lowercased() == "https", c.path == "/join", let inner = c.percentEncodedFragment?.removingPercentEncoding {
+            return parse(inner)
+        }
+        guard c.scheme?.lowercased() == "parley", c.host?.lowercased() == "join" else { return nil }
         let q = c.queryItems ?? []
         func value(_ n: String) -> String { q.first { $0.name == n }?.value ?? "" }
         c.host = "pair"

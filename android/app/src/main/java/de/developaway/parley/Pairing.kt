@@ -78,6 +78,10 @@ data class JoinLink(val pairing: Pairing, val label: String, val host: String) {
         /** null unless it is a join link with a valid room — and its end-to-end key: never joined in the clear. */
         fun parse(text: String): JoinLink? {
             val u = runCatching { URI(text.trim()) }.getOrNull() ?: return null
+            // `https://<relay>/join#<parley://join?…>`: the link as sent (the relay's /join page).
+            if (u.scheme.equals("https", true) && u.rawPath == "/join" && u.rawFragment != null) {
+                return parse(runCatching { URLDecoder.decode(u.rawFragment, "UTF-8") }.getOrDefault(u.rawFragment))
+            }
             if (!u.scheme.equals("parley", true) || !u.host.equals("join", true)) return null
             val q = (u.rawQuery ?: "").split("&").mapNotNull { kv ->
                 val i = kv.indexOf('=')

@@ -113,8 +113,11 @@ public static class Shares
     // parley://join?u=<relay>&r=<room>&k=<secret>&e=<key>&s=<session label>&h=<who shares>
     public static string Link(Share s, string host)
     {
+        // A normal https link (the relay's /join page / iOS universal link); the keys ride in the
+        // fragment, which never reaches the relay. As macOS.
         static string E(string v) => RelayLink.Encode(v);
-        return $"parley://join?u={E(s.Url)}&r={E(s.Room)}&k={E(s.Secret)}&e={E(s.Key)}&s={E(s.Label)}&h={E(host)}";
+        var app = $"parley://join?u={E(s.Url)}&r={E(s.Room)}&k={E(s.Secret)}&e={E(s.Key)}&s={E(s.Label)}&h={E(host)}";
+        return $"{s.Url}/join#{E(app)}";
     }
 
     public static bool Expired(Share s, DateTime now) =>

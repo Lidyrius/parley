@@ -443,6 +443,11 @@ struct FrameTests {
         #expect(j.label == "Website" && j.host == "Sydney" && j.pairing.room == "AAAAAAAAAAAAAAAAAAAAAA")
         #expect(JoinLink.parse(link.replacingOccurrences(of: "&e=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", with: "")) == nil)   // never in the clear
         #expect(JoinLink.parse("parley://pair?u=x") == nil)
+        // As sent: https://<relay>/join#<the link, percent-encoded once more> — a label with spaces survives.
+        let app = link.replacingOccurrences(of: "s=Website", with: "s=Kunde%20M%C3%BCller")
+        let sent = "https://relay.example/join#" + app.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        #expect(JoinLink.parse(sent)?.label == "Kunde Müller")
+        #expect(JoinLink.parse(sent)?.pairing.room == "AAAAAAAAAAAAAAAAAAAAAA")
 
         guard case .sessions(let snap)? = Frame.decode(#"{"t":"sessions","sessions":[{"id":"w","shared":[{"id":"s1","name":"Max","role":"Marketing"}]}]}"#)
         else { Issue.record("no sessions"); return }

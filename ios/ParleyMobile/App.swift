@@ -500,7 +500,7 @@ struct RootView: View {
         .fullScreenCover(item: Binding(get: { model.guestAsks.first }, set: { _ in })) { GuestAskView(ask: $0) }
         .onOpenURL { url in
             // v7: someone shares a session with this phone.
-            if url.host == "join" {
+            if url.host == "join" || (url.scheme == "https" && url.path == "/join") {
                 if let link = JoinLink.parse(url.absoluteString) { model.pendingJoin = link } else { linkError = "Der Einladungslink ist ungültig." }
                 return
             }

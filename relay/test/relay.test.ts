@@ -1,6 +1,7 @@
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { JOIN_SCRIPT } from "../src/join";
 import { PAIR_SCRIPT, QR_LIB } from "../src/pair";
 
 const SECRET = "dGhpcy1pcy1hLXRlc3Qtc2VjcmV0LW9mLTMyLWJ5dGVz";
@@ -82,6 +83,22 @@ describe("plain HTTP", () => {
 
 	it("404s unknown paths", async () => {
 		expect((await exports.default.fetch("https://relay.test/nope")).status).toBe(404);
+	});
+
+	it("serves the invite page (v7) with its script hash-pinned, and the iOS app association", async () => {
+		const res = await exports.default.fetch("https://relay.test/join");
+		expect(res.status).toBe(200);
+		const html = await res.text();
+		expect(html).toContain(`<script>${JOIN_SCRIPT}</script>`);
+		expect(JOIN_SCRIPT).not.toContain("innerHTML");   // the invite's names stay text
+		const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JOIN_SCRIPT));
+		const hash = btoa(String.fromCharCode(...new Uint8Array(digest)));
+		expect(res.headers.get("content-security-policy")).toContain(`'sha256-${hash}'`);
+		const aasa = await exports.default.fetch("https://relay.test/.well-known/apple-app-site-association");
+		expect(aasa.headers.get("content-type")).toBe("application/json");
+		expect(await aasa.json()).toEqual({
+			applinks: { details: [{ appIDs: ["384887N3UL.de.developaway.parley.mobile"], components: [{ "/": "/join" }] }] },
+		});
 	});
 
 	it("serves the pairing page with only the pinned QR library allowed", async () => {

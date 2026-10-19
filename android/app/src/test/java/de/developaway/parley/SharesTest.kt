@@ -30,6 +30,10 @@ class SharesTest {
         assertEquals("https://relay.example", j.pairing.relay)
         assertNull(JoinLink.parse(link.replace("&e=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", "")))   // never in the clear
         assertNull(JoinLink.parse("parley://pair?u=x"))
+        // As sent: https://<relay>/join#<the link, percent-encoded once more> — a label with spaces survives.
+        val app = link.replace("s=Website", "s=Kunde%20M%C3%BCller")
+        val sent = "https://relay.example/join#" + java.net.URLEncoder.encode(app, "UTF-8").replace("+", "%20")
+        assertEquals("Kunde Müller", JoinLink.parse(sent)?.label)
         assertNull(JoinLink.parse(link.replace("https%3A", "http%3A")))
         assertEquals("Café & Co", JoinLink.parse(link.replace("s=Website", "s=Caf%C3%A9%20%26%20Co"))!!.label)
 

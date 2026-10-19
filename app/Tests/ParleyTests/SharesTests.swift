@@ -55,8 +55,10 @@ final class SharesTests: XCTestCase {
 
     func testInviteAskApproveWriteEnd() throws {
         let (invite, link) = try XCTUnwrap(hub.create(session: "web"))
-        XCTAssertTrue(link.hasPrefix("parley://join?u=https%3A%2F%2Frelay.test&r=\(invite.room)&k="), link)
-        XCTAssertTrue(link.contains("&s=Website&h="))
+        XCTAssertTrue(link.hasPrefix("https://relay.test/join#"), link)   // clickable anywhere; the keys in the fragment
+        let app = try XCTUnwrap(link.components(separatedBy: "#").last?.removingPercentEncoding)
+        XCTAssertTrue(app.hasPrefix("parley://join?u=https%3A%2F%2Frelay.test&r=\(invite.room)&k="), app)
+        XCTAssertTrue(app.contains("&s=Website&h="))
         XCTAssertNil(hub.create(session: "nope"))
         let perms = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
         XCTAssertEqual(perms, 0o600)                                           // keys inside

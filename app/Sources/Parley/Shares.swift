@@ -66,10 +66,13 @@ enum Shares {
         return s
     }
 
-    /// parley://join?u=<relay>&r=<room>&k=<secret>&e=<key>&s=<session label>&h=<who shares>
+    /// `https://<relay>/join#<parley://join?u=<relay>&r=<room>&k=<secret>&e=<key>&s=<session label>&h=<who shares>>`
+    /// — a normal link any messenger makes clickable; it opens Parley (universal link / the relay's
+    /// page). The room and its key ride in the fragment, which never reaches the relay.
     static func link(_ s: Share, host: String) -> String {
         let e = RelayLink.encode
-        return "parley://join?u=\(e(s.url))&r=\(e(s.room))&k=\(e(s.secret))&e=\(e(s.key))&s=\(e(s.label))&h=\(e(host))"
+        let app = "parley://join?u=\(e(s.url))&r=\(e(s.room))&k=\(e(s.secret))&e=\(e(s.key))&s=\(e(s.label))&h=\(e(host))"
+        return "\(s.url)/join#\(e(app))"
     }
 
     static func expired(_ s: Share, now: Date) -> Bool {
