@@ -2,6 +2,23 @@ import XCTest
 @testable import Parley
 
 // Protocol v2 text frames and the host's phone state: call / wake / push / away.
+// A call whose `call end` got lost: no mic audio for 6 s → over here too.
+final class PhoneCallGoneTests: XCTestCase {
+    func testACallWithoutAudioIsOver() {
+        final class Clock: @unchecked Sendable { var t = Date(timeIntervalSince1970: 1_760_000_000) }
+        let clock = Clock()
+        let hub = PhoneHub(store: .memory(), log: { _ in }, now: { clock.t })
+        hub.handle(.call(true))
+        XCTAssertTrue(hub.callActive)
+        for _ in 0..<5 { clock.t += 2; hub.audioIn(Data(count: 640)); hub.checkAlive() }   // streaming (also muted: zeros)
+        XCTAssertTrue(hub.callActive)
+        clock.t += 5; hub.checkAlive()
+        XCTAssertTrue(hub.callActive)                                                       // a short gap is fine
+        clock.t += 2; hub.checkAlive()
+        XCTAssertFalse(hub.callActive)                                                      // 7 s of nothing: gone
+    }
+}
+
 final class PhoneFrameTests: XCTestCase {
     func testParsesTheV2FramesAndIgnoresTheRest() {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"start"}"#), .call(true))

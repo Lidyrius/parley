@@ -105,6 +105,8 @@ fun CallScreen(call: CallController, accent: Color, minimise: () -> Unit) {
             Row {
                 Text(state, color = accent, fontSize = 20.sp, fontWeight = FontWeight.Medium)
                 if (phase == CallPhase.active && !connecting) Text(" · " + Fmt.clock((now - call.since).toDouble()), color = Dim, fontSize = 20.sp)
+                // Muted: said up here, the subtitles below stay readable (as the iPhone).
+                if (phase == CallPhase.active && call.muted) Text(" · stumm", color = Color(0xFFE5484D), fontSize = 20.sp)
             }
             Spacer(Modifier.weight(0.4f))
             if (phase == CallPhase.active) {

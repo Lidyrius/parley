@@ -104,7 +104,7 @@ public static class PhoneCall
     // No phone audio for this long while "in a call" → the phone is gone (its `call end` was
     // lost with its link): Parley uses the PC's speaker and mic until frames arrive again. The
     // phone streams its mic all through a call, so a healthy call never gets near this.
-    public static readonly TimeSpan AudioSilentLimit = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan AudioSilentLimit = TimeSpan.FromSeconds(6);   // as macOS PhoneHub.silentCall
     private const int LeadFrames = 12;  // sent 240 ms ahead of real time: absorbs timer + mobile network jitter
 
     private static readonly object Gate = new();

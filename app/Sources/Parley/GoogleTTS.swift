@@ -26,8 +26,11 @@ enum GoogleTTS {
 
     /// Extract raw 16-bit LE PCM from the JSON response (strips the WAV header if present).
     /// One line → 24 kHz PCM with the session voice; nil on any failure.
-    static func synth(_ text: String, config: AppConfig) async -> Data? {
-        let req = request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
+    // `timeout`: a hanging request (bad network) mustn't hold the turn — or a call — for the
+    // system's 60 s; a short spoken line gives up sooner.
+    static func synth(_ text: String, config: AppConfig, timeout: TimeInterval = 15) async -> Data? {
+        var req = request(text: text, apiKey: config.googleKey, voice: config.googleVoice)
+        req.timeoutInterval = timeout
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return pcm(from: data)

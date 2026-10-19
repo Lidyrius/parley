@@ -973,7 +973,7 @@ final class AppController: ObservableObject {
     // ack clip itself gets swallowed.
     private func playAck(intent: Intent, hasText: Bool, line: AckLine?, config: AppConfig) async {
         var own: Data? = line?.clip
-        if own == nil, let line { own = await GoogleTTS.synth(line.say, config: config) }   // not rendered in time
+        if own == nil, let line { own = await GoogleTTS.synth(line.say, config: config, timeout: 6) }   // not rendered in time
         try? await Task.sleep(nanoseconds: 300_000_000)
         await waitForHiFiOutput()
         if let own {
@@ -1206,7 +1206,7 @@ final class AppController: ObservableObject {
     // after the mic teardown + waits for hi-fi output first (same as playAck), otherwise the
     // line renders into a still-contended device and is silent.
     private func speakLine(_ text: String, config: AppConfig) async {
-        guard config.useGoogle, let pcm = await GoogleTTS.synth(text, config: config) else { return }
+        guard config.useGoogle, let pcm = await GoogleTTS.synth(text, config: config, timeout: 6) else { return }
         try? await Task.sleep(nanoseconds: 300_000_000)
         await waitForHiFiOutput()
         if phone.callActive, let t = Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate) {
