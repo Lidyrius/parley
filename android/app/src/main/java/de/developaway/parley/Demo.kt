@@ -23,8 +23,22 @@ object Demo {
         )
         val today = """{"costUsd":13.61,"turns":65,"spokenSeconds":754,"rateLimits":[{"kind":"five_hour","percentUsed":42},{"kind":"seven_day","percentUsed":18}]}"""
         val reminders = """[{"id":"r1","text":"Lass die Tests laufen und berichte, was rot ist.","to":"Shirts","at":${now + 14 * 3_600_000}},{"id":"r2","text":"Deploye auf Staging.","to":"Zentrale","after":"Shirts"}]"""
-        return """{"t":"sessions","at":$now,"sessions":[${sessions.joinToString(",")}],"today":$today,"reminders":$reminders}"""
+        fun snap(id: String, name: String, at: Long, vararg s: Pair<String, String>) =
+            """{"id":"$id","name":"$name","at":$at,"sessions":[${s.joinToString(",") { (n, cwd) -> """{"id":"$id-${n.lowercase()}","name":"$n","cwd":"$cwd"}""" }}]}"""
+        val snapshots = listOf(
+            snap("s1", "Kunde Müller", ago(2 * 3600), "Website" to "~/kunden/mueller/website", "Shop" to "~/kunden/mueller/shop",
+                "Angebote" to "~/kunden/mueller/angebote", "Doku" to "~/kunden/mueller/doku"),
+            snap("s2", "Parley intern", ago(26 * 3600), "Parley" to "~/workspace/privat/vloude", "Relay" to "~/workspace/parley-relay",
+                "Zentrale" to "~/workspace"),
+            snap("s3", "Recherche", ago(7 * 86400), "GTA 6 Research" to "~/research/gta6", "Polymarket" to "~/workspace/pmr"),
+        )
+        return """{"t":"sessions","at":$now,"sessions":[${sessions.joinToString(",")}],"today":$today,"reminders":$reminders,"snapshots":[${snapshots.joinToString(",")}]}"""
     }
+
+    /** The host's answer to "Öffnen", as the design shows it. */
+    fun opened(s: SnapshotRow) = SnapshotResult(s.id, s.name, s.sessions.mapIndexed { i, it ->
+        SnapshotOutcome(it.id, it.name, listOf("running", "resumed", "resumed", "started", "missing")[i % 5])
+    })
 
     val history = listOf(
         ChatItem("d1", "user", "Bau bitte den Export-Button in die Rechnungsliste ein.", fromUser = true),

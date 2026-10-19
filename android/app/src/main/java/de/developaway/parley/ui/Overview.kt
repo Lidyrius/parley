@@ -100,6 +100,7 @@ fun Overview(m: AppModel, openSession: (String, Boolean) -> Unit, openSettings: 
     val c = LocalColors.current
     val relay = m.relay
     var detail by remember { mutableStateOf<String?>(null) }
+    var snapshots by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -111,8 +112,11 @@ fun Overview(m: AppModel, openSession: (String, Boolean) -> Unit, openSettings: 
         Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp)
             .padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Box(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                Box(Modifier.align(Alignment.TopEnd).size(46.dp).clip(CircleShape).background(c.card).clickable(onClick = openSettings),
-                    contentAlignment = Alignment.Center) { Icon(Icons.Filled.Settings, "Einstellungen", tint = c.accent) }
+                Row(Modifier.align(Alignment.TopEnd), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SnapshotsPill(c) { snapshots = true }
+                    Box(Modifier.size(46.dp).clip(CircleShape).background(c.card).clickable(onClick = openSettings),
+                        contentAlignment = Alignment.Center) { Icon(Icons.Filled.Settings, "Einstellungen", tint = c.accent) }
+                }
                 Text("Parley", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = c.text, modifier = Modifier.padding(top = 48.dp))
             }
             StatusHeader(m, relay.status, c)
@@ -135,6 +139,12 @@ fun Overview(m: AppModel, openSession: (String, Boolean) -> Unit, openSettings: 
                 close = { detail = null },
                 openHistory = { detail = null; openSession(open.id, false) },
                 message = { detail = null; openSession(open.id, true) })
+        }
+    }
+    if (snapshots) {
+        val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet({ snapshots = false }, sheetState = state, containerColor = c.background) {
+            SnapshotsSheet(m) { snapshots = false }
         }
     }
 }
