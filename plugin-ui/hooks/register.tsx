@@ -339,7 +339,7 @@ export const register: Register = on => {
       await update($, phase, () => 'heard')
       await log($, 'you', res.block)
     } else {
-      await update($, phase, () => (spoken.listen ? 'parked' : 'idle'))
+      await update($, phase, () => 'parked') // done: the session is parked, not just "ready"
     }
     return res
   }).catch(($, e, next) => next(e))
@@ -366,6 +366,7 @@ export const register: Register = on => {
     const term = e.surface === 'terminal' || !('Svg' in els) // the terminal hands out Svg as an empty fragment
     const lv = term ? await read($, level) : null
     const said = await read($, line)
+    const working = await read($, isWorking)
     const last = (await read($, history)).at(-1)
     const width = Math.max(20, e.props.bodyColumns - 2)
     const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
@@ -388,8 +389,8 @@ export const register: Register = on => {
       : p === 'transcribing' ? <Text color="warning" bold>✎ transkribiert…</Text>
       : p === 'queued' ? <Text color="warning">⧗ wartet, anderes Projekt spricht</Text>
       : p === 'heard' ? <Text color="success" bold>✓ eingespeist</Text>
-      : p === 'parked' ? <Text color="warning" bold>⏸ geparkt</Text>
-      : <Text dimColor>○ bereit</Text>
+      : p === 'parked' || !working ? <Text color="warning" bold>⏸ geparkt</Text>
+      : <Text dimColor>◐ arbeitet</Text>
 
     return (
       <Box flexDirection="column" borderStyle="round" borderColor={p === 'listening' ? 'error' : 'claude'} paddingX={1}>

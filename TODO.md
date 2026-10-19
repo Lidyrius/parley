@@ -7,7 +7,7 @@
       Untertitel müssen sichtbar bleiben (Hinweis tiefer oder woanders).
 - [x] Logs prüfen: manchmal klingelt es nicht, die Session steht stattdessen auf „geparkt“ —
       obwohl Stumm nicht an ist.
-- [ ] Zustand „bereit“ abschaffen: eine fertige Session ist immer „geparkt“. „bereit“ stammt
+- [x] Zustand „bereit“ abschaffen: eine fertige Session ist immer „geparkt“. „bereit“ stammt
       aus der Zeit vor der Parley-Mod (nur Hook); gebraucht wird nur „geparkt“.
 
 ## Codex coverage audit — 2026-08-02

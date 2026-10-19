@@ -202,16 +202,20 @@ final class SessionRegistry {
 
     func canResume(_ id: String) -> Bool {
         refresh()
-        return entries[id].map(Self.resumable) ?? false
+        return entries[id].map(resumable) ?? false
     }
 
-    // Parked, or idle / with work in the background and a live mod (it submits the instruction;
-    // Claude Code takes a prompt while its background agents run). A Codex session (no
-    // presence) is only resumable while parked.
+    // Parked or with work in the background, and reachable: a live mod submits the instruction
+    // (Claude Code takes a prompt while its background agents run), or its hook polls /wake. A
+    // Codex session (no presence) is only resumable while its hook is parked.
     // A timer ("Warte X Minuten") whose hook polls /wake: Fortsetzen ends it early.
-    private static func resumable(_ e: Entry) -> Bool {
-        e.state == "parked" || (["idle", "background"].contains(e.state) && e.presenceAt != nil)
+    private func resumable(_ e: Entry) -> Bool {
+        (["parked", "background"].contains(e.state) && (e.presenceAt != nil || hookParked(e)))
             || (e.state == "waiting" && e.parked && e.waitResume != nil)
+    }
+
+    private func hookParked(_ e: Entry) -> Bool {
+        e.parked && e.wakeAt.map { now().timeIntervalSince($0) < Self.parkTTL } == true
     }
 
     /// Fortsetzen during Sir's timer: the wait is over now — what the session continues with
@@ -227,16 +231,13 @@ final class SessionRegistry {
     // Resumable sessions for the menu / tray and the voice resume command.
     func resumableList() -> [ParkedInfo] {
         refresh()
-        return entries.values.filter(Self.resumable)
+        return entries.values.filter(resumable)
             .map { ParkedInfo(id: $0.id, label: $0.label, project: $0.project) }
             .sorted { $0.label < $1.label }
     }
 
     // The session's parked hook is still polling /wake (regardless of a running dialog).
-    func parkedHookAlive(_ id: String) -> Bool {
-        guard let e = entries[id], e.parked, let w = e.wakeAt else { return false }
-        return now().timeIntervalSince(w) < Self.parkTTL
-    }
+    func parkedHookAlive(_ id: String) -> Bool { entries[id].map(hookParked) ?? false }
 
     // Parley knows the session (voice mode on): seen and not stopped. /permission asks the
     // others on screen.
@@ -388,7 +389,7 @@ final class SessionRegistry {
             Row(id: e.id, label: e.label, project: e.project, state: e.state, since: Self.ms(e.since),
                 until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil,
                 callback: e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) }, voice: e.id == activeId,
-                resumable: Self.resumable(e), tasks: e.tasks, host: DesktopSessions.resolve(cli: e.id, reported: e.host),
+                resumable: resumable(e), tasks: e.tasks, host: DesktopSessions.resolve(cli: e.id, reported: e.host),
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
         }
@@ -444,7 +445,8 @@ final class SessionRegistry {
     // MARK: - state derivation
 
     // Precedence high→low: the voiced turn's phase, queued, waiting, parked, working,
-    // background, idle, stopped.
+    // background, stopped. A finished session is parked — whether its hook polls /wake, its mod
+    // waits for a prompt, or (Codex, hook ended) it just waits for Sir.
     func state(of e: Entry, at t: Date) -> String {
         if e.id == activeId {
             let p = phase()
@@ -458,14 +460,14 @@ final class SessionRegistry {
             // A resume instruction waiting for / just handed to the mod counts as working.
             let landing = e.pending != nil || (e.expectWorkUntil.map { t < $0 } ?? false)
             if e.presenceState == "working" || landing { return "working" }
-            return e.presenceState == "background" ? "background" : "idle"
+            return e.presenceState == "background" ? "background" : "parked"
         }
         // No presence (e.g. Codex): only the hook's traffic tells. A finished wait counts as
         // hook activity + injection — the hook woke up and fed the resume prompt back.
         let hook = max(e.hookAt, e.waitUntil ?? .distantPast)
         guard t.timeIntervalSince(hook) < Self.hookTTL else { return "stopped" }
         let injected = max(e.injectedAt ?? .distantPast, e.waitUntil ?? .distantPast)
-        return t.timeIntervalSince(injected) < Self.hookTTL ? "working" : "idle"
+        return t.timeIntervalSince(injected) < Self.hookTTL ? "working" : "parked"
     }
 
     private func lastSignal(_ e: Entry) -> Date {

@@ -21,7 +21,7 @@ struct SessionInfo: Identifiable, Equatable {
 @MainActor
 final class AppController: ObservableObject {
     @Published var sessions: [SessionInfo] = []
-    @Published var parked: [ParkedInfo] = []   // resumable sessions: parked (see /wake) or idle
+    @Published var parked: [ParkedInfo] = []   // resumable sessions: parked (hook polls /wake, or the mod)
     @Published var lastError: String?
     @Published var muted = false   // manual mute toggle (menu)
     @Published var relayConnected: Bool?   // iPhone relay: nil = not configured, else reachable
@@ -517,7 +517,7 @@ final class AppController: ObservableObject {
             text = await transcribe(wav, config: config)
             Log.write("transcribe done chars=\(text.count)")
 
-            // Resumable = parked, or idle with the mod running (gets it via /presence).
+            // Resumable = parked: its hook polls /wake, or the mod gets it via /presence.
             let targets = text.isEmpty || hop >= 3 ? [] : server.resumableList()
             guard !targets.isEmpty,
                   let cmd = await ControlCommand.detect(text, labels: targets.map { $0.label }, config: config),
@@ -619,7 +619,7 @@ final class AppController: ObservableObject {
     // Resume a session from the menu (mouse fallback for the voice command) — no dialog.
     func resume(_ id: String) { server.resume(id: id, instruction: ControlServer.resumeInstruction) }
 
-    // Re-read the resumable list (menu opened — idle sessions may have gone stale since).
+    // Re-read the resumable list (menu opened — parked sessions may have gone stale since).
     func refreshResumable() { parked = server.resumableList() }
 
     // POST /resume (the mod's button): a short voice dialog instead of a hook turn — the

@@ -46,19 +46,18 @@ enum LiveActivity {
         }
     }
 
-    /// A question stays while its session waits (parked, or idle / paused / in the background
-    /// after it); once it works again, talks, or stopped, it was answered some other way.
+    /// A question stays while its session waits (parked, paused or in the background after it); once it works again, talks, or stopped, it was answered some other way.
     static func isOpen(_ ask: Ask, sessions json: String) -> Bool {
         guard let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
               let list = obj["sessions"] as? [[String: Any]],
               let s = list.first(where: { $0["id"] as? String == ask.id }) else { return false }
-        return ["parked", "idle", "waiting", "background"].contains(s["state"] as? String ?? "")
+        return ["parked", "waiting", "background"].contains(s["state"] as? String ?? "")
     }
 
     static let maxRows = 4
 
     /// The order that matters to Sir: a call back owed, a ring to come, talking, wanting to talk,
-    /// paused, working, background, parked, ready — newest first within each.
+    /// paused, working, background, parked — newest first within each.
     static func rank(_ r: Row) -> Int {
         if let c = r.callback { return c <= 0 ? 0 : 1 }
         switch r.state {

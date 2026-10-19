@@ -138,7 +138,7 @@ final class SessionsTests: XCTestCase {
         presence("a", "idle")
         rows = try sessions()
         XCTAssertEqual(rows.count, 1)
-        XCTAssertEqual(rows[0]["state"] as? String, "idle")
+        XCTAssertEqual(rows[0]["state"] as? String, "parked")
         XCTAssertEqual(rows[0]["label"] as? String, "Parley")
         XCTAssertEqual((rows[0]["since"] as? NSNumber)?.int64Value, nowMs)
     }
@@ -187,15 +187,15 @@ final class SessionsTests: XCTestCase {
         XCTAssertTrue(try row("c")?["until"] is NSNull)
     }
 
-    func testHookOnlyWorkingThenIdleThenStopped() throws {
+    func testHookOnlyWorkingThenParkedThenStopped() throws {
         reg.queued(id: "c", label: "", project: "codex-proj")
         reg.activate(id: "c", speak: "x")
         reg.finished(id: "c", reply: reply("mach weiter"))
         XCTAssertEqual(try state("c"), "working")
         XCTAssertEqual(try row("c")?["label"] as? String, "codex-proj")   // label falls back to project
 
-        turn("c", reply())                                 // speak-only turn → idle, not resumable
-        XCTAssertEqual(try state("c"), "idle")
+        turn("c", reply())                                 // speak-only turn → parked, but no way in
+        XCTAssertEqual(try state("c"), "parked")
         XCTAssertEqual(try row("c")?["resumable"] as? Bool, false)
         advance(301)
         XCTAssertEqual(try state("c"), "stopped")
@@ -206,7 +206,7 @@ final class SessionsTests: XCTestCase {
     func testStoppedAfterSilenceThenDropped() throws {
         presence("a", "idle")
         advance(19)
-        XCTAssertEqual(try state("a"), "idle")
+        XCTAssertEqual(try state("a"), "parked")
         advance(2)
         XCTAssertEqual(try state("a"), "stopped")
         XCTAssertEqual((try row("a")?["since"] as? NSNumber)?.int64Value, nowMs)
@@ -225,7 +225,8 @@ final class SessionsTests: XCTestCase {
         advance(25); presence("a", "idle")
         XCTAssertEqual(try state("a"), "parked")   // last poll 25 s ago
         advance(6); presence("a", "idle")
-        XCTAssertEqual(try state("a"), "idle")     // hook gone → presence decides
+        XCTAssertEqual(try state("a"), "parked")   // hook gone → presence decides: the mod takes a prompt
+        XCTAssertEqual(try row("a")?["resumable"] as? Bool, true)
     }
 
     func testSortVoiceFirstAliveByLabelStoppedLast() throws {
@@ -273,7 +274,7 @@ final class SessionsTests: XCTestCase {
         XCTAssertEqual(try state("bg"), "working")
         XCTAssertEqual((try row("bg")?["tasks"] as? [Any])?.count, 0)   // absent/empty → []
         presence("bg", "idle")
-        XCTAssertEqual(try state("bg"), "idle")
+        XCTAssertEqual(try state("bg"), "parked")
     }
 
     // MARK: - /wake + /resume
@@ -324,7 +325,7 @@ final class SessionsTests: XCTestCase {
         XCTAssertEqual(try state("a"), "working")                       // landed, mod not busy yet
         presence("a", "working")
         presence("a", "idle")
-        XCTAssertEqual(try state("a"), "idle")                          // done → idle again
+        XCTAssertEqual(try state("a"), "parked")                          // done → parked again
     }
 
     func testResumeDialogRunsThroughQueueAndDeliversTranscript() throws {
