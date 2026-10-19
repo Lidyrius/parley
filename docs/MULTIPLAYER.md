@@ -53,7 +53,10 @@ Protokoll: `docs/IPHONE.md` → v7.
 
 - [x] **B1** Abgelaufene Einladungen werden regelmäßig entfernt (alle 30 s geprüft).
 - [x] **B2** Toter Einladungslink beim Gast → „Einladung abgelaufen oder schon benutzt“.
-- [~] **B3** Mac-Menü (fertig) und Windows-Tray: geteilte Sessions mit „Entfernen“.
-- [ ] **B4** Windows-Host 1:1, Android 1:1 (Eigentümer und Gast).
+- [x] **B3** Mac-Menü und Windows-Tray: geteilte Sessions mit „Entfernen“.
+- [x] **B4** Windows-Host 1:1, Android 1:1 (Eigentümer und Gast). Android hat noch keinen Push: Rückfragen
+      kommen dort als lokale Mitteilung, solange die Verbindung offen ist (Unterwegs) oder die App läuft.
 - [x] **B5** Protokoll in `docs/IPHONE.md` (v7), README-Abschnitt „Session teilen“.
-- [ ] **B6** Tests auf allen Seiten; Build, TestFlight, Mac einspielen.
+- [x] **B6** Tests: Mac 233, iPhone 102, Android 13, Hook, Mod; Windows kompiliert (CI). TestFlight 57, Mac eingespielt.
+- [ ] **Offen:** Live-Test mit zwei echten Geräten; Windows einmal auf einem echten PC; echter Live-Anruf
+      beim Gast (CallKit, Stimme) statt Rückfrage-Bildschirm — eigener Schritt, wenn gewünscht.
