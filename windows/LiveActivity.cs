@@ -70,7 +70,7 @@ public static class LiveActivity
         set { lock (AskGate) _ask = value; }
     }
 
-    // A question stays while its session waits (parked, or idle / paused / in the background
+    // A question stays while its session waits (parked, paused or in the background
     // after it); once it works again, talks, or stopped, it was answered some other way.
     public static bool IsOpen(Ask ask, string json)
     {
@@ -80,7 +80,7 @@ public static class LiveActivity
             if (!doc.RootElement.TryGetProperty("sessions", out var list) || list.ValueKind != JsonValueKind.Array) return false;
             foreach (var s in list.EnumerateArray())
                 if (s.TryGetProperty("id", out var id) && id.GetString() == ask.Id)
-                    return s.TryGetProperty("state", out var st) && st.GetString() is "parked" or "idle" or "waiting" or "background";
+                    return s.TryGetProperty("state", out var st) && st.GetString() is "parked" or "waiting" or "background";
             return false;
         }
         catch (JsonException) { return false; }
@@ -91,7 +91,7 @@ public static class LiveActivity
     public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(15);
 
     // The order that matters to Sir: a call back owed, a ring to come, talking, wanting to talk,
-    // paused, working, background, parked, ready — newest first within each.
+    // paused, working, background, parked — newest first within each.
     public static int Rank(Row r)
     {
         if (r.Callback is { } c) return c <= 0 ? 0 : 1;

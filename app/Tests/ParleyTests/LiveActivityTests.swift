@@ -8,8 +8,8 @@ final class LiveActivityTests: XCTestCase {
     {"sessions":[
       {"id":"w","label":"Shirts","state":"working","since":1000000,"until":null,"stats":{"lastLine":"Ich teste noch."}},
       {"id":"s","label":"Alt","state":"stopped","since":1000000,"until":null},
-      {"id":"c","label":"Website","state":"idle","since":2000000,"until":null,"callback":0,"stats":{"lastLine":"Soll ich deployen?"}},
-      {"id":"i","label":"","project":"tippfrei","state":"idle","since":3000000,"until":null},
+      {"id":"c","label":"Website","state":"parked","since":2000000,"until":null,"callback":0,"stats":{"lastLine":"Soll ich deployen?"}},
+      {"id":"i","label":"","project":"tippfrei","state":"parked","since":3000000,"until":null},
       {"id":"p","label":"Angebote","state":"waiting","since":1500000,"until":1800000},
       {"id":"b","label":"Relay","state":"background","since":1200000,"until":null}
     ],"today":{}}
@@ -26,7 +26,7 @@ final class LiveActivityTests: XCTestCase {
         XCTAssertEqual(c.from, "Website")
         XCTAssertEqual(c.wantsSir, ["c"])
         XCTAssertEqual(LiveActivity.content(fromSessions: "nope"), LiveActivity.Content())
-        let unnamed = LiveActivity.content(fromSessions: #"{"sessions":[{"id":"i","label":"","project":"tippfrei","state":"idle","since":0}]}"#)
+        let unnamed = LiveActivity.content(fromSessions: #"{"sessions":[{"id":"i","label":"","project":"tippfrei","state":"parked","since":0}]}"#)
         XCTAssertEqual(unnamed.sessions.first?.label, "tippfrei")
     }
 
@@ -74,7 +74,7 @@ final class LiveActivityTests: XCTestCase {
         XCTAssertNil(feed.step(one, away: true, canStart: false, canUpdate: false, now: t))     // no start token yet
         XCTAssertEqual(feed.step(one, away: true, canStart: true, canUpdate: false, now: t), .start(one))
         t += 5
-        let two = content([("a", "idle")])
+        let two = content([("a", "parked")])
         XCTAssertNil(feed.step(two, away: true, canStart: true, canUpdate: false, now: t))      // no update token yet
         feed.phoneReports(running: true, at: t)
         XCTAssertEqual(feed.step(two, away: true, canStart: true, canUpdate: true, now: t), .update(two, priority: 5))
@@ -83,7 +83,7 @@ final class LiveActivityTests: XCTestCase {
         t += LiveActivityFeed.heartbeat
         XCTAssertEqual(feed.step(two, away: true, canStart: true, canUpdate: true, now: t), .update(two, priority: 5))
         t += 5
-        let wants = content([("a", "idle")], callback: "a")
+        let wants = content([("a", "parked")], callback: "a")
         XCTAssertEqual(feed.step(wants, away: true, canStart: true, canUpdate: true, now: t), .update(wants, priority: 10))
         t += 0.5
         XCTAssertNil(feed.step(two, away: true, canStart: true, canUpdate: true, now: t))       // ≥ 1 s apart
@@ -160,7 +160,7 @@ final class LiveActivityTests: XCTestCase {
                                    options: [" Ja, deployen ", "", "Erst Staging", "Warte noch", "Vierte"])
         XCTAssertEqual(ask.text.count, 160)
         XCTAssertEqual(ask.options, ["Ja, deployen", "Erst Staging", "Warte noch"])
-        XCTAssertTrue(LiveActivity.isOpen(ask, sessions: sessions))          // "c" is idle (waiting for Sir)
+        XCTAssertTrue(LiveActivity.isOpen(ask, sessions: sessions))          // "c" is parked (waiting for Sir)
         XCTAssertFalse(LiveActivity.isOpen(LiveActivity.Ask(id: "w", label: "", text: "", options: []), sessions: sessions))   // works again
         XCTAssertFalse(LiveActivity.isOpen(LiveActivity.Ask(id: "gone", label: "", text: "", options: []), sessions: sessions))
 

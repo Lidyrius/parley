@@ -21,7 +21,7 @@ final class ControlServer: @unchecked Sendable {
     var onTurn: ((TurnPayload) -> Void)?
     var onReady: ((ReadyPayload) -> Void)?
     var onQueued: ((TurnPayload) -> Void)?   // a turn parked behind the active one
-    var onParked: (([ParkedInfo]) -> Void)?  // list of resumable (parked / idle) sessions changed
+    var onParked: (([ParkedInfo]) -> Void)?  // list of resumable (parked) sessions changed
     // The pipeline: speak + record + transcribe, then call the completion with the
     // transcribed reply. `park` keeps the session alive & resumable (see /wake). If nil,
     // /turn answers empty.
@@ -806,7 +806,7 @@ final class ControlServer: @unchecked Sendable {
             return close(c)
         case ("POST", "/resume"):
             // The mod's resume button: answer at once, then run the short voice dialog for
-            // that session through the turn queue. Only parked / idle-with-mod sessions.
+            // that session through the turn queue. Only resumable (parked) sessions.
             guard let id = Contract.decodeResume(req.body)?.id, startResume(id) else {
                 return (404, #"{"ok":false}"#)
             }

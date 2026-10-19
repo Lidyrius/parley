@@ -218,7 +218,7 @@ public sealed class Server
             }
 
             // /resume — the mod's resume button: answer at once, then run the short voice dialog
-            // for that session behind any running turn. Only parked / idle-with-mod sessions.
+            // for that session behind any running turn. Only resumable (parked) sessions.
             if (req.HttpMethod == "POST" && path == "/resume")
             {
                 if (!StartResume(ResumePayload.Decode(body)?.Id ?? ""))
@@ -721,7 +721,7 @@ public sealed class Server
         return decision;
     }
 
-    // Parked or idle-with-mod sessions, for the tray and the voice resume command.
+    // Resumable (parked) sessions, for the tray and the voice resume command.
     public List<ParkedInfo> ResumableList() => Sessions.ResumableList();
 
     private void Prune()

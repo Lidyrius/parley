@@ -244,12 +244,14 @@ public sealed class SessionRegistry
         }
     }
 
-    // Parked, or idle / with work in the background and a live mod (it submits the instruction;
-    // Claude Code takes a prompt while its background agents run). As macOS.
+    // Parked or with work in the background, and reachable: a live mod submits the instruction
+    // (Claude Code takes a prompt while its background agents run), or its hook polls /wake. As macOS.
     // A timer ("Warte X Minuten") whose hook polls /wake: Fortsetzen ends it early.
-    private static bool Resumable(Entry e) =>
-        e.State == "parked" || (e.State is "idle" or "background" && e.PresenceAt is not null)
+    private bool Resumable(Entry e) =>
+        (e.State is "parked" or "background" && (e.PresenceAt is not null || HookParked(e)))
         || (e.State == "waiting" && e.Parked && e.WaitResume is not null);
+
+    private bool HookParked(Entry e) => e.Parked && e.WakeAt is { } w && _now() - w < ParkTtl;
 
     /// Fortsetzen during Sir's timer: the wait is over now — what the session continues with
     /// (null when it isn't waiting). As macOS.
@@ -284,8 +286,8 @@ public sealed class SessionRegistry
     // a pending prompt). A hook-only session that is working has no way to take one.
     public sealed record RouteTarget(string Id, string Label, string Cwd);
 
-    private static bool Deliverable(Entry e) =>
-        e.State != "stopped" && (e.State == "parked" || e.PresenceAt is not null);
+    private bool Deliverable(Entry e) =>
+        e.State != "stopped" && (HookParked(e) || e.PresenceAt is not null);
 
     public List<RouteTarget> RouteTargets()
     {
@@ -338,7 +340,7 @@ public sealed class SessionRegistry
     public bool ParkedHookAlive(string id)
     {
         lock (_gate)
-            return _entries.TryGetValue(id, out var e) && e.Parked && e.WakeAt is { } w && _now() - w < ParkTtl;
+            return _entries.TryGetValue(id, out var e) && HookParked(e);
     }
 
     // Any session besides `id` that isn't stopped → the turn gets announced.
@@ -573,7 +575,8 @@ public sealed class SessionRegistry
     // ---- state derivation ------------------------------------------------------------
 
     // Precedence high→low: the voiced turn's phase, queued, waiting, parked, working,
-    // background, idle, stopped.
+    // background, stopped. A finished session is parked — whether its hook polls /wake, its mod
+    // waits for a prompt, or (Codex, hook ended) it just waits for Sir. As macOS.
     private string StateOf(Entry e, DateTime t)
     {
         if (e.Id == _activeId)
@@ -590,14 +593,14 @@ public sealed class SessionRegistry
             // A resume instruction waiting for / just handed to the mod counts as working.
             var landing = e.Pending is not null || (e.ExpectWorkUntil is { } x && t < x);
             if (e.PresenceState == "working" || landing) return "working";
-            return e.PresenceState == "background" ? "background" : "idle";
+            return e.PresenceState == "background" ? "background" : "parked";
         }
         // No presence (e.g. Codex): only the hook's traffic tells. A finished wait counts as
         // hook activity + injection — the hook woke up and fed the resume prompt back.
         var hook = Max(e.HookAt, e.WaitUntil);
         if (t - hook >= HookTtl) return "stopped";
         var injected = Max(e.InjectedAt ?? DateTime.MinValue, e.WaitUntil);
-        return t - injected < HookTtl ? "working" : "idle";
+        return t - injected < HookTtl ? "working" : "parked";
     }
 
     private static DateTime Max(DateTime a, DateTime? b) => b is { } v && v > a ? v : a;

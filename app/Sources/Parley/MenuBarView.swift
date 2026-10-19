@@ -31,7 +31,7 @@ struct MenuBarView: View {
 
                 if !controller.parked.isEmpty {
                     Divider()
-                    Text("Pausiert / bereit — zum Fortsetzen").font(.caption).foregroundStyle(.secondary)
+                    Text("Geparkt — zum Fortsetzen").font(.caption).foregroundStyle(.secondary)
                     ForEach(controller.parked) { p in
                         HStack {
                             Circle().fill(.purple).frame(width: 8, height: 8)

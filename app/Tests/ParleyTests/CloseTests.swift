@@ -111,7 +111,7 @@ final class CloseTests: XCTestCase {
         XCTAssertEqual(reg.info("a1")?.state, "stopped")
         clock.t += SessionRegistry.presenceTTL
         presence("a1", "Literally Apps", "/p/literally-apps.id")   // still alive: the kill did not take
-        XCTAssertEqual(reg.info("a1")?.state, "idle")
+        XCTAssertEqual(reg.info("a1")?.state, "parked")
     }
 
     // MARK: - finding the process

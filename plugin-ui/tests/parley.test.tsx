@@ -318,3 +318,14 @@ test('tiles open their desktop session with a ↗ button, never on this session 
   expect(termKeys).not.toContain('open-b') // the terminal opens nothing in the desktop app
   await term.unmount()
 })
+
+test('a finished turn parks the band — there is no "bereit"', async ($, on) => {
+  mock.clock(on)
+  on('classic.Stop', async () => ({}))
+  on('ui.render', async ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.classic.Stop({ stop_hook_active: false, last_assistant_message: '<speak-end>Fertig, Sir.</speak-end>', cwd: '/tmp/parley-demo' })
+  expect(await ui.find({ type: 'Text', text: /geparkt/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /bereit/ })).toBeUndefined()
+  await ui.unmount()
+})

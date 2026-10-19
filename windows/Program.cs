@@ -66,7 +66,7 @@ internal sealed class TrayApp : ApplicationContext
         PhoneCall.LoadSettings(Config.Load());
 
         var menu = new ContextMenuStrip();
-        // Resumable sessions (parked, or idle with the mod running) are inserted at the top on open.
+        // Resumable (parked) sessions are inserted at the top on open.
         menu.Opening += (_, _) => { RefreshParkedMenu(menu); RefreshRelayStatus(); };
         var mute = new ToolStripMenuItem("Stumm schalten") { CheckOnClick = true };
         mute.CheckedChanged += (_, _) =>
