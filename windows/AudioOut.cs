@@ -106,7 +106,11 @@ public static class AudioOut
 
     /// The "you can talk now" cue — same 880 Hz character as macOS.
     public static Task PlayBeep(double frequency = 880, double seconds = 0.18, double amplitude = 0.3)
-        => PlayPcm(Tone(frequency, seconds, amplitude));
+        => PlayPcm(Beep(frequency, seconds, amplitude));
+
+    /// The beep's PCM (at GoogleTts.SampleRate) — a guest's call line plays it itself (Shares.cs).
+    public static byte[] Beep(double frequency = 880, double seconds = 0.18, double amplitude = 0.3)
+        => Tone(frequency, seconds, amplitude);
 
     /// Soft two-tone "done" chime (ack fallback), C5 → G5 as on macOS.
     public static async Task PlayChime()

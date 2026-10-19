@@ -137,8 +137,16 @@ public static class Apns
             Log.Write("apns: no VoIP token from the phone yet");
             return false;
         }
+        return await SendVoipTo(token, env, label);
+    }
+
+    // `share`: a guest's call (v7) — his phone answers it on that share's room, not its own host's.
+    public static async Task<bool> SendVoipTo(string token, string env, string label, string? share = null)
+    {
+        if (!ValidToken(token)) return false;
         // Ring now or never: a call that arrives after the 45 s wait would ring for nothing.
-        return await Send(token, env, Topic, "voip", JsonSerializer.Serialize(new { label }), expiration: "0");
+        var json = share is null ? JsonSerializer.Serialize(new { label }) : JsonSerializer.Serialize(new { label, share });
+        return await Send(token, env, Topic, "voip", json, expiration: "0");
     }
 
     // The Parley Live Activity (docs/LIVE-ACTIVITIES.md): push-to-start, update, end. `json` is the

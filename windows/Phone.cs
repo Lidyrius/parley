@@ -95,40 +95,44 @@ public static class PhoneAudio
     public static float Level(float db) => Math.Clamp((db + 55f) / 45f, 0f, 1f);
 }
 
-// The call itself: connected or not, the phone's audio in, Parley's audio out, the `audio`
-// state frames, and the phone's Unterwegs-Modus + VoIP push token (kept in credentials.json, so
-// ringing works after a restart while the phone sleeps). Static like AudioOut / LiveStatus —
-// there is one phone call at most.
-public static class PhoneCall
+// One call line (as macOS PhoneHub): connected or not, the phone's audio in, Parley's audio out,
+// the `audio` state frames, barge-in, ringing and the ringing phone's answer. Sir's own line is
+// PhoneCall.Line; each guest of a shared session has one more on his share's room (Shares.cs) —
+// that one keeps his VoIP token in memory only and never touches Sir's settings.
+public sealed class PhoneLine
 {
-    // No phone audio for this long while "in a call" → the phone is gone (its `call end` was
-    // lost with its link): Parley uses the PC's speaker and mic until frames arrive again. The
-    // phone streams its mic all through a call, so a healthy call never gets near this.
-    public static readonly TimeSpan AudioSilentLimit = TimeSpan.FromSeconds(6);   // as macOS PhoneHub.silentCall
+    public const int PrerollFrames = 100;   // 2 s of the phone's mic (20 ms frames)
     private const int LeadFrames = 12;  // sent 240 ms ahead of real time: absorbs timer + mobile network jitter
 
-    private static readonly object Gate = new();
-    private static readonly SemaphoreSlim StateGate = new(1, 1);   // `audio` frames go out one at a time, latest wins
-    private static RelayClient? _relay;
-    private static bool _call;                 // the phone said `call start` (and not `call end` since)
-    private static DateTime _audioAt;          // last phone frame, or the call start
-    private static Action<byte[]>? _sink;      // the recorder, while it listens on the phone
-    private static int _holds;                 // turns / dialogs / acks in progress (0 = idle)
-    private static string _audio = "idle";     // speaking | listening | idle
-    private static string? _speaker;           // the session voiced now — rides on every `audio` frame
-    private static string? _sent;              // the state|speaker the phone has (null = unknown → send)
-    private static bool _away;
-    private static bool _silent;
-    private static int _downRate = PhoneAudio.SampleRate;   // the call's voice rate: 16 or 24 kHz
-    private static string _alertToken = "";
-    private static string _pushToken = "", _pushEnv = "production";
-    private static string _activityStart = "", _activityToken = "";
+    private readonly object _gate = new();
+    private readonly SemaphoreSlim _stateGate = new(1, 1);   // `audio` frames go out one at a time, latest wins
+    private readonly string _name;     // log prefix: "phone", or "share <id> call"
+    private readonly bool _meter;      // Sir's line: the output level shows in GET /status
+    private RelayClient? _relay;
+    private bool _call;                 // the phone said `call start` (and not `call end` since)
+    private DateTime _audioAt;          // last phone frame, or the call start
+    private Action<byte[]>? _sink;      // the recorder, while it listens on the phone
+    private int _holds;                 // turns / dialogs / acks in progress (0 = idle)
+    private string _audio = "idle";     // speaking | listening | idle
+    private string? _speaker;           // the session voiced now — rides on every `audio` frame
+    private string? _sent;              // the state|speaker the phone has (null = unknown → send)
+    private int _downRate = PhoneAudio.SampleRate;   // the call's voice rate: 16 or 24 kHz
+    private DateTime? _lastCallEnd;
+    private readonly Queue<byte[]> _recent = new();
+    private bool _barge;
+    private (bool Set, double? After) _later;   // the ringing phone's "not now"
+    private bool _declined;                     // `call end` with no call: the ring was declined
+    private string _pushToken = "", _pushEnv = "production";   // a guest's VoIP token (in memory)
 
-    // ---- relay seam ------------------------------------------------------------------
-
-    public static void Attach(RelayClient? relay)
+    public PhoneLine(string name = "phone", bool meter = false)
     {
-        lock (Gate)
+        _name = name;
+        _meter = meter;
+    }
+
+    public void Attach(RelayClient? relay)
+    {
+        lock (_gate)
         {
             _relay = relay;
             _sent = null;
@@ -136,13 +140,416 @@ public static class PhoneCall
     }
 
     // In a call right now: the phone says so, the relay is up, and its audio is flowing.
-    public static bool Active
+    public bool Active
     {
-        get { lock (Gate) return ActiveLocked(DateTime.UtcNow); }
+        get { lock (_gate) return ActiveLocked(DateTime.UtcNow); }
     }
 
-    private static bool ActiveLocked(DateTime now) =>
-        _call && _relay?.Connected == true && now - _audioAt < AudioSilentLimit;
+    private bool ActiveLocked(DateTime now) =>
+        _call && _relay?.Connected == true && now - _audioAt < PhoneCall.AudioSilentLimit;
+
+    // When the last call ended (a Fragerunde gathers for a few minutes after it).
+    public DateTime? LastCallEnd
+    {
+        get { lock (_gate) return _lastCallEnd; }
+    }
+
+    public int DownRate
+    {
+        get { lock (_gate) return _downRate; }
+    }
+
+    // A text frame to the phone (v3 answers: history, image), whether or not a call is up.
+    public async Task Reply(string frame)
+    {
+        RelayClient? relay;
+        lock (_gate) relay = _relay;
+        if (relay is not null) await relay.SendTextAsync(frame);
+    }
+
+    // A frame of the call (as macOS PhoneHub.handle): `call`, `push`, `later`, `barge`.
+    public void Handle(PhoneMessage message)
+    {
+        switch (message)
+        {
+            case PhoneCallState c: OnCall(c.Started, c.Down); break;
+            case PhonePush p: SetPush(p.Token, p.Env); break;
+            case PhoneLater l: SetLater(l.After); break;
+            case PhoneBarge: OnBarge(); break;
+        }
+    }
+
+    // `call` start / end from the phone; true = the call state changed.
+    // The phone repeats its call state on every (re)connect, so only a change is logged.
+    public bool OnCall(bool started, int down = PhoneAudio.SampleRate)
+    {
+        bool changed;
+        lock (_gate)
+        {
+            changed = _call != started;
+            if (!started && !_call) _declined = true;
+            if (changed) { _barge = false; _recent.Clear(); }
+            if (!started && _call) _lastCallEnd = DateTime.UtcNow;
+            _call = started;
+            if (started) _downRate = down;
+            _audioAt = DateTime.UtcNow;   // grace until its first frame arrives
+            _sent = null;                 // a (re)joined call learns the current state
+        }
+        if (changed) Log.Write(started ? $"{_name}: call started (voice at {down / 1000} kHz)" : $"{_name}: call ended");
+        if (started) _ = PushState();
+        return changed;
+    }
+
+    // A binary frame from the phone: its microphone.
+    public void OnAudio(byte[] frame)
+    {
+        Action<byte[]>? sink;
+        lock (_gate)
+        {
+            _audioAt = DateTime.UtcNow;
+            sink = _sink;
+            _recent.Enqueue(frame);
+            while (_recent.Count > PrerollFrames) _recent.Dequeue();
+        }
+        sink?.Invoke(frame);
+    }
+
+    // ---- barge-in (as macOS): the caller talks over Parley ------------------------------
+
+    // The phone heard him talk over Parley: the line stops; the listener starts with RecentMic().
+    public void OnBarge()
+    {
+        lock (_gate)
+        {
+            if (!_call) return;
+            _barge = true;
+        }
+        Log.Write($"{_name}: interrupted — stopping the line");
+    }
+
+    public bool Barged
+    {
+        get { lock (_gate) return _barge; }
+    }
+
+    public bool TakeBarge()
+    {
+        lock (_gate)
+        {
+            var b = _barge;
+            _barge = false;
+            return b;
+        }
+    }
+
+    // The last 2 s of the phone's mic — what was said before the host listened.
+    public byte[][] RecentMic()
+    {
+        lock (_gate) return _recent.ToArray();
+    }
+
+    // The relay (re)connected: the phone gets the current state again.
+    public void Resync()
+    {
+        lock (_gate) _sent = null;
+        _ = PushState();
+    }
+
+    // ---- what the host is doing with the call audio (`audio` frames) -----------------
+
+    // Held by everything that voices or listens (turns, dialogs, the ack after a reply) from
+    // the moment it queues until it is done: the phone only listens for "Hey Parley" while
+    // nothing holds. The last release reports `idle`.
+    public IDisposable Hold()
+    {
+        lock (_gate)
+        {
+            if (_holds++ == 0) _audio = "speaking";
+        }
+        _ = PushState();
+        return new Release(ReleaseHold);
+    }
+
+    // A hold only when the call is connected and nothing else holds — atomically, so two
+    // `wake` frames can't both start a greeting.
+    public IDisposable? HoldIfIdle()
+    {
+        lock (_gate)
+        {
+            if (_holds != 0 || !ActiveLocked(DateTime.UtcNow)) return null;
+            _holds++;
+            _audio = "speaking";
+        }
+        _ = PushState();
+        return new Release(ReleaseHold);
+    }
+
+    private void ReleaseHold()
+    {
+        lock (_gate)
+        {
+            if (--_holds > 0) return;
+            _holds = 0;
+            _audio = "idle";
+        }
+        _ = PushState();
+    }
+
+    public void SetAudio(string state)
+    {
+        lock (_gate)
+        {
+            if (_audio == state) return;
+            _audio = state;
+        }
+        _ = PushState();
+    }
+
+    // The session whose turn is voiced now: the phone's call screen (and CallKit) names it.
+    public void SetSpeaker(string label)
+    {
+        lock (_gate)
+        {
+            if (_speaker == label) return;
+            _speaker = label;
+        }
+        _ = PushState();
+    }
+
+    // Sends the CURRENT state if the phone doesn't have it yet. One sender at a time and the
+    // state is read after the gate, so quick changes can't arrive out of order.
+    private async Task PushState()
+    {
+        await _stateGate.WaitAsync();
+        try
+        {
+            string state, key;
+            string? speaker;
+            RelayClient? relay;
+            lock (_gate)
+            {
+                key = $"{_audio}|{_speaker}";
+                if (!_call || _relay is null || key == _sent) return;
+                state = _audio;
+                speaker = _speaker;
+                relay = _relay;
+            }
+            var ok = await relay.SendTextAsync(RelayFrame.Audio(state, speaker));
+            lock (_gate) _sent = ok ? key : null;
+        }
+        catch (Exception e) { Log.Write($"{_name}: state frame failed: {e.Message}"); }
+        finally { _stateGate.Release(); }
+    }
+
+    // ---- audio out / in --------------------------------------------------------------
+
+    // Parley's voice to the phone, in real time (a few frames ahead), so "done" means the
+    // phone has played it and beep → record keeps the speaker's timing. Returns what is left
+    // (PCM at `sampleRate`) when the call drops midway — the caller plays it on the PC's speaker
+    // — or null once everything went out (or the playback was cancelled).
+    public async Task<byte[]?> PlayAsync(byte[] pcm, int sampleRate, CancellationToken ct = default)
+    {
+        var frames = PhoneAudio.FramesFor(pcm, sampleRate, DownRate);
+        RelayClient? relay;
+        lock (_gate) relay = _relay;
+        if (relay is null) return pcm;
+        using var hold = Hold();
+        SetAudio("speaking");
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            for (var i = 0; i < frames.Count; i++)
+            {
+                if (!Active) return PhoneAudio.Rest(pcm, sampleRate, Math.Max(0, i - LeadFrames));
+                if (Barged) return null;   // barge-in: stop at once, nothing of it on the PC's speaker
+                var due = TimeSpan.FromMilliseconds((i - LeadFrames) * PhoneAudio.FrameMs) - clock.Elapsed;
+                if (due > TimeSpan.Zero) await Task.Delay(due, ct);
+                await relay.SendAudioAsync(frames[i]);
+                // Output level for GET /status, as the speaker path meters it (Sir's line only).
+                if (_meter) LiveStatus.Push(PhoneAudio.Level(Vad.Db(PhoneAudio.Rms(PhoneAudio.ToSamples(frames[i])))));
+            }
+            var tail = TimeSpan.FromMilliseconds(frames.Count * PhoneAudio.FrameMs) - clock.Elapsed;
+            if (tail > TimeSpan.Zero) await Task.Delay(tail, ct);
+        }
+        catch (OperationCanceledException) { }
+        return null;
+    }
+
+    // Route the phone's microphone frames to `sink` until the returned handle is disposed.
+    public IDisposable Listen(Action<byte[]> sink)
+    {
+        lock (_gate) _sink = sink;
+        return new Release(() =>
+        {
+            lock (_gate)
+            {
+                if (_sink == sink) _sink = null;
+            }
+        });
+    }
+
+    // ---- ringing ---------------------------------------------------------------------
+
+    // The `ring` frame next to the VoIP push: a phone that is open in the foreground shows
+    // its own incoming call from it. true = handed to the relay.
+    public async Task<bool> SendRing(string label)
+    {
+        RelayClient? relay;
+        lock (_gate) relay = _relay;
+        return relay is not null && relay.Connected && await relay.SendTextAsync(RelayFrame.Ring(label));
+    }
+
+    /// A declined ring, once (the phone may still send a "not now" from its notification).
+    public bool TakeDeclined()
+    {
+        lock (_gate)
+        {
+            var d = _declined;
+            _declined = false;
+            return d;
+        }
+    }
+
+    // The ringing phone's "not now": ring again in n s, or (null) he calls back himself.
+    public void SetLater(double? after)
+    {
+        lock (_gate) _later = (true, after);
+        Log.Write(after is double s ? $"{_name}: not now — ring again in {(int)s} s" : $"{_name}: not now — calls back");
+    }
+
+    /// Takes the "not now", once.
+    public bool TakeLater(out double? after)
+    {
+        lock (_gate)
+        {
+            (var set, after) = _later;
+            _later = (false, null);
+            return set;
+        }
+    }
+
+    // Polls for the call (every 200 ms) until it is connected or `limit` has passed.
+    public async Task<bool> WaitForCall(TimeSpan limit)
+    {
+        var until = DateTime.UtcNow + limit;
+        while (DateTime.UtcNow < until)
+        {
+            if (Active) return true;
+            await Task.Delay(200);
+        }
+        return Active;
+    }
+
+    // A guest's VoIP token and APNs environment, in memory only — Sir's own is kept with his
+    // settings (PhoneCall.SetPush). "" = none yet.
+    public (string Token, string Env) PushTarget
+    {
+        get { lock (_gate) return (_pushToken, _pushEnv); }
+    }
+
+    public void SetPush(string token, string env)
+    {
+        token = token.Trim();
+        if (!Apns.ValidToken(token))
+        {
+            Log.Write($"{_name}: ignored a malformed VoIP push token");
+            return;
+        }
+        env = env == "development" ? "development" : "production";
+        lock (_gate)
+        {
+            if (_pushToken == token && _pushEnv == env) return;
+            _pushToken = token;
+            _pushEnv = env;
+        }
+        Log.Write($"{_name}: VoIP push token stored ({env})");
+    }
+
+    private sealed class Release : IDisposable
+    {
+        private Action? _action;
+        public Release(Action action) => _action = action;
+        public void Dispose() => Interlocked.Exchange(ref _action, null)?.Invoke();
+    }
+}
+
+// Sir's call: his line (PhoneLine above), plus the phone's Unterwegs-Modus, Stumm, notification
+// and Live Activity tokens, and its VoIP push token (kept in credentials.json, so ringing works
+// after a restart while the phone sleeps). Static like AudioOut / LiveStatus — Sir has one phone
+// call at most.
+public static class PhoneCall
+{
+    // No phone audio for this long while "in a call" → the phone is gone (its `call end` was
+    // lost with its link): Parley uses the PC's speaker and mic until frames arrive again. The
+    // phone streams its mic all through a call, so a healthy call never gets near this.
+    public static readonly TimeSpan AudioSilentLimit = TimeSpan.FromSeconds(6);   // as macOS PhoneHub.silentCall
+
+    public static readonly PhoneLine Line = new("phone", meter: true);
+
+    private static readonly object Gate = new();
+    private static bool _away;
+    private static bool _silent;
+    private static string _alertToken = "";
+    private static string _pushToken = "", _pushEnv = "production";
+    private static string _activityStart = "", _activityToken = "";
+
+    // ---- Sir's line ------------------------------------------------------------------
+
+    public static void Attach(RelayClient? relay) => Line.Attach(relay);
+
+    public static bool Active => Line.Active;
+
+    public static DateTime? LastCallEnd => Line.LastCallEnd;
+
+    public static int DownRate => Line.DownRate;
+
+    public static Task Reply(string frame) => Line.Reply(frame);
+
+    // `call` start / end from the phone.
+    public static void OnCall(bool started, int down = PhoneAudio.SampleRate)
+    {
+        if (Line.OnCall(started, down) && started) Clips.PrerenderGreet(Config.Load());   // the first "Hey Parley" answers at once
+    }
+
+    public static void OnAudio(byte[] frame) => Line.OnAudio(frame);
+
+    public const int PrerollFrames = PhoneLine.PrerollFrames;
+
+    // Barge-in (as macOS): Sir talks over Parley.
+    public static void OnBarge() => Line.OnBarge();
+
+    public static bool Barged => Line.Barged;
+
+    public static bool TakeBarge() => Line.TakeBarge();
+
+    public static byte[][] RecentMic() => Line.RecentMic();
+
+    public static void Resync() => Line.Resync();
+
+    public static IDisposable Hold() => Line.Hold();
+
+    public static IDisposable? HoldIfIdle() => Line.HoldIfIdle();
+
+    public static void SetAudio(string state) => Line.SetAudio(state);
+
+    public static void SetSpeaker(string label) => Line.SetSpeaker(label);
+
+    public static Task<byte[]?> PlayAsync(byte[] pcm, int sampleRate, CancellationToken ct = default) =>
+        Line.PlayAsync(pcm, sampleRate, ct);
+
+    public static IDisposable Listen(Action<byte[]> sink) => Line.Listen(sink);
+
+    public static Task<bool> SendRing(string label) => Line.SendRing(label);
+
+    public static bool TakeDeclined() => Line.TakeDeclined();
+
+    public static void SetLater(double? after) => Line.SetLater(after);
+
+    public static bool TakeLater(out double? after) => Line.TakeLater(out after);
+
+    public static Task<bool> WaitForCall(TimeSpan limit) => Line.WaitForCall(limit);
+
+    // ---- Unterwegs, Stumm, tokens ----------------------------------------------------
 
     // Unterwegs: chosen on the phone, or the PC locked for a minute (with that setting on).
     public static bool Away
@@ -151,13 +558,6 @@ public static class PhoneCall
     }
 
     private static bool _lockedAway;
-    private static DateTime? _lastCallEnd;
-
-    // When the last call ended (a Fragerunde gathers for a few minutes after it).
-    public static DateTime? LastCallEnd
-    {
-        get { lock (Gate) return _lastCallEnd; }
-    }
 
     public static void SetLockedAway(bool on)
     {
@@ -169,11 +569,6 @@ public static class PhoneCall
         Log.Write(on ? "PC gesperrt → Unterwegs" : "PC entsperrt → zurück am PC");
     }
 
-    public static int DownRate
-    {
-        get { lock (Gate) return _downRate; }
-    }
-
     public static bool Silent
     {
         get { lock (Gate) return _silent; }
@@ -183,14 +578,6 @@ public static class PhoneCall
     public static (string Token, string Env) Alert
     {
         get { lock (Gate) return (_alertToken, _pushEnv); }
-    }
-
-    // A text frame to the phone (v3 answers: history, image), whether or not a call is up.
-    public static async Task Reply(string frame)
-    {
-        RelayClient? relay;
-        lock (Gate) relay = _relay;
-        if (relay is not null) await relay.SendTextAsync(frame);
     }
 
     public static (string Token, string Env) Push
@@ -207,275 +594,6 @@ public static class PhoneCall
     public static (string Token, string Env) Activity
     {
         get { lock (Gate) return (_activityToken, _pushEnv); }
-    }
-
-    // `call` start / end from the phone.
-    // The phone repeats its call state on every (re)connect, so only a change is logged.
-    public static void OnCall(bool started, int down = PhoneAudio.SampleRate)
-    {
-        bool changed;
-        lock (Gate)
-        {
-            changed = _call != started;
-            if (!started && !_call) _declined = true;
-            if (changed) { _barge = false; _recent.Clear(); }
-            if (!started && _call) _lastCallEnd = DateTime.UtcNow;
-            _call = started;
-            if (started) _downRate = down;
-            _audioAt = DateTime.UtcNow;   // grace until its first frame arrives
-            _sent = null;                 // a (re)joined call learns the current state
-        }
-        if (changed) Log.Write(started ? $"phone: call started (voice at {down / 1000} kHz)" : "phone: call ended");
-        if (!started) return;
-        if (changed) Clips.PrerenderGreet(Config.Load());   // the first "Hey Parley" answers at once
-        _ = PushState();
-    }
-
-    // A binary frame from the phone: its microphone.
-    public static void OnAudio(byte[] frame)
-    {
-        Action<byte[]>? sink;
-        lock (Gate)
-        {
-            _audioAt = DateTime.UtcNow;
-            sink = _sink;
-            _recent.Enqueue(frame);
-            while (_recent.Count > PrerollFrames) _recent.Dequeue();
-        }
-        sink?.Invoke(frame);
-    }
-
-    // ---- barge-in (as macOS): Sir talks over Parley -----------------------------------
-
-    public const int PrerollFrames = 100;   // 2 s of the phone's mic (20 ms frames)
-    private static readonly Queue<byte[]> _recent = new();
-    private static bool _barge;
-
-    // The phone heard Sir talk over Parley: the line stops; the listener starts with RecentMic().
-    public static void OnBarge()
-    {
-        lock (Gate)
-        {
-            if (!_call) return;
-            _barge = true;
-        }
-        Log.Write("phone: Sir interrupts — stopping the line");
-    }
-
-    public static bool Barged
-    {
-        get { lock (Gate) return _barge; }
-    }
-
-    public static bool TakeBarge()
-    {
-        lock (Gate)
-        {
-            var b = _barge;
-            _barge = false;
-            return b;
-        }
-    }
-
-    // The last 2 s of the phone's mic — what Sir said before the PC listened.
-    public static byte[][] RecentMic()
-    {
-        lock (Gate) return _recent.ToArray();
-    }
-
-    // The relay (re)connected: the phone gets the current state again.
-    public static void Resync()
-    {
-        lock (Gate) _sent = null;
-        _ = PushState();
-    }
-
-    // ---- what the host is doing with the call audio (`audio` frames) -----------------
-
-    // Held by everything that voices or listens (turns, dialogs, the ack after a reply) from
-    // the moment it queues until it is done: the phone only listens for "Hey Parley" while
-    // nothing holds. The last release reports `idle`.
-    public static IDisposable Hold()
-    {
-        lock (Gate)
-        {
-            if (_holds++ == 0) _audio = "speaking";
-        }
-        _ = PushState();
-        return new Release(ReleaseHold);
-    }
-
-    // A hold only when the call is connected and nothing else holds — atomically, so two
-    // `wake` frames can't both start a greeting.
-    public static IDisposable? HoldIfIdle()
-    {
-        lock (Gate)
-        {
-            if (_holds != 0 || !ActiveLocked(DateTime.UtcNow)) return null;
-            _holds++;
-            _audio = "speaking";
-        }
-        _ = PushState();
-        return new Release(ReleaseHold);
-    }
-
-    private static void ReleaseHold()
-    {
-        lock (Gate)
-        {
-            if (--_holds > 0) return;
-            _holds = 0;
-            _audio = "idle";
-        }
-        _ = PushState();
-    }
-
-    public static void SetAudio(string state)
-    {
-        lock (Gate)
-        {
-            if (_audio == state) return;
-            _audio = state;
-        }
-        _ = PushState();
-    }
-
-    // The session whose turn is voiced now: the phone's call screen (and CallKit) names it.
-    public static void SetSpeaker(string label)
-    {
-        lock (Gate)
-        {
-            if (_speaker == label) return;
-            _speaker = label;
-        }
-        _ = PushState();
-    }
-
-    // Sends the CURRENT state if the phone doesn't have it yet. One sender at a time and the
-    // state is read after the gate, so quick changes can't arrive out of order.
-    private static async Task PushState()
-    {
-        await StateGate.WaitAsync();
-        try
-        {
-            string state, key;
-            string? speaker;
-            RelayClient? relay;
-            lock (Gate)
-            {
-                key = $"{_audio}|{_speaker}";
-                if (!_call || _relay is null || key == _sent) return;
-                state = _audio;
-                speaker = _speaker;
-                relay = _relay;
-            }
-            var ok = await relay.SendTextAsync(RelayFrame.Audio(state, speaker));
-            lock (Gate) _sent = ok ? key : null;
-        }
-        catch (Exception e) { Log.Write($"phone: state frame failed: {e.Message}"); }
-        finally { StateGate.Release(); }
-    }
-
-    // ---- audio out / in --------------------------------------------------------------
-
-    // Parley's voice to the phone, in real time (a few frames ahead), so "done" means the
-    // phone has played it and beep → record keeps the speaker's timing. Returns what is left
-    // (PCM at `sampleRate`) when the call drops midway — the caller plays it on the PC's speaker
-    // — or null once everything went out (or the playback was cancelled).
-    public static async Task<byte[]?> PlayAsync(byte[] pcm, int sampleRate, CancellationToken ct = default)
-    {
-        var frames = PhoneAudio.FramesFor(pcm, sampleRate, DownRate);
-        RelayClient? relay;
-        lock (Gate) relay = _relay;
-        if (relay is null) return pcm;
-        using var hold = Hold();
-        SetAudio("speaking");
-        var clock = Stopwatch.StartNew();
-        try
-        {
-            for (var i = 0; i < frames.Count; i++)
-            {
-                if (!Active) return PhoneAudio.Rest(pcm, sampleRate, Math.Max(0, i - LeadFrames));
-                if (Barged) return null;   // barge-in: stop at once, nothing of it on the PC's speaker
-                var due = TimeSpan.FromMilliseconds((i - LeadFrames) * PhoneAudio.FrameMs) - clock.Elapsed;
-                if (due > TimeSpan.Zero) await Task.Delay(due, ct);
-                await relay.SendAudioAsync(frames[i]);
-                // Output level for GET /status, as the speaker path meters it.
-                LiveStatus.Push(PhoneAudio.Level(Vad.Db(PhoneAudio.Rms(PhoneAudio.ToSamples(frames[i])))));
-            }
-            var tail = TimeSpan.FromMilliseconds(frames.Count * PhoneAudio.FrameMs) - clock.Elapsed;
-            if (tail > TimeSpan.Zero) await Task.Delay(tail, ct);
-        }
-        catch (OperationCanceledException) { }
-        return null;
-    }
-
-    // Route the phone's microphone frames to `sink` until the returned handle is disposed.
-    public static IDisposable Listen(Action<byte[]> sink)
-    {
-        lock (Gate) _sink = sink;
-        return new Release(() =>
-        {
-            lock (Gate)
-            {
-                if (_sink == sink) _sink = null;
-            }
-        });
-    }
-
-    // ---- ringing (Unterwegs-Modus) ---------------------------------------------------
-
-    // The `ring` frame next to the VoIP push: a phone that is open in the foreground shows
-    // its own incoming call from it. true = handed to the relay.
-    public static async Task<bool> SendRing(string label)
-    {
-        RelayClient? relay;
-        lock (Gate) relay = _relay;
-        return relay is not null && relay.Connected && await relay.SendTextAsync(RelayFrame.Ring(label));
-    }
-
-    // The ringing phone's "not now": ring again in n s, or (null) Sir calls back himself.
-    private static (bool Set, double? After) _later;
-    private static bool _declined;   // `call end` with no call: the ring was declined
-
-    /// A declined ring, once (the phone may still send a "not now" from its notification).
-    public static bool TakeDeclined()
-    {
-        lock (Gate)
-        {
-            var d = _declined;
-            _declined = false;
-            return d;
-        }
-    }
-
-    public static void SetLater(double? after)
-    {
-        lock (Gate) _later = (true, after);
-        Log.Write(after is double s ? $"phone: not now — ring again in {(int)s} s" : "phone: not now — Sir calls back");
-    }
-
-    /// Takes the "not now", once.
-    public static bool TakeLater(out double? after)
-    {
-        lock (Gate)
-        {
-            (var set, after) = _later;
-            _later = (false, null);
-            return set;
-        }
-    }
-
-    // Polls for the call (every 200 ms) until it is connected or `limit` has passed.
-    public static async Task<bool> WaitForCall(TimeSpan limit)
-    {
-        var until = DateTime.UtcNow + limit;
-        while (DateTime.UtcNow < until)
-        {
-            if (Active) return true;
-            await Task.Delay(200);
-        }
-        return Active;
     }
 
     // ---- the phone's settings --------------------------------------------------------
@@ -583,13 +701,6 @@ public static class PhoneCall
         }
         Config.Merge(new Dictionary<string, string> { ["phonePushToken"] = token, ["phonePushEnv"] = env });
         Log.Write($"phone: VoIP push token stored ({env})");
-    }
-
-    private sealed class Release : IDisposable
-    {
-        private Action? _action;
-        public Release(Action action) => _action = action;
-        public void Dispose() => Interlocked.Exchange(ref _action, null)?.Invoke();
     }
 }
 

@@ -313,8 +313,14 @@ public sealed class ShareHub
     private readonly Dictionary<string, RelayClient> _clients = new();
     private readonly Dictionary<string, List<DateTime>> _said = new();
     private readonly Dictionary<string, Ask> _asks = new();   // R2–R5: questions waiting for a guest's answer
+    // Part 3: each guest's own call line (his phone's call frames and audio on his room), and the
+    // questions a call is under way for — their time doesn't run out mid-call.
+    private readonly Dictionary<string, PhoneLine> _lines = new();
+    private readonly HashSet<string> _calling = new();
 
     public Action<string>? ToSir;                          // a frame to Sir's phone
+    // A question on the guest's line: ring, ask in Parley's voice, his spoken answer (null = not picked up).
+    public Func<PhoneLine, TurnPayload, Share, Task<string?>>? CallGuest;
     public Action<string, string>? Notify;                 // a notification on the PC (title, body)
     public Action<string, string, string, string, string>? Push;   // a guest's notification: token, env, title, body, session
     public string HostName = Environment.UserName;
@@ -426,9 +432,13 @@ public sealed class ShareHub
             if (i < 0) return;
             s = _shares[i];
             foreach (var qid in _asks.Where(p => p.Value.Share == id).Select(p => p.Key).ToList())
+            {
+                _calling.Remove(qid);
                 End(qid, why: $"{s.Guest?.Name ?? "Der Gast"} ist nicht mehr dabei");
+            }
             _shares.RemoveAt(i);
             _said.Remove(id);
+            if (_lines.Remove(id, out var line)) line.Attach(null);
             if (_clients.Remove(id, out var c))
             {
                 _ = Task.Run(async () =>
@@ -460,16 +470,53 @@ public sealed class ShareHub
             var timer = new CancellationTokenSource();
             _asks[qid] = new Ask(id, turn, done, timer);
             var name = g.Name;
-            _ = Task.Delay(AskTimeout, timer.Token).ContinueWith(t =>
-            {
-                if (t.IsCanceled) return;
-                lock (_gate) End(qid, why: $"{name} hat nicht geantwortet");
-            }, TaskScheduler.Default);
+            Arm(qid, AskTimeout, $"{name} hat nicht geantwortet", timer);
             _ = client.SendTextAsync(Shares.AskFrame(qid, s, turn));
             if (g.Push is { } token) Push?.Invoke(token, g.Env ?? "production", $"Rückfrage · {s.Label}", turn.Speak, s.Session);
             Log.Write($"share: question for {g.Name} in {s.Label}");
+            // And a real call on his line: Parley's voice asks, his spoken answer comes back.
+            if (_lines.TryGetValue(id, out var line) && CallGuest is { } call)
+            {
+                _calling.Add(qid);
+                var share = s.Clone();
+                _ = Task.Run(async () =>
+                {
+                    string? text = null;
+                    try { text = await call(line, turn, share); }
+                    catch (Exception e) { Log.Write($"share: the call to {name} failed: {e.Message}"); }
+                    lock (_gate)
+                    {
+                        _calling.Remove(qid);
+                        if (!string.IsNullOrWhiteSpace(text)) End(qid, answer: text.Trim());
+                        // else: no answer on the phone — the Rückfrage stays open until its time is up
+                    }
+                });
+            }
             return done.Task;
         }
+    }
+
+    // The question's clock.
+    private void Arm(string qid, TimeSpan after, string why, CancellationTokenSource timer) =>
+        _ = Task.Delay(after, timer.Token).ContinueWith(t =>
+        {
+            if (t.IsCanceled) return;
+            lock (_gate) TimeUp(qid, why);
+        }, TaskScheduler.Default);
+
+    // Time is up — unless he is on the phone answering it right now: then again in 15 s.
+    // Caller holds the gate.
+    private void TimeUp(string qid, string why)
+    {
+        if (!_asks.TryGetValue(qid, out var a)) return;
+        if (_calling.Contains(qid))
+        {
+            var again = new CancellationTokenSource();
+            _asks[qid] = a with { Timer = again };
+            Arm(qid, TimeSpan.FromSeconds(15), why, again);
+            return;
+        }
+        End(qid, why: why);
     }
 
     // Answered, passed on or timed out: the question ends at the guest; unanswered, Sir gets it.
@@ -585,6 +632,10 @@ public sealed class ShareHub
                     foreach (var (qid, q) in _asks.Where(p => p.Value.Share == id))
                         _ = client.SendTextAsync(Shares.AskFrame(qid, s, q.Turn));
                     break;
+                case PhoneCallState or PhonePush or PhoneLater or PhoneBarge when active:
+                    // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley.
+                    if (_lines.TryGetValue(id, out var line)) after = () => line.Handle(message);
+                    break;
                 case PhoneAlert al when active && s.Guest is not null:
                     var token = al.Token.ToLowerInvariant();
                     if (!Apns.ValidToken(token)) { Log.Write("share: ignored a malformed notification token"); return; }
@@ -593,7 +644,7 @@ public sealed class ShareHub
                     Store();
                     break;
                 default:
-                    return;   // anything else (calls, resume, Sir's own controls) isn't a guest's
+                    return;   // anything else (wake, resume, Sir's own controls) isn't a guest's
             }
         }
         after?.Invoke();
@@ -617,6 +668,13 @@ public sealed class ShareHub
         if (_clients.Remove(s.Id, out var running)) running.Stop();
         if (_connect(s, this) is not { } c) return;
         _clients[s.Id] = c;
+        if (s.State == "active")   // his own call line on his room (never on the invite's)
+        {
+            var line = _lines.GetValueOrDefault(s.Id) ?? new PhoneLine($"share {s.Id} call");
+            line.Attach(c);
+            c.OnConnected = line.Resync;
+            _lines[s.Id] = line;
+        }
         c.Start();
     }
 
@@ -624,8 +682,18 @@ public sealed class ShareHub
     {
         var id = s.Id;
         RelayClient? me = null;   // set before Start: the callbacks know which room they came on
-        me = RelayClient.Create(s.Config, () => hub.SessionsFor(id, me), m => hub.Guest(id, m, me), audio: null, name: $"share {id}");
+        me = RelayClient.Create(s.Config, () => hub.SessionsFor(id, me), m => hub.Guest(id, m, me),
+                                audio: frame => hub.AudioIn(id, frame, me), name: $"share {id}");
         return me;
+    }
+
+    // A binary frame on a share's room: his phone's mic, for his call line (current room only).
+    private void AudioIn(string id, byte[] frame, RelayClient? from)
+    {
+        PhoneLine? line;
+        lock (_gate)
+            line = _clients.TryGetValue(id, out var current) && current == from ? _lines.GetValueOrDefault(id) : null;
+        line?.OnAudio(frame);
     }
 
     private void Prune()

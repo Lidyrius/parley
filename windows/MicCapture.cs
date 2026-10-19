@@ -24,7 +24,7 @@ public sealed class MicCapture
     {
         if (PhoneCall.Active)
         {
-            var phone = await RecordFromPhone(preroll ?? Array.Empty<byte[]>());
+            var phone = await RecordFromPhone(PhoneCall.Line, preroll ?? Array.Empty<byte[]>());
             if (phone is not null) return phone;
             Log.Write("mic: call ended before any speech → local mic");
         }
@@ -115,16 +115,16 @@ public sealed class MicCapture
     // The phone's microphone (docs/IPHONE.md, v2): its 16 kHz frames from the relay through the
     // same VAD, grace and limits as the local mic. null = the call ended before anything was
     // said → the caller listens on the local mic instead; once speech started, what was heard
-    // is used.
-    private async Task<byte[]?> RecordFromPhone(IReadOnlyList<byte[]> preroll)
+    // is used. `line`: Sir's call, or a guest's (Shares.cs — his spoken answer).
+    public async Task<byte[]?> RecordFromPhone(PhoneLine line, IReadOnlyList<byte[]> preroll)
     {
         var vad = new Vad();
         var samples = new List<short>(16000 * 30);
         var gate = new object();
         double totalDuration = 0;
         var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var hold = PhoneCall.Hold();
-        PhoneCall.SetAudio("listening");
+        using var hold = line.Hold();
+        line.SetAudio("listening");
         Log.Write("mic: listening on the phone");
         void Feed(byte[] frame)
         {
@@ -147,13 +147,13 @@ public sealed class MicCapture
             }
         }
         foreach (var frame in preroll) Feed(frame);
-        using (PhoneCall.Listen(Feed))
+        using (line.Listen(Feed))
         {
             // Wall clock for the cap and the call: frames may simply stop coming.
             var start = DateTime.UtcNow;
             while (!done.Task.IsCompleted)
             {
-                if (!PhoneCall.Active) done.TrySetResult("call-ended");
+                if (!line.Active) done.TrySetResult("call-ended");
                 else if ((DateTime.UtcNow - start).TotalSeconds >= MaxListenSeconds) done.TrySetResult("max-cap");
                 else await Task.WhenAny(done.Task, Task.Delay(200));
             }

@@ -73,6 +73,7 @@ internal sealed class TrayApp : ApplicationContext
             ToSir = frame => _ = PhoneCall.Reply(frame),
             Notify = Notifier.Notify,
             Push = (token, env, title, body, session) => _ = Apns.SendAlertTo(token, env, title, body, session),
+            CallGuest = (line, turn, share) => CallGuest(line, turn, share),
         };
         _server.AskGuest = (id, turn) => _shares.AskGuest(id, turn);
 
@@ -210,6 +211,57 @@ internal sealed class TrayApp : ApplicationContext
     {
         await Task.Delay(1200);
         if (PhoneCall.Active && !_server.ResumedRecently()) _server.StartWake();
+    }
+
+    // v7 part 3: a guest's question on his own call line (Shares.cs) — ring his phone (his
+    // room's `ring` + a VoIP push naming the share), ask in Parley's voice, listen, transcribe.
+    // Runs beside Sir's own line; null = he didn't pick up (his Rückfrage screen stays open). As macOS.
+    private static async Task<string?> CallGuest(PhoneLine line, TurnPayload turn, Share share)
+    {
+        var name = share.Guest?.Name ?? "Gast";
+        var label = $"Rückfrage · {share.Label}";
+        line.TakeLater(out _);
+        line.TakeDeclined();
+        // Held to the end: the line going idle is what hangs his phone up.
+        using var hold = line.Hold();
+        if (!line.Active)
+        {
+            _ = line.SendRing(label);
+            var (token, env) = line.PushTarget;
+            if (token.Length > 0) _ = Apns.SendVoipTo(token, env, label, share.Id);
+            Log.Write($"share: ringing {name} for {share.Label}");
+            var until = DateTime.UtcNow + Ringer.AnswerWait;
+            while (!line.Active)
+            {
+                if (line.TakeLater(out _)) { Log.Write($"share: {name} can't talk now"); return null; }
+                if (line.TakeDeclined() || DateTime.UtcNow >= until) { Log.Write($"share: {name} didn't pick up"); return null; }
+                await Task.Delay(100);
+            }
+        }
+        var config = Config.Load();
+        line.SetSpeaker(share.Label);
+        if (await GoogleTts.Synthesize(turn.Speak, config) is { } pcm)
+            await line.PlayAsync(AudioOut.ApplyRate(pcm, config.SpeakingRate), GoogleTts.SampleRate);
+        // He talked over the question: listen at once, with what he already said (as Sir's turns).
+        var barged = line.TakeBarge();
+        if (!barged)
+        {
+            await line.PlayAsync(AudioOut.Beep(), GoogleTts.SampleRate);
+            await Task.Delay(100);
+        }
+        if (!line.Active) return null;
+        var wav = await new MicCapture().RecordFromPhone(line, barged ? line.RecentMic() : Array.Empty<byte[]>()) ?? Array.Empty<byte>();
+        var minBytes = 44 + 16000 * 2 / 5;   // header + ~0.2s
+        var text = wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
+        Log.Write($"share: {name} answered on the phone ({text.Length} chars)");
+        if (line.Active)
+        {
+            var bye = text.Trim().Length == 0 ? "Ich gebe die Frage weiter." : "Danke, ich gebe es weiter.";
+            line.TakeBarge();
+            if (await GoogleTts.Synthesize(bye, config) is { } byePcm)
+                await line.PlayAsync(AudioOut.ApplyRate(byePcm, config.SpeakingRate), GoogleTts.SampleRate);
+        }
+        return text;   // the hold ends here: the line goes idle and his phone hangs up
     }
 
     // ---- the Wachhund (Watchdog.cs) ---------------------------------------------------
