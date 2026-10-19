@@ -18,7 +18,7 @@ object Demo {
             """{"id":"demo-relay","label":"Relay","project":"parley-relay","state":"background","since":${ago(203)},"voice":false,"resumable":false,"tasks":[{"type":"subagent","description":"Durable Object gegen das Protokoll testen"}],"stats":${stats(52, 57, 2.31, 9, 4, "Ein Agent prüft das Protokoll, ich melde mich, sobald er fertig ist.")}}""",
             """{"id":"demo-edge","label":"Edge Army","project":"pmr","state":"parked","since":${ago(611)},"voice":false,"resumable":true,"tasks":[],"stats":${stats(95, 64, 4.02, 18, 7, "Zwei neue Kandidaten gefunden. Weitermachen?")}}""",
             """{"id":"demo-website","label":"Website","project":"developaway","state":"queued","since":${ago(17)},"callback":0,"voice":false,"resumable":false,"tasks":[],"stats":${stats(12, 9, 0.31, 2, 1, null)}}""",
-            """{"id":"demo-notizen","label":"Notizen","project":"notes","state":"idle","since":${ago(1260)},"voice":false,"resumable":true,"tasks":[],"stats":${stats(140, 33, 0.58, 5, 3, "Alles notiert.")}}""",
+            """{"id":"demo-notizen","label":"Notizen","project":"notes","state":"parked","since":${ago(1260)},"voice":false,"resumable":true,"tasks":[],"stats":${stats(140, 33, 0.58, 5, 3, "Alles notiert.")}}""",
             """{"id":"demo-doku","label":"Doku","project":"docs","state":"stopped","since":${ago(180)},"voice":false,"resumable":false,"tasks":[],"stats":${stats(61, 48, 0.94, 6, 2, "Fertig, die Doku ist aktualisiert.")}}""",
         )
         val today = """{"costUsd":13.61,"turns":65,"spokenSeconds":754,"rateLimits":[{"kind":"five_hour","percentUsed":42},{"kind":"seven_day","percentUsed":18}]}"""
