@@ -198,7 +198,7 @@ final class ShareHub: @unchecked Sendable {
     private let server: ControlServer
     private let file: URL?
     private let now: () -> Date
-    private let connect: (Share, ShareHub) -> RelayClient?
+    private let socket: (@Sendable (URLRequest) -> any RelaySocket)?   // tests: a fake socket
     private let relayURL: () -> String
     private var shares: [Share]
     private var clients: [String: RelayClient] = [:]
@@ -219,12 +219,12 @@ final class ShareHub: @unchecked Sendable {
 
     init(server: ControlServer, file: URL? = Shares.file, now: @escaping () -> Date = { Date() },
          relayURL: @escaping () -> String = { RelayConfig.load().url },
-         connect: ((Share, ShareHub) -> RelayClient?)? = nil) {
+         socket: (@Sendable (URLRequest) -> any RelaySocket)? = nil) {
         self.server = server
         self.file = file
         self.now = now
         self.relayURL = relayURL
-        self.connect = connect ?? ShareHub.relay
+        self.socket = socket
         shares = Shares.load(file)
     }
 
@@ -260,7 +260,7 @@ final class ShareHub: @unchecked Sendable {
     func approve(_ id: String, role: String, listen: Bool, full: Bool, mine: String?) {
         queue.sync {
             guard let i = self.shares.firstIndex(where: { $0.id == id }), self.shares[i].state == "asking",
-                  let old = self.clients[id], let pub = self.shares[i].guest?.pub, !pub.isEmpty else { return }
+                  self.clients[id] != nil, let pub = self.shares[i].guest?.pub, !pub.isEmpty else { return }
             var s = self.shares[i]
             s.guest?.role = role.trimmingCharacters(in: .whitespacesAndNewlines)
             s.guest?.listen = listen
@@ -269,10 +269,12 @@ final class ShareHub: @unchecked Sendable {
             s.mine = mine?.trimmingCharacters(in: .whitespacesAndNewlines)
             s.state = "active"
             Shares.room(&s)
-            guard let sealed = Shares.sealMove(s, to: pub) else { Log.write("share: the guest's key is unusable"); return }
+            guard let sealed = Shares.sealMove(s, to: pub), let old = self.clients.removeValue(forKey: id) else {
+                Log.write("share: the guest's key is unusable"); return
+            }
             self.shares[i] = s
             self.store()
-            self.open(s)                                  // claims the new room first
+            self.open(s)                                  // claims the new room first (the invite's client is kept apart)
             old.sendText(Shares.moveFrame(s, sealed: sealed))   // then only the invited guest can follow
             self.queue.asyncAfter(deadline: .now() + 5) { old.stop() }
             self.server.deliverRouted(id: s.session, instruction: Shares.joined(s))
@@ -340,9 +342,11 @@ final class ShareHub: @unchecked Sendable {
 
     // MARK: the guest's side
 
-    func guest(_ id: String, _ event: PhoneEvent) {
+    // `from`: the connection it came on — after the move, the invite room's frames don't count.
+    func guest(_ id: String, _ event: PhoneEvent, from: RelayClient? = nil) {
         queue.sync {
             guard let s = self.shares.first(where: { $0.id == id }), let client = self.clients[id] else { return }
+            if let from, from !== client { return }
             switch event {
             case .join(let name, let device, let pub) where s.state != "active":
                 // S2: one join per link — whoever asks first; Sir decides on him.
@@ -412,17 +416,23 @@ final class ShareHub: @unchecked Sendable {
 
     private func open(_ s: Share) {
         clients[s.id]?.stop()
-        guard let c = connect(s, self) else { return }
+        guard let c = Self.relay(s, self) else { return }
         clients[s.id] = c
         c.start()
     }
 
     private static func relay(_ s: Share, _ hub: ShareHub) -> RelayClient? {
         let server = hub.server, id = s.id, session = s.session
-        guard let c = RelayClient(config: s.config, sessions: { server.sessionsJSON(only: session) }, resume: { _ in },
+        // The invite room sees nothing of the session until Sir lets the guest in (a fresh client then).
+        let live = s.state == "active"
+        guard let c = RelayClient(config: s.config, sessions: { live ? server.sessionsJSON(only: session) : #"{"sessions":[]}"# }, resume: { _ in },
+                                  connect: hub.socket ?? { URLSessionRelaySocket($0) },
                                   log: { Log.write("share \(id): \($0)") },
                                   queue: DispatchQueue(label: "de.developaway.parley.share.\(id)")) else { return nil }
-        c.onEvent = { [weak hub] in hub?.guest(id, $0) }
+        c.onEvent = { [weak hub, weak c] e in
+            guard let c else { return }
+            hub?.guest(id, e, from: c)
+        }
         return c
     }
 

@@ -29,12 +29,8 @@ final class SharesTests: XCTestCase {
         reg = SessionRegistry(now: { c.t }, phase: { "idle" }, daily: DailyStats(now: { c.t }))
         server = ControlServer(sessions: reg, now: { c.t })
         file = FileManager.default.temporaryDirectory.appendingPathComponent("parley-shares-\(UUID().uuidString).json")
-        hub = ShareHub(server: server, file: file, now: { c.t }, relayURL: { "https://relay.test" }) { s, hub in
-            let c = RelayClient(config: s.config, sessions: { "{}" }, resume: { _ in },
-                                connect: { let f = Fake($0); b.sockets.append(f); return f }, log: { _ in })
-            c?.onEvent = { [weak hub] in hub?.guest(s.id, $0) }
-            return c
-        }
+        hub = ShareHub(server: server, file: file, now: { c.t }, relayURL: { "https://relay.test" },
+                       socket: { let f = Fake($0); b.sockets.append(f); return f })
         hub.toSir = { b.toSir.append($0) }
         presence("web", "Website")
         presence("shop", "Shop")
@@ -142,12 +138,23 @@ final class SharesTests: XCTestCase {
         XCTAssertEqual(hub.list().first?.guest?.name, "Max")                           // the first one stays
         XCTAssertTrue(box.toSir.last?.contains(#""code":"\#(Shares.code(pub))""#) ?? false)
 
+        let inviteSockets = box.sockets.count
         hub.approve(invite.id, role: "M", listen: false, full: false, mine: nil)
         let moved = try XCTUnwrap(hub.list().first)
         XCTAssertEqual(moved.state, "active")
-        let sealed = try XCTUnwrap(Shares.sealMove(moved, to: pub))
-        let move = try XCTUnwrap((try? JSONSerialization.jsonObject(with: Data(Shares.moveFrame(moved, sealed: sealed).utf8))) as? [String: Any])
+        // What really went out on the invite room — opened like any phone in that room could.
+        let seal = try XCTUnwrap(RelaySeal(key: invite.key))
+        let deadline = Date() + 2
+        func sentOnInvite() -> [[String: Any]] {
+            box.sockets[..<inviteSockets].flatMap(\.sent).compactMap { seal.open(text: $0)?.json }
+                .compactMap { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any] }
+        }
+        while !sentOnInvite().contains(where: { $0["t"] as? String == "move" }), Date() < deadline { RunLoop.current.run(until: Date() + 0.02) }
+        let move = try XCTUnwrap(sentOnInvite().first { $0["t"] as? String == "move" })
         XCTAssertNil(move["r"]); XCTAssertNil(move["e"])                                // no room data in the clear
+        // Before the yes, the invite room saw no session at all.
+        let views = sentOnInvite().filter { $0["t"] as? String == "sessions" }
+        XCTAssertTrue(views.allSatisfy { ($0["sessions"] as? [Any])?.isEmpty ?? false }, "\(views)")
         func open(_ key: P256.KeyAgreement.PrivateKey) -> [String: String]? {
             guard let hostPub = (move["pub"] as? String).flatMap(RelaySeal.base64url),
                   let theirs = try? P256.KeyAgreement.PublicKey(x963Representation: hostPub),
