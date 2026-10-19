@@ -54,7 +54,8 @@ enum APNs {
         return "\(input).\(RelayLink.base64url(signature.rawRepresentation))"
     }
 
-    static func request(token: String, env: String, jwt: String, label: String) -> URLRequest {
+    /// `share`: a guest's call (v7) — his phone answers it on that share's room, not its own Mac's.
+    static func request(token: String, env: String, jwt: String, label: String, share: String? = nil) -> URLRequest {
         var req = URLRequest(url: URL(string: "https://\(host(env: env))/3/device/\(token)")!)
         req.httpMethod = "POST"
         req.timeoutInterval = 15
@@ -64,8 +65,8 @@ enum APNs {
         req.setValue("10", forHTTPHeaderField: "apns-priority")
         req.setValue("0", forHTTPHeaderField: "apns-expiration")   // a call that rings late is worse than none
         req.setValue("application/json", forHTTPHeaderField: "content-type")
-        struct Payload: Encodable { let label: String }
-        req.httpBody = try? JSONEncoder().encode(Payload(label: label))
+        struct Payload: Encodable { let label: String; let share: String? }
+        req.httpBody = try? JSONEncoder().encode(Payload(label: label, share: share))
         return req
     }
 
@@ -171,8 +172,8 @@ final class APNsClient: @unchecked Sendable {
 
     /// One VoIP push; returns the HTTP status (-1 = not sent) and APNs' reason. Logged either way.
     @discardableResult
-    func push(token: String, env: String, label: String) async -> (status: Int, reason: String?) {
-        await send(env: env) { APNs.request(token: token, env: env, jwt: $0, label: label) }
+    func push(token: String, env: String, label: String, share: String? = nil) async -> (status: Int, reason: String?) {
+        await send(env: env) { APNs.request(token: token, env: env, jwt: $0, label: label, share: share) }
     }
 
     /// One visible notification (Unterwegs + Stumm).

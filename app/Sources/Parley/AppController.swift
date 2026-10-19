@@ -147,6 +147,7 @@ final class AppController: ObservableObject {
         // v7: a guest's question (<speak to="Max">) goes to him; unanswered it comes back to Sir.
         server.askGuest = { [shares] id, turn, respond in shares.ask(share: id, turn, respond: respond) }
         shares.voiceForSir = { [server] turn, respond in server.voiceForSir(turn, respond: respond) }
+        shares.callGuest = { [weak self] line, turn, share in await self?.callGuest(line, turn: turn, share: share) }
         let apns = self.apns
         shares.push = { token, env, title, body, session in
             Task.detached { _ = await apns.notify(token: token, env: env, title: title, body: body, session: session) }
@@ -820,6 +821,54 @@ final class AppController: ObservableObject {
         }
         Log.write("phone: call answered — voicing through the phone")
         return .answered
+    }
+
+    // v7 part 3: a guest's question on his own call line (Shares.swift) — ring his phone (his
+    // room's `ring` + a VoIP push naming the share), ask in Parley's voice, listen, transcribe.
+    // Runs beside Sir's own line; nil = he didn't pick up (his Rückfrage screen stays open).
+    func callGuest(_ line: PhoneHub, turn: TurnPayload, share: Share) async -> String? {
+        let name = share.guest?.name ?? "Gast"
+        let label = "Rückfrage · \(share.label)"
+        _ = line.takeLater()
+        _ = line.takeDeclined()
+        if !line.callActive {
+            line.ring(label: label)
+            if let target = line.pushTarget, apns.configured {
+                let apns = self.apns, id = share.id
+                Task.detached { await apns.push(token: target.token, env: target.env, label: label, share: id) }
+            }
+            Log.write("share: ringing \(name) for \(share.label)")
+            var deadline = Date().addingTimeInterval(Self.ringTimeout)
+            while !line.callActive {
+                if line.takeLater() != nil { Log.write("share: \(name) can't talk now"); return nil }
+                if line.takeDeclined() { deadline = min(deadline, Date()) }
+                guard Date() < deadline else { Log.write("share: \(name) didn't pick up"); return nil }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+        let config = AppConfig.load()
+        line.setSpeaker(share.label)
+        let voice = PhoneVoice(link: line, rate: config.speakingRate)
+        if let pcm = await GoogleTTS.synth(turn.speak, config: config) { voice.enqueue(pcm) }
+        _ = await voice.finish(beep: true)
+        guard line.callActive else { return nil }
+        let wav: Data
+        switch await PhoneListener(link: line).record() {
+        case .finished(let w): wav = w
+        case .callEnded(let w, _): wav = w
+        }
+        let text = await transcribe(wav, config: config)
+        Log.write("share: \(name) answered on the phone (\(text.count) chars)")
+        if line.callActive {
+            let bye = text.isEmpty ? "Ich gebe die Frage weiter." : "Danke, ich gebe es weiter."
+            if let pcm = await GoogleTTS.synth(bye, config: config) {
+                let v = PhoneVoice(link: line, rate: config.speakingRate)
+                v.enqueue(pcm)
+                _ = await v.finish(beep: false)
+            }
+            line.setAudioState(.idle)   // the phone hangs up once the line goes quiet
+        }
+        return text
     }
 
     // "Hey Parley" during a call: greeting → listen → route the utterance to a running session

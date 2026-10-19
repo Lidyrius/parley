@@ -210,6 +210,11 @@ final class ShareHub: @unchecked Sendable {
     // R2–R5: questions waiting for a guest's answer, by question id.
     private struct Ask { let share: String; let turn: TurnPayload; let respond: (TurnReply) -> Void; let timer: DispatchWorkItem }
     private var asks: [String: Ask] = [:]
+    // Part 3: each guest's own call line (his phone's call frames and audio on his room), and the
+    // questions a call is under way for — their time doesn't run out mid-call.
+    private var lines: [String: PhoneHub] = [:]
+    private var calling: Set<String> = []
+    var callGuest: (@Sendable (PhoneHub, TurnPayload, Share) async -> String?)?
     static let askTimeout: TimeInterval = 120
     var askTimeoutOverride: TimeInterval?       // tests
 
@@ -291,7 +296,8 @@ final class ShareHub: @unchecked Sendable {
         queue.sync {
             guard let i = self.shares.firstIndex(where: { $0.id == id }) else { return }
             let s = self.shares.remove(at: i)
-            for (qid, a) in self.asks where a.share == id { self.end(qid, why: "\(s.guest?.name ?? "Der Gast") ist nicht mehr dabei") }
+            for (qid, a) in self.asks where a.share == id { self.calling.remove(qid); self.end(qid, why: "\(s.guest?.name ?? "Der Gast") ist nicht mehr dabei") }
+            self.lines.removeValue(forKey: id)?.detach()
             self.clients[id]?.sendText(Shares.endFrame)
             let c = self.clients.removeValue(forKey: id)
             self.queue.asyncAfter(deadline: .now() + 2) { c?.stop() }
@@ -312,13 +318,38 @@ final class ShareHub: @unchecked Sendable {
                 return
             }
             let qid = RelayLink.token(bytes: 9)
-            let timer = DispatchWorkItem { [weak self] in self?.end(qid, why: "\(g.name) hat nicht geantwortet") }
+            let timer = DispatchWorkItem { [weak self] in self?.timeUp(qid, why: "\(g.name) hat nicht geantwortet") }
             self.asks[qid] = Ask(share: id, turn: turn, respond: respond, timer: timer)
             self.queue.asyncAfter(deadline: .now() + (self.askTimeoutOverride ?? Self.askTimeout), execute: timer)
             client.sendText(Shares.askFrame(id: qid, s, turn))
             if let token = g.push { self.push?(token, g.env ?? "production", "Rückfrage · \(s.label)", turn.speak, s.session) }
             Log.write("share: question for \(g.name) in \(s.label)")
+            // And a real call on his line: Parley's voice asks, his spoken answer comes back.
+            if let line = self.lines[id], let call = self.callGuest {
+                self.calling.insert(qid)
+                Task { [weak self] in
+                    let text = await call(line, turn, s)
+                    self?.queue.async {
+                        guard let self else { return }
+                        self.calling.remove(qid)
+                        if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self.end(qid, answer: text) }
+                        // else: no answer on the phone — the Rückfrage stays open until its time is up
+                    }
+                }
+            }
         }
+    }
+
+    // Time is up — unless he is on the phone answering it right now.
+    private func timeUp(_ qid: String, why: String) {
+        guard let a = asks[qid] else { return }
+        guard !calling.contains(qid) else {
+            let again = DispatchWorkItem { [weak self] in self?.timeUp(qid, why: why) }
+            asks[qid] = Ask(share: a.share, turn: a.turn, respond: a.respond, timer: again)
+            queue.asyncAfter(deadline: .now() + 15, execute: again)
+            return
+        }
+        end(qid, why: why)
     }
 
     // Answered, passed on or timed out: the question ends at the guest; unanswered, Sir gets it.
@@ -404,6 +435,9 @@ final class ShareHub: @unchecked Sendable {
             case .hello where s.state == "active":
                 // Back online (e.g. opened from the push): the questions still open, again.
                 for (qid, a) in self.asks where a.share == id { client.sendText(Shares.askFrame(id: qid, s, a.turn)) }
+            case .call, .push, .later, .barge:
+                // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley.
+                if s.state == "active" { self.lines[id]?.handle(event) }
             case .alert(let token, let env) where s.state == "active":
                 guard let i = self.shares.firstIndex(where: { $0.id == id }) else { return }
                 self.shares[i].guest?.push = token
@@ -421,6 +455,12 @@ final class ShareHub: @unchecked Sendable {
         clients[s.id]?.stop()
         guard let c = Self.relay(s, self) else { return }
         clients[s.id] = c
+        if s.state == "active" {   // his own call line on his room (never on the invite's)
+            let line = lines[s.id] ?? PhoneHub(store: .memory(), log: { Log.write("share \(s.id) call: \($0)") })
+            line.attach(text: { [weak c] in c?.sendText($0) }, audio: { [weak c] in c?.sendAudio($0) })
+            c.onAudio = { [weak line] in line?.audioIn($0) }
+            lines[s.id] = line
+        }
         c.start()
     }
 

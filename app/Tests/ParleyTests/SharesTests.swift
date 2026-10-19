@@ -258,4 +258,50 @@ final class SharesTests: XCTestCase {
         XCTAssertTrue(server.snapshotList().isEmpty)
         XCTAssertFalse(server.sessionsJSON(only: "web").contains(#""id":"shop""#))
     }
+
+    // Part 3: the guest's own call line — answered by voice; no pick-up leaves the Rückfrage open;
+    // the two minutes don't run out mid-call.
+    func testTheGuestAnswersOnThePhone() throws {
+        final class Got: @unchecked Sendable { var replies: [String] = []; var toSir: [String] = []; var calls = 0; var hold = 0.0; var answer: String? }
+        let got = Got()
+        server.askGuest = { [hub] id, turn, respond in hub!.ask(share: id, turn, respond: respond) }
+        hub.voiceForSir = { turn, respond in got.toSir.append(turn.speak); respond(TurnReply(transcript: "", park: false)) }
+        hub.callGuest = { _, turn, share in
+            got.calls += 1
+            try? await Task.sleep(for: .seconds(got.hold))
+            return got.answer
+        }
+        let (invite, _) = try XCTUnwrap(hub.create(session: "web"))
+        hub.guest(invite.id, .join(name: "Max", device: "", pub: pub))
+        hub.approve(invite.id, role: "Marketing", listen: false, full: false, mine: nil)
+        _ = instruction("web")
+        func ask(_ speak: String) {
+            var t = TurnPayload(event: "turn", session_id: "web", cwd: "/x/web", project: "web", tmux_pane: "", speak: speak, label: "Website", listen: true)
+            t.to = "Max"
+            server.queue.sync { server.receiveTurn(t) { got.replies.append($0.transcript) } }
+        }
+        func wait(_ cond: () -> Bool) { let end = Date() + 3; while !cond(), Date() < end { RunLoop.current.run(until: Date() + 0.02) } }
+
+        got.answer = "Variante B"
+        ask("Welche?")
+        wait { !got.replies.isEmpty }
+        XCTAssertEqual(got.calls, 1)
+        XCTAssertEqual(got.replies, ["[Antwort von Max · Marketing]\nVariante B"])
+
+        got.answer = nil                                   // didn't pick up: the Rückfrage stays open
+        ask("Noch eine?")
+        wait { got.calls == 2 }
+        _ = hub.list()
+        XCTAssertEqual(hub.questions().count, 1)
+        hub.guest(invite.id, .answer(id: try XCTUnwrap(hub.questions().first), text: "Getippt.", pass: false))
+        wait { got.replies.count == 2 }
+        XCTAssertEqual(got.replies.last, "[Antwort von Max · Marketing]\nGetippt.")
+
+        got.answer = "Am Telefon."; got.hold = 0.4         // time is up mid-call: it waits for the call
+        hub.askTimeoutOverride = 0.1
+        ask("Dritte?")
+        wait { got.replies.count == 3 }
+        XCTAssertEqual(got.replies.last, "[Antwort von Max · Marketing]\nAm Telefon.")
+        XCTAssertTrue(got.toSir.isEmpty)
+    }
 }
