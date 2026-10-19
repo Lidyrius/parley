@@ -36,10 +36,9 @@ targets:
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+        # Portrait only (Sir, 19.10.2026).
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: Parley nutzt die Kamera, um den QR-Code zum Verbinden mit deinem Mac zu scannen.
         NSMicrophoneUsageDescription: Parley nutzt das Mikrofon während eines Anrufs, damit du mit Parley auf deinem Mac sprechen kannst.
         NSSpeechRecognitionUsageDescription: Parley erkennt während eines Anrufs „Hey Parley“ – die Spracherkennung läuft dafür nach Möglichkeit direkt auf dem iPhone.

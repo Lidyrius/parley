@@ -31,7 +31,11 @@ struct OverviewView: View {
                 .animation(.snappy, value: model.call.failure)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 32)
+                // Exactly the screen's width: a row that grows too wide (both switches, large
+                // text) can't make the page pan sideways — it only scrolls down.
+                .containerRelativeFrame(.horizontal, alignment: .leading)
             }
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             .background(Theme.background)
             .navigationTitle("Parley")
             .toolbar {
@@ -322,6 +326,12 @@ private struct StatusHeader: View {
                     awayToggle
                     if away { silentToggle }
                 }
+            }
+            // Very large text: one per row — never wider than the screen.
+            VStack(alignment: .leading, spacing: 8) {
+                pill(status)
+                awayToggle
+                if away { silentToggle }
             }
         }
     }

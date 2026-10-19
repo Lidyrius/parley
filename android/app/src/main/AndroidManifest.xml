@@ -27,6 +27,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -41,10 +42,10 @@
             </intent-filter>
         </activity>
 
-        <!-- The QR scanner follows the phone's orientation instead of forcing landscape. -->
+        <!-- Portrait only, the QR scanner too (instead of its default landscape). -->
         <activity
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
-            android:screenOrientation="fullSensor"
+            android:screenOrientation="portrait"
             tools:replace="screenOrientation" />
 
         <service
