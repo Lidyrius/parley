@@ -34,6 +34,7 @@ extension Fmt {
     /// The state as the card says it — a put-off call first: "wartet auf Rückruf", "ruft in 0:42 an".
     static func cardState(_ s: Session, at: Double) -> String {
         if let cb = s.callback { return cb == 0 ? "wartet auf Rückruf" : "ruft in \(clock(max(0, cb - at))) an" }
+        if let name = s.asking { return "Rückfrage an \(name)" }
         return stateLabel(s)
     }
 }

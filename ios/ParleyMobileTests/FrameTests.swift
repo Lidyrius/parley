@@ -482,5 +482,17 @@ struct FrameTests {
         #expect(g.code.count == 4)
         #expect(GuestShare.code("test-pub") == "6299")   // same vector as the Mac's SharesTests
     }
+
+    @Test func guestQuestionFrames() {
+        #expect(Frame.decode(#"{"t":"ask","id":"q1","session":"w","label":"Website","text":"Welche?","replies":["A","B"],"seconds":120}"#)
+                == .ask(GuestAsk(id: "q1", session: "w", label: "Website", text: "Welche?", replies: ["A", "B"], seconds: 120)))
+        #expect(Frame.decode(#"{"t":"ask-end","id":"q1"}"#) == .askEnd("q1"))
+        #expect(Outgoing.answer(id: "q1", text: "B") == #"{"id":"q1","t":"answer","text":"B"}"#)
+        #expect(Outgoing.answer(id: "q1", text: "", pass: true) == #"{"id":"q1","pass":true,"t":"answer"}"#)
+        if case .sessions(let snap)? = Frame.decode(#"{"t":"sessions","sessions":[{"id":"w","asking":"Max"}]}"#) {
+            #expect(snap.sessions[0].asking == "Max")
+            #expect(Fmt.cardState(snap.sessions[0], at: 0) == "Rückfrage an Max")
+        } else { Issue.record("no sessions") }
+    }
 }
 

@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
@@ -283,5 +284,83 @@ struct QRCode: View {
         f.correctionLevel = "M"
         guard let out = f.outputImage, let cg = CIContext().createCGImage(out, from: out.extent) else { return nil }
         return UIImage(cgImage: cg)
+    }
+}
+
+/// R3: a question for this phone as a guest — read aloud, answered by a predicted answer, typing
+/// or the keyboard's dictation; or given to the owner. Unanswered, it goes to him by itself.
+struct GuestAskView: View {
+    @Environment(AppModel.self) private var model
+    let ask: GuestAsk
+    @State private var text = ""
+    @State private var voice = AVSpeechSynthesizer()
+    @State private var opened = Date()
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        let share = model.guestShare(of: ask.session)
+        let host = share?.host.isEmpty == false ? share!.host : "den Gastgeber"
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("RÜCKFRAGE · \(ask.label.uppercased())").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        if let role = share?.role, !role.isEmpty {
+                            Text("für Sie · \(role)").font(.subheadline).foregroundStyle(SessionState.idle.ink)
+                        }
+                    }
+                    Text(ask.text).font(.title3.weight(.semibold)).textSelection(.enabled)
+                    if let seconds = ask.seconds {
+                        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                            let left = max(0, seconds - Int(ctx.date.timeIntervalSince(opened)))
+                            Text(left > 0 ? "Geht in \(left) s an \(host), wenn Sie nicht antworten." : "Geht jetzt an \(host).")
+                                .font(.footnote).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                    }
+                    if let replies = ask.replies, !replies.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(replies, id: \.self) { r in
+                                Button { model.answer(ask, text: r) } label: {
+                                    Text(r).font(.body.weight(.semibold)).foregroundStyle(Theme.claude)
+                                        .padding(.horizontal, 14).padding(.vertical, 10)
+                                        .background(Capsule().fill(Theme.claude.opacity(0.12)))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    TextField("Antwort – tippen oder per Diktat (Mikrofon auf der Tastatur)", text: $text, axis: .vertical)
+                        .lineLimit(2...8)
+                        .focused($typing)
+                        .padding(.horizontal, 14).padding(.vertical, 12)
+                        .background(CardBackground(radius: 14))
+                    Button { model.answer(ask, text: text) } label: {
+                        Text("Antworten").font(.headline).foregroundStyle(Theme.onAccent)
+                            .frame(maxWidth: .infinity, minHeight: 50).background(Capsule().fill(Theme.claude))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("An \(host) abgeben") { model.answer(ask, text: "", pass: true) }
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(20)
+            }
+            .background(Theme.background)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { read() } label: { Image(systemName: "speaker.wave.2") }.accessibilityLabel("Vorlesen")
+                }
+            }
+        }
+        .interactiveDismissDisabled()
+        .onAppear { read() }
+        .onDisappear { voice.stopSpeaking(at: .immediate) }
+    }
+
+    private func read() {
+        voice.stopSpeaking(at: .immediate)
+        let u = AVSpeechUtterance(string: ask.text)
+        u.voice = AVSpeechSynthesisVoice(language: "de-DE")
+        voice.speak(u)
     }
 }

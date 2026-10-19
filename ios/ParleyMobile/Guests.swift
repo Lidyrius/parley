@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import UIKit
+import UserNotifications
 
 /// v7 (docs/IPHONE.md, docs/design/screens/ios/60-multiplayer): someone else's session this phone
 /// joined. Its own room and key — a second relay connection beside (or without) the own Mac's.
@@ -101,9 +102,9 @@ extension AppModel {
         guard let i = guests.firstIndex(where: { $0.id == id }) else { return }
         switch event {
         case .opened:
-            if !guests[i].active {
-                guestRelays[id]?.send(Outgoing.join(name: guests[i].name, device: UIDevice.current.name, pub: guests[i].pub))
-            }
+            guard let r = guestRelays[id] else { return }
+            if guests[i].active { sendAlertToken(on: r) }   // so his questions reach him as a push
+            else { r.send(Outgoing.join(name: guests[i].name, device: UIDevice.current.name, pub: guests[i].pub)) }
         case .frame(.shareMove(let m)):
             // Let in: the fresh room, sealed to this phone's key — the invite's room is dead from here on.
             guard !guests[i].active, let room = guests[i].open(m),
@@ -116,11 +117,17 @@ extension AppModel {
             PairingStore.saveGuests(guests)
             guestRelays[id]?.use(moved)
             guestRelays[id]?.reconnect()
+            Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
         case .frame(.shareEnd):
             guestNotice = "\(guests[i].host.isEmpty ? "Die Freigabe" : guests[i].host + " hat die Freigabe") für „\(guests[i].label)“ beendet."
             leave(id)
         case .frame(.notice(let text)):
             guestNotice = text
+        case .frame(.ask(let a)):
+            guestAsks.removeAll { $0.id == a.id }
+            guestAsks.append(a)
+        case .frame(.askEnd(let qid)):
+            guestAsks.removeAll { $0.id == qid }
         case .frame(.history), .frame(.image):
             handle(event)   // the same history store as the own sessions (ids don't collide)
         default:
@@ -135,6 +142,12 @@ extension AppModel {
         c.queryItems = [.init(name: "u", value: relay.absoluteString), .init(name: "r", value: room.room),
                         .init(name: "k", value: room.secret), .init(name: "e", value: room.key)]
         return c.string ?? ""
+    }
+
+    /// The guest answers (text, a predicted answer, dictation) or gives the question to the owner.
+    func answer(_ a: GuestAsk, text: String, pass: Bool = false) {
+        guestAsks.removeAll { $0.id == a.id }
+        relay(for: a.session).send(Outgoing.answer(id: a.id, text: text, pass: pass))
     }
 
     // MARK: the owner's side

@@ -394,6 +394,9 @@ final class ShareHub: @unchecked Sendable {
                 } else {
                     self.end(qid, answer: String(t.prefix(8000)))
                 }
+            case .hello where s.state == "active":
+                // Back online (e.g. opened from the push): the questions still open, again.
+                for (qid, a) in self.asks where a.share == id { client.sendText(Shares.askFrame(id: qid, s, a.turn)) }
             case .alert(let token, let env) where s.state == "active":
                 guard let i = self.shares.firstIndex(where: { $0.id == id }) else { return }
                 self.shares[i].guest?.push = token

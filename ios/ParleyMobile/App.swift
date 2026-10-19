@@ -130,6 +130,8 @@ final class AppModel {
     var shareLinks: [String: String] = [:]
     var joinRequests: [JoinRequest] = []
     var guestNotice: String?
+    /// v7: questions for this phone as a guest (the Rückfrage screen shows the first).
+    var guestAsks: [GuestAsk] = []
     private(set) var loadingOlder: Set<String> = []
     @ObservationIgnored private var requestedImages: Set<String> = []
     @ObservationIgnored var alertToken: String? {
@@ -166,6 +168,11 @@ final class AppModel {
             images["demo-5"] = Demo.screenshot()
             // `-demoCall speaking|listening|idle|incoming|connecting` opens the call screen.
             // `-demoJoin`: a guest asks to join (the approval sheet).
+            if arguments.contains("-demoAsk") {   // `-demoAsk`: a question as a guest
+                guestAsks = [GuestAsk(id: "demo-ask", session: "demo-shirts", label: "Shirts",
+                                      text: "Max, für die Überschrift habe ich zwei Varianten. Welche passt zur Kampagne?",
+                                      replies: ["Variante A", "Variante B"], seconds: 120)]
+            }
             if arguments.contains("-demoJoin") {
                 joinRequests = [JoinRequest(id: "demo-join", session: "demo-shirts", label: "Shirts", name: "Max")]
             }
@@ -401,6 +408,11 @@ final class AppModel {
         if !demo { relay(for: id).send(Outgoing.say(id: id, text: t)) }
     }
 
+    func sendAlertToken(on r: Relay) {
+        guard let token = alertToken, !demo else { return }
+        r.send(Outgoing.alertPush(token: token, env: pushEnvironment))
+    }
+
     private func sendAlertToken() {
         guard let token = alertToken, !demo else { return }
         relay.send(Outgoing.alertPush(token: token, env: pushEnvironment))
@@ -485,6 +497,7 @@ struct RootView: View {
         }
         // The system camera opens the QR's parley:// link here.
         .sheet(item: Binding(get: { model.pendingJoin }, set: { model.pendingJoin = $0 })) { JoinView(link: $0) }
+        .fullScreenCover(item: Binding(get: { model.guestAsks.first }, set: { _ in })) { GuestAskView(ask: $0) }
         .onOpenURL { url in
             // v7: someone shares a session with this phone.
             if url.host == "join" {

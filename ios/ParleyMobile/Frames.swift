@@ -37,6 +37,17 @@ struct Session: Identifiable, Equatable, Sendable {
     var host: String?
     var stats: Stats?
     var shared: [ShareTag] = []     // v7: the guests it is shared with (Sir's side)
+    var asking: String?             // v7: a question waits for this guest
+}
+
+/// v7: a question for this phone's owner as a guest (`ask` frame).
+struct GuestAsk: Identifiable, Equatable, Sendable, Decodable {
+    var id: String
+    var session: String
+    var label: String
+    var text: String
+    var replies: [String]? = nil
+    var seconds: Int? = nil
 }
 
 /// v7: one guest of a shared session — the share's id (to remove him), his name and role.
@@ -224,6 +235,9 @@ enum Frame: Equatable, Sendable {
     case shareEnd
     /// v7: a short message from the host for this phone (e.g. too many messages).
     case notice(String)
+    /// v7: a question for the guest, and its end (answered, passed on, timed out).
+    case ask(GuestAsk)
+    case askEnd(String)
     /// v6: the host opened snapshot `id` — what became of each session.
     case snapshotOpened(id: String, results: [SnapshotResult])
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
@@ -263,6 +277,12 @@ enum Frame: Equatable, Sendable {
             guard let w = try? decoder.decode(ShareMove.self, from: data) else { return .other(head.t) }
             return .shareMove(w)
         case "share-end": return .shareEnd
+        case "ask":
+            guard let w = try? decoder.decode(GuestAsk.self, from: data) else { return .other(head.t) }
+            return .ask(w)
+        case "ask-end":
+            guard let w = try? decoder.decode(AskEndWire.self, from: data) else { return .other(head.t) }
+            return .askEnd(w.id)
         case "notice":
             guard let w = try? decoder.decode(NoticeWire.self, from: data) else { return .other(head.t) }
             return .notice(w.text)
@@ -286,6 +306,7 @@ enum Frame: Equatable, Sendable {
     private struct ImageWire: Decodable { let key: String; let data: String? }
     private struct ShareLinkWire: Decodable { let id: String; let session: String; let link: String }
     private struct NoticeWire: Decodable { let text: String }
+    private struct AskEndWire: Decodable { let id: String }
     private struct SnapshotWire: Decodable { let id: String; let results: Lossy<SnapshotResult> }
     /// `{"t":"palette","name","note","alwaysDark","colors":{role:["#light","#dark"]}}` — every role
     /// present, else no palette.
@@ -388,6 +409,10 @@ enum Outgoing {
         encode(["t": .s("share"), "op": .s("approve"), "id": .s(id), "role": .s(role), "listen": .b(listen), "full": .b(full), "mine": .s(mine)])
     }
     static func shareRemove(id: String) -> String { encode(["t": .s("share"), "op": .s("remove"), "id": .s(id)]) }
+    /// v7: the guest's answer to a question, or `pass` = give it to the owner.
+    static func answer(id: String, text: String, pass: Bool = false) -> String {
+        pass ? encode(["t": .s("answer"), "id": .s(id), "pass": .b(true)]) : encode(["t": .s("answer"), "id": .s(id), "text": .s(text)])
+    }
     static func join(name: String, device: String, pub: String) -> String {
         encode(["t": .s("join"), "name": .s(name), "device": .s(device), "pub": .s(pub)])
     }
@@ -458,7 +483,7 @@ extension Stats: Decodable {
 }
 
 extension Session: Decodable {
-    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared }
+    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared, asking }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)  // the one field a tile cannot do without
@@ -474,6 +499,7 @@ extension Session: Decodable {
         host = c.lenient(.host)
         stats = c.lenient(.stats)
         shared = (c.lenient(.shared) as Lossy<ShareTag>?)?.items ?? []
+        asking = c.lenient(.asking)
     }
 }
 
