@@ -19,8 +19,17 @@ enum class CallPhase { none, ringing, dialing, connecting, active }
  * take the same path: once the relay reaches the host the audio starts and `call start` goes out;
  * `call end` when it ends. No CallKit here: the ringing screen is the app's own (plus a
  * full-screen notification when it is in the background, see ParleyService).
+ * v7: a call can also run on a share's room — the owner's host rings this phone as a guest for
+ * its questions (`use(line)`, `CallLine`).
  */
-class CallController(private val context: Context, private val scope: CoroutineScope, private val relay: Relay) {
+class CallController(private val context: Context, private val scope: CoroutineScope, private val home: Relay) {
+    /**
+     * The line a call runs on: the own host's room, or a share's (v7: the owner's host rings this
+     * phone as a guest) — `use(line)`. After the call, the own host's again.
+     */
+    var line by mutableStateOf(home); private set
+    /** The call runs on a share's room: a question for this phone as a guest. */
+    val isGuestCall: Boolean get() = line !== home
     var phase by mutableStateOf(CallPhase.none); private set
     var since by mutableStateOf(0L); private set
     var hostAudio by mutableStateOf(HostAudio.idle); private set
@@ -42,7 +51,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
     /** Phase changed: the service follows (foreground type, notification, ringtone). */
     var onPhase: (CallPhase) -> Unit = {}
 
-    private val audio = CallAudio(context) { relay.sendAudio(it) }
+    private val audio = CallAudio(context) { line.sendAudio(it) }   // the mic thread: the current line
     @Volatile private var live = false
     private var captionBase = 0
     private var beginning = false
@@ -55,8 +64,27 @@ class CallController(private val context: Context, private val scope: CoroutineS
 
     val inCall get() = phase == CallPhase.active
     val isRinging get() = phase == CallPhase.ringing
+    val isBusy get() = phase != CallPhase.none
 
-    init { relay.onAudio = { if (live) audio.play(it) } }
+    init { home.onAudio = { play(home, it) } }
+
+    /** v7: the next call runs on this relay (a share's room); a call already up keeps its line. */
+    fun use(line: Relay) {
+        if (phase == CallPhase.none || this.line === line) this.line = line
+    }
+
+    /** A wire frame from relay `from` (OkHttp's reader thread): only the call's own line plays. */
+    fun play(from: Relay, frame: ByteArray) { if (live && from === line) audio.play(frame) }
+
+    /** Relay `r` opened: the call that runs on it says so again. */
+    fun opened(r: Relay) {
+        if (r !== line) return
+        if (inCall) r.send(Outgoing.call(true))
+        relayChanged()
+    }
+
+    /** Relay `r` closed (or its host came or went): only the call's own line matters. */
+    fun linkChanged(r: Relay) { if (r === line) relayChanged() }
 
     private fun set(p: CallPhase) { phase = p; onPhase(p) }
 
@@ -77,7 +105,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
         this.label = label
         set(CallPhase.ringing)
         showsScreen = true
-        relay.ensure()
+        line.ensure()
         // Not answered in 40 s: stop ringing and tell the host (it gives up at 45 s).
         ringExpiry?.cancel()
         ringExpiry = scope.launch { delay(RING_MS); if (phase == CallPhase.ringing) finish() }
@@ -101,7 +129,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
     /** "Not now" on the ringing screen: ring again in `after` s, or (null) wait for a call back. */
     fun later(after: Int?) {
         if (phase != CallPhase.ringing) return
-        if (!isTest) relay.send(Outgoing.later(after))
+        if (!isTest) line.send(Outgoing.later(after))
         hangUp()
     }
 
@@ -130,7 +158,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
     fun talk() {
         if (!inCall || hostAudio != HostAudio.idle) return
         wakeSent = true
-        relay.send(Outgoing.wake)
+        line.send(Outgoing.wake)
         scope.launch { delay(10_000); if (hostAudio == HostAudio.idle) wakeSent = false }
     }
 
@@ -139,7 +167,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
         if (!inCall || hostAudio != HostAudio.speaking) return
         audio.silence()
         autoHangUp?.cancel()
-        relay.send(Outgoing.barge)
+        line.send(Outgoing.barge)
     }
 
     fun captionReceived(c: Caption) {
@@ -181,7 +209,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
     fun relayChanged() {
         when (phase) {
             CallPhase.dialing, CallPhase.connecting -> begin()
-            CallPhase.active -> if (relay.canSend) { lossTimeout?.cancel(); lossTimeout = null } else if (lossTimeout == null) {
+            CallPhase.active -> if (line.canSend) { lossTimeout?.cancel(); lossTimeout = null } else if (lossTimeout == null) {
                 lossTimeout = scope.launch { delay(25_000); fail("Die Verbindung zu Parley auf dem Mac ist abgebrochen.") }
             }
             else -> {}
@@ -198,7 +226,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
     // Lifecycle
 
     private fun dial() {
-        relay.ensure()
+        line.ensure()
         connectTimeout?.cancel()
         connectTimeout = scope.launch {
             delay(20_000)
@@ -209,7 +237,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
 
     /** Relay ready → audio (off the main thread), `call start`. */
     private fun begin() {
-        if ((phase != CallPhase.dialing && phase != CallPhase.connecting) || !relay.canSend || beginning) return
+        if ((phase != CallPhase.dialing && phase != CallPhase.connecting) || !line.canSend || beginning) return
         beginning = true
         connectTimeout?.cancel()
         scope.launch {
@@ -225,7 +253,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
             audio.muted = muted
             if (Prefs.speakerByDefault(context) && !audio.hasHeadset()) useSpeaker(true)
             live = true
-            relay.send(Outgoing.call(true))
+            line.send(Outgoing.call(true))
             awaitingHost = true
             awaitingJob?.cancel()
             awaitingJob = scope.launch { delay(4_000); awaitingHost = false }
@@ -244,7 +272,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
     /** Hung up, declined, failed. */
     private fun finish() {
         if (phase == CallPhase.none) return
-        relay.send(Outgoing.call(false))
+        line.send(Outgoing.call(false))
         reset()
     }
 
@@ -255,6 +283,7 @@ class CallController(private val context: Context, private val scope: CoroutineS
         audio.stop()
         label = null
         hostAudio = HostAudio.idle
+        line = home                      // a guest's call is over: the own host's line again
         isTest = false
         caption = null
         muted = false
@@ -285,4 +314,30 @@ class CallController(private val context: Context, private val scope: CoroutineS
     }
 
     companion object { const val RING_MS = 40_000L }
+}
+
+/** What a frame from one of the phone's relays does to the call (v7 part 3, ios AppModel.handle / guestEvent). */
+sealed interface CallStep {
+    data object LinkChanged : CallStep
+    data class Audio(val state: HostAudio, val label: String?) : CallStep
+    data class Captions(val caption: Caption) : CallStep
+    /** Ring on the relay the frame came over (`use(line)` first). */
+    data class Ring(val label: String?) : CallStep
+}
+
+object CallLine {
+    /**
+     * `onLine`: the frame came over the relay the call runs on (no call: the own host's).
+     * `share`: over a share's room. Only the call's own line drives it — a guest's call never
+     * listens to the own host, nor Sir's call to a share. A share's `ring` rings when the phone
+     * can (`canRing`: on screen, or the service keeps the room open — no VoIP push here) and no
+     * call is up; the own host's always reaches the controller, which ignores it during a call.
+     */
+    fun step(f: Incoming, onLine: Boolean, share: Boolean, canRing: Boolean, idle: Boolean): CallStep? = when (f) {
+        is Incoming.Ring -> if (!share || (canRing && idle)) CallStep.Ring(f.label) else null
+        is Incoming.Peer -> if (onLine) CallStep.LinkChanged else null
+        is Incoming.Audio -> if (onLine) CallStep.Audio(f.state, f.label) else null
+        is Incoming.CaptionFrame -> if (onLine) CallStep.Captions(f.caption) else null
+        else -> null
+    }
 }

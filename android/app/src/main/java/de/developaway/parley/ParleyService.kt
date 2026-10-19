@@ -70,7 +70,7 @@ class ParleyService : Service() {
         if (phase == CallPhase.ringing) startRinging() else stopRinging()
         // In the app the ringing screen is up already: no call notification on top of it.
         val nm = getSystemService(NotificationManager::class.java)
-        if (phase == CallPhase.ringing && !m.isForeground) nm.notify(RING_ID, ringingNotification(m.call.label)) else nm.cancel(RING_ID)
+        if (phase == CallPhase.ringing && !m.isForeground) nm.notify(RING_ID, ringingNotification(m.call.label, m.call.isGuestCall)) else nm.cancel(RING_ID)
         m.relay.ensure()
         m.guestRelays.values.forEach { it.ensure() }
     }
@@ -88,7 +88,7 @@ class ParleyService : Service() {
         return b.build()
     }
 
-    private fun ringingNotification(label: String?): Notification {
+    private fun ringingNotification(label: String?, guest: Boolean): Notification {
         val caller = Person.Builder().setName(label ?: "Parley").setImportant(true).build()
         val answer = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java)
             .setAction(MainActivity.ACTION_ANSWER).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -96,7 +96,7 @@ class ParleyService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_CALLS)
             .setSmallIcon(R.drawable.ic_stat_parley)
             .setContentTitle(label ?: "Parley")
-            .setContentText("Ein Update möchte mit dir sprechen.")
+            .setContentText(de.developaway.parley.ui.ringText(guest))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setOngoing(true)

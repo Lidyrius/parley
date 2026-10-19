@@ -74,8 +74,9 @@ class MainActivity : ComponentActivity() {
                         else -> Overview(m, { id, c -> session = id; compose = c }) { settings = true }
                     }
                     ShareOverlays(m)
-                    // A guest's questions reach him as a notification while Unterwegs keeps the share's room open.
-                    LaunchedEffect(m.guests.isNotEmpty()) { if (m.guests.isNotEmpty() && !m.demo) askPermissions(mic = m.pairing != null) }
+                    // A guest's questions reach him as a notification while Unterwegs keeps the share's room open —
+                    // and as a call (the microphone answers it).
+                    LaunchedEffect(m.guests.isNotEmpty()) { if (m.guests.isNotEmpty() && !m.demo) askPermissions() }
                     AnimatedVisibility(call.showsScreen && call.phase != CallPhase.none,
                         enter = slideInVertically { it }, exit = slideOutVertically { it }) {
                         BackHandler { call.showsScreen = false }

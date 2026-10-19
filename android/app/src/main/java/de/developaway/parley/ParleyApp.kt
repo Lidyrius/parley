@@ -91,12 +91,12 @@ class AppModel(private val app: Application) {
     init {
         relay.onOpened = {
             // Per-connection state, but only what this phone has switched on: a second phone
-            // (the iPhone) in the same room keeps its own Unterwegs.
+            // (the iPhone) in the same room keeps its own Unterwegs. (Only a call on this line —
+            // a guest's call runs on his share's room, v7.)
             if (away) relay.send(Outgoing.away(true))
-            if (call.inCall) relay.send(Outgoing.call(true))
-            call.relayChanged()
+            call.opened(relay)
         }
-        relay.onClosed = { call.relayChanged() }
+        relay.onClosed = { call.linkChanged(relay) }
         relay.onFrame = ::handle
         call.onConnected = {
             resumeOnConnect?.let { relay.resume(it) }
@@ -104,8 +104,12 @@ class AppModel(private val app: Application) {
         }
         call.onPhase = { phase ->
             if (!demo) ParleyService.sync(app)
-            // A call that ended in the background: the socket goes too, unless Unterwegs keeps it.
-            if (phase == CallPhase.none && !isForeground && !away) relay.disconnect()
+            // A call that ended in the background: the socket goes too, unless Unterwegs keeps it
+            // (a share's room too — a guest's call may have kept it open).
+            if (phase == CallPhase.none && !isForeground && !away) {
+                relay.disconnect()
+                guestRelays.values.forEach { it.disconnect() }
+            }
         }
         pairing?.let { relay.use(it) }
         startGuests()
@@ -116,16 +120,24 @@ class AppModel(private val app: Application) {
     private fun handle(f: Incoming) {
         if (f is Incoming.ShareLink) { shareLinks[f.session] = f.link; return }
         if (f is Incoming.Join) { joinRequests.removeAll { it.id == f.request.id }; joinRequests += f.request; return }
+        toCall(relay, f)
         store(f)
+    }
+
+    /** A frame that concerns the call — from the line it runs on only; a share's ring puts it on that line (CallLine). */
+    private fun toCall(from: Relay, f: Incoming) {
+        when (val s = CallLine.step(f, call.line === from, from !== relay, isForeground || away, call.phase == CallPhase.none)) {
+            CallStep.LinkChanged -> call.relayChanged()
+            is CallStep.Audio -> call.hostAudioChanged(s.state, s.label)
+            is CallStep.Captions -> call.captionReceived(s.caption)
+            is CallStep.Ring -> { call.use(from); call.reportIncoming(s.label) }
+            null -> {}
+        }
     }
 
     /** The own host's frames — a share's history and images go in here too, the same store (ids don't collide). */
     private fun store(f: Incoming) {
         when (f) {
-            is Incoming.Peer -> call.relayChanged()
-            is Incoming.Audio -> call.hostAudioChanged(f.state, f.label)
-            is Incoming.CaptionFrame -> call.captionReceived(f.caption)
-            is Incoming.Ring -> call.reportIncoming(f.label)
             is Incoming.History -> {
                 val p = f.page
                 val old = histories[p.id] ?: emptyList()
@@ -166,10 +178,11 @@ class AppModel(private val app: Application) {
     fun foreground(on: Boolean) {
         isForeground = on
         if (demo) return
-        // A share's room too (no push here: while Unterwegs it stays open, as the own one).
-        for (r in guestRelays.values) if (on) r.ensure() else if (!away) r.disconnect()
-        if (pairing == null) return
+        // A share's room too (no push here: while Unterwegs it stays open, as the own one — and
+        // while a guest's call runs on it).
+        for (r in guestRelays.values) if (on) r.ensure() else if (!away && call.line !== r) r.disconnect()
         if (call.phase != CallPhase.none) ParleyService.sync(app)
+        if (pairing == null) return
         if (on) relay.ensure() else if (!away && call.phase == CallPhase.none) relay.disconnect()
     }
 
@@ -239,6 +252,7 @@ class AppModel(private val app: Application) {
 
     /** Leave a share (or give up waiting): the owner's host ends it when told; the room just goes quiet. */
     fun leave(id: String) {
+        guestRelays[id]?.let { if (call.line === it) call.hangUp() }   // his call goes with the share
         guestRelays.remove(id)?.forget()
         guests.removeAll { it.id == id }
         saveGuests()
@@ -255,8 +269,14 @@ class AppModel(private val app: Application) {
     private fun connect(g: GuestShare) {
         val r = guestRelays.getOrPut(g.id) { Relay(scope, deviceName) }
         // Not let in yet: say who I am (and the key the fresh room is sealed to). Let in: nothing —
-        // the iPhone sends its notification push token here; Android has no push.
-        r.onOpened = { guests.firstOrNull { it.id == g.id }?.let { if (!it.active) r.send(Outgoing.join(it.name, Build.MODEL ?: "Android", it.pub)) } }
+        // the iPhone sends its push tokens here; Android has no push (its call rings over this room).
+        r.onOpened = {
+            guests.firstOrNull { it.id == g.id }?.let { if (!it.active) r.send(Outgoing.join(it.name, Build.MODEL ?: "Android", it.pub)) }
+            call.opened(r)   // a guest's call on this room says so again
+        }
+        r.onClosed = { call.linkChanged(r) }
+        // Part 3: the owner's host calls this phone on the share's room — its voice plays only on that call.
+        r.onAudio = { call.play(r, it) }
         r.onFrame = { guestEvent(g.id, it) }
         r.use(g.pairing)
         r.reconnect()
@@ -268,7 +288,13 @@ class AppModel(private val app: Application) {
         val g = guests[i]
         when (f) {
             // The owner's host came (back) into the invite room after we did: ask again (one join per link and key).
-            is Incoming.Peer -> if (f.host && !g.active) guestRelays[id]?.send(Outgoing.join(g.name, Build.MODEL ?: "Android", g.pub))
+            is Incoming.Peer -> {
+                if (f.host && !g.active) guestRelays[id]?.send(Outgoing.join(g.name, Build.MODEL ?: "Android", g.pub))
+                guestRelays[id]?.let { toCall(it, f) }
+            }
+            // Part 3: a call on his own line — the owner's host rings him for a question (in the
+            // foreground, or while Unterwegs keeps the room open in the background).
+            is Incoming.Ring, is Incoming.Audio, is Incoming.CaptionFrame -> if (g.active) guestRelays[id]?.let { toCall(it, f) }
             is Incoming.Move -> {
                 // Let in: the fresh room, sealed to this phone's key — the invite's room is dead from here on.
                 if (g.active) return
@@ -290,7 +316,7 @@ class AppModel(private val app: Application) {
             }
             is Incoming.AskEnd -> guestAsks.removeAll { it.id == f.id }
             is Incoming.History, is Incoming.Image -> store(f)
-            else -> {}   // calls, rings and the owner's controls aren't a guest's
+            else -> {}   // the owner's controls aren't a guest's
         }
     }
 

@@ -439,5 +439,6 @@ fun ShareOverlays(m: AppModel) {
         AlertDialog({ m.guestNotice = null }, title = { Text("Parley") }, text = { Text(text) },
             confirmButton = { TextButton({ m.guestNotice = null }) { Text("OK") } })
     }
-    m.guestAsks.firstOrNull()?.let { GuestAskScreen(m, it) }
+    // Steps aside while a call rings or runs — the owner's host may be asking it on the phone right now.
+    if (!m.call.isBusy) m.guestAsks.firstOrNull()?.let { GuestAskScreen(m, it) }
 }

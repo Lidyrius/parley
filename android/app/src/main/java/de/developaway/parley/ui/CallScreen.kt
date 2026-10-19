@@ -101,7 +101,10 @@ fun CallScreen(call: CallController, accent: Color, minimise: () -> Unit) {
                 Orb(accent, t, level, if (connecting) 0.6f else 1f, Modifier.size(170.dp))
             }
             Spacer(Modifier.height(24.dp))
-            Text(call.label ?: "Parley", color = Ink, fontSize = 38.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            // A guest's call says what it is about ("Rückfrage · Website"): smaller, so it fits.
+            val name = call.label ?: "Parley"
+            Text(name, color = Ink, fontSize = if (name.length > 14) 30.sp else 38.sp, fontWeight = FontWeight.Bold, maxLines = 2,
+                textAlign = TextAlign.Center, lineHeight = 36.sp)
             Row {
                 Text(state, color = accent, fontSize = 20.sp, fontWeight = FontWeight.Medium)
                 if (phase == CallPhase.active && !connecting) Text(" · " + Fmt.clock((now - call.since).toDouble()), color = Dim, fontSize = 20.sp)
@@ -114,7 +117,7 @@ fun CallScreen(call: CallController, accent: Color, minimise: () -> Unit) {
                 Spacer(Modifier.height(24.dp))
                 Captions(call, Modifier.fillMaxWidth().heightIn(min = 90.dp))
             } else if (phase == CallPhase.ringing) {
-                Text("Ein Update möchte mit dir sprechen.", color = Dim, fontSize = 17.sp, textAlign = TextAlign.Center)
+                Text(ringText(call.isGuestCall), color = Dim, fontSize = 17.sp, textAlign = TextAlign.Center)
             }
             Spacer(Modifier.weight(0.4f))
             if (phase == CallPhase.ringing) Ringing(call, accent) else InCall(call, accent)
@@ -122,6 +125,9 @@ fun CallScreen(call: CallController, accent: Color, minimise: () -> Unit) {
         }
     }
 }
+
+/** Under the caller's name while it rings: an update, or (v7) a question for this phone as a guest. */
+fun ringText(guest: Boolean) = if (guest) "Eine Rückfrage für dich." else "Ein Update möchte mit dir sprechen."
 
 @Composable
 private fun Ringing(call: CallController, accent: Color) {
