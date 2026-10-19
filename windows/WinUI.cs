@@ -50,3 +50,41 @@ public static class WinUI
         return p;
     }
 }
+
+// A one-line text question (macOS: an NSAlert with a text field): the text as typed, or null when
+// Sir cancels. Modal, on the UI thread.
+public static class TextPrompt
+{
+    public static string? Ask(string title, string message, string placeholder, string ok)
+    {
+        using var form = new Form
+        {
+            Text = title,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterScreen,
+            MinimizeBox = false,
+            MaximizeBox = false,
+            ShowInTaskbar = false,
+            TopMost = true,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            AutoScaleMode = AutoScaleMode.Dpi,
+            AutoScaleDimensions = new SizeF(96f, 96f),
+        };
+        var layout = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Padding = new Padding(12) };
+        layout.Controls.Add(new Label { Text = message, AutoSize = true, MaximumSize = new Size(320, 0), Margin = new Padding(0, 0, 0, 8) });
+        var field = new TextBox { PlaceholderText = placeholder, Width = 320, Margin = new Padding(0, 0, 0, 12) };
+        layout.Controls.Add(field);
+        var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Anchor = AnchorStyles.Right, Margin = Padding.Empty };
+        var no = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, AutoSize = true };
+        var yes = new Button { Text = ok, DialogResult = DialogResult.OK, AutoSize = true };
+        buttons.Controls.Add(no);    // right to left: Abbrechen rightmost
+        buttons.Controls.Add(yes);
+        layout.Controls.Add(buttons);
+        form.Controls.Add(layout);
+        form.AcceptButton = yes;
+        form.CancelButton = no;
+        form.Shown += (_, _) => { form.Activate(); field.Focus(); };
+        return form.ShowDialog() == DialogResult.OK ? field.Text : null;
+    }
+}

@@ -31,6 +31,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _relayStatus = new() { Enabled = false, Visible = false };
     private readonly ToolStripMenuItem _callStatus = new("iPhone: Anruf aktiv") { Enabled = false, Visible = false };
     private readonly ToolStripMenuItem _awayStatus = new("Unterwegs-Modus an") { Enabled = false, Visible = false };
+    private readonly ToolStripMenuItem _snapshots = new("Snapshots");
     private RelayClient? _relay;
 
     public TrayApp()
@@ -67,7 +68,10 @@ internal sealed class TrayApp : ApplicationContext
 
         var menu = new ContextMenuStrip();
         // Resumable (parked) sessions are inserted at the top on open.
-        menu.Opening += (_, _) => { RefreshParkedMenu(menu); RefreshRelayStatus(); };
+        menu.Opening += (_, _) => { RefreshParkedMenu(menu); RefreshSnapshotsMenu(); RefreshRelayStatus(); };
+        // Snapshots (Snapshots.cs), below the parked ones: rebuilt on open.
+        menu.Items.Add(_snapshots);
+        menu.Items.Add(new ToolStripSeparator());
         var mute = new ToolStripMenuItem("Stumm schalten") { CheckOnClick = true };
         mute.CheckedChanged += (_, _) =>
         {
@@ -374,6 +378,18 @@ internal sealed class TrayApp : ApplicationContext
                 if (LiveActivity.CurrentAsk?.Id == s.Id) LiveActivity.CurrentAsk = null;
                 _server.Resume(s.Id, s.Text);
                 break;
+            // v6: Snapshots — the list goes out with the next sessions frame; opening answers with
+            // a `snapshot` frame (off the receive task: starts take a moment).
+            case PhoneSnapshotSave save:
+                _server.SaveSnapshot(save.Name, save.Ids);
+                break;
+            case PhoneSnapshotOpen open:
+                _ = Task.Run(() => _server.OpenSnapshot(open.Id) is { } opened
+                    ? PhoneCall.Reply(SnapshotStore.Frame(opened.Snapshot, opened.Results)) : Task.CompletedTask);
+                break;
+            case PhoneSnapshotDelete delete:
+                _server.DeleteSnapshot(delete.Id);
+                break;
         }
     }
 
@@ -463,6 +479,34 @@ internal sealed class TrayApp : ApplicationContext
             menu.Items.Insert(idx++, item);
         }
         if (list.Count > 0) menu.Items.Insert(idx, new ToolStripSeparator { Tag = "parked" });
+    }
+
+    // The Snapshots submenu (as the macOS menu's section): each snapshot with its count — a click
+    // opens it — then "Aktuellen Stand sichern …".
+    private void RefreshSnapshotsMenu()
+    {
+        _snapshots.DropDownItems.Clear();
+        foreach (var s in _server.Snapshots.List())
+        {
+            var item = new ToolStripMenuItem($"{s.Name.Replace("&", "&&")} ({s.Sessions.Count})") { ToolTipText = "Öffnen" };
+            var id = s.Id;
+            item.Click += (_, _) => Task.Run(() => _server.OpenSnapshot(id));
+            _snapshots.DropDownItems.Add(item);
+        }
+        if (_snapshots.DropDownItems.Count > 0) _snapshots.DropDownItems.Add(new ToolStripSeparator());
+        var save = new ToolStripMenuItem("Aktuellen Stand sichern …");
+        save.Click += (_, _) => SaveSnapshot();
+        _snapshots.DropDownItems.Add(save);
+    }
+
+    // "Aktuellen Stand sichern …": a name, then every running session under it. As macOS (NSAlert).
+    private void SaveSnapshot()
+    {
+        var name = TextPrompt.Ask("Snapshot sichern", "Merkt sich Name, Session-ID und Ordner jeder laufenden Session.",
+            "Name, z. B. Kunde Müller", "Sichern");
+        if (name is null) return;
+        if (_server.SaveSnapshot(name) is null)
+            MessageBox.Show("Snapshot: Name fehlt oder keine Session läuft", "Parley", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     private void TestRecordingPill()
