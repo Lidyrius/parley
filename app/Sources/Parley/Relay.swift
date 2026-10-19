@@ -149,6 +149,19 @@ enum RelayFrame {
             return f["kind"] as? String == "alert" ? .alert(token: token.lowercased(), env: env) : .push(token: token.lowercased(), env: env)
         case "hello":
             return .hello
+        case "join":   // v7: a guest on a share's room says who he is
+            return .join(name: f["name"] as? String ?? "")
+        case "share":  // v7: Sir shares a session, lets a guest in, ends a share
+            let id = f["id"] as? String ?? ""
+            guard !id.isEmpty else { return nil }
+            switch f["op"] as? String {
+            case "create": return .shareCreate(session: id)
+            case "approve":
+                return .shareApprove(id: id, role: f["role"] as? String ?? "", listen: f["listen"] as? Bool ?? false,
+                                     full: f["full"] as? Bool ?? false, mine: f["mine"] as? String)
+            case "remove": return .shareRemove(id)
+            default: return nil
+            }
         case "barge":
             return .barge
         case "palette":
@@ -249,6 +262,11 @@ enum PhoneEvent: Equatable, Sendable {
     case snapshotSave(name: String, ids: [String]?)  // nil ids = every running session
     case snapshotOpen(String)
     case snapshotDelete(String)
+    // v7 (docs/IPHONE.md): shared sessions — Sir's controls, and a guest saying who he is.
+    case shareCreate(session: String)
+    case shareApprove(id: String, role: String, listen: Bool, full: Bool, mine: String?)
+    case shareRemove(String)
+    case join(name: String)
 }
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never

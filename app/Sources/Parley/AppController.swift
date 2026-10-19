@@ -74,6 +74,7 @@ final class AppController: ObservableObject {
     private var relay: RelayClient?
     private var relayGen = 0   // drops state reports of a replaced relay client
     let phone = PhoneHub()
+    lazy var shares = ShareHub(server: server)   // shared sessions (Shares.swift)
     private let apns = APNsClient()
     private var audioWork = 0  // queue items + ack clips in flight; 0 → the phone hears `audio idle`
     static let ringTimeout: TimeInterval = 45
@@ -139,6 +140,9 @@ final class AppController: ObservableObject {
         }
         // v3: the phone's session view — history (from Claude Code's transcript), its images,
         // and typed messages (delivered like a routed instruction).
+        let shares = self.shares
+        shares.toSir = { [phone] in phone.reply($0) }
+        shares.notify = { title, body in Task { @MainActor in Notifier.notify(title: title, body: body) } }
         phone.onChat = { [phone, weak self] event in
             // An answer (typed, or tapped in the Live Activity) closes that session's question there.
             if case .say(let id, _) = event {
@@ -172,6 +176,12 @@ final class AppController: ObservableObject {
                     if let (s, outcomes) = server.openSnapshot(id) { phone.reply(Snapshots.frame(s, outcomes)) }
                 case .snapshotDelete(let id):
                     _ = server.deleteSnapshot(id)
+                case .shareCreate(let session):
+                    if let (s, link) = shares.create(session: session) { phone.reply(Shares.linkFrame(s, link: link)) }
+                case .shareApprove(let id, let role, let listen, let full, let mine):
+                    shares.approve(id, role: role, listen: listen, full: full, mine: mine)
+                case .shareRemove(let id):
+                    shares.remove(id)
                 default: break
                 }
             }
@@ -183,6 +193,7 @@ final class AppController: ObservableObject {
         Task { await ProjectClips.shared.prerenderGreetings(config: AppConfig.load()) }
         server.start()
         startRelay()
+        shares.start()
         activityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickLiveActivity() }
         }

@@ -12,6 +12,7 @@ enum Transcript {
         var text: String?
         var who: String?     // image: "user" | "assistant"
         var at: Double?      // epoch ms
+        var by: String?      // user / voice: a guest's name (Shares.swift), nil = Sir
         var add: Int?        // tool: lines a Write / Edit added
         var del: Int?        //       and removed
     }
@@ -75,7 +76,8 @@ enum Transcript {
             let at = (e["timestamp"] as? String).flatMap(parseDate).map { $0.timeIntervalSince1970 * 1000 }
             var n = 0
             func add(_ k: String, _ text: String? = nil, who: String? = nil, diff: (Int, Int)? = nil) {
-                out.append(Item(id: "\(uuid)#\(n)", k: k, text: text.map(clip), who: who, at: at, add: diff?.0, del: diff?.1))
+                let (by, body) = k == "user" || k == "voice" ? Shares.author(text) : (nil, text)
+                out.append(Item(id: "\(uuid)#\(n)", k: k, text: body.map(clip), who: who, at: at, by: by, add: diff?.0, del: diff?.1))
                 n += 1
             }
             if type == "assistant" {

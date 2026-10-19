@@ -561,9 +561,17 @@ final class ControlServer: @unchecked Sendable {
         queue.async { _ = self.startResume(id) }
     }
 
-    // GET /sessions for the relay, read on the server queue.
-    func sessionsJSON() -> String {
-        queue.sync { sessions.json() }
+    // GET /sessions for the relay, read on the server queue. `only`: a guest's view (Shares.swift).
+    func sessionsJSON(only: String? = nil) -> String {
+        queue.sync { sessions.json(only: only) }
+    }
+
+    func sessionInfo(_ id: String) -> (label: String, cwd: String, state: String)? {
+        queue.sync { sessions.info(id) }
+    }
+
+    func setShared(_ tags: [String: [SessionRegistry.ShareTag]]) {
+        queue.async { self.sessions.shared = tags }
     }
 
     // Book-keeping once a queue item is answered: a hook turn's reply, or the resume dialog's

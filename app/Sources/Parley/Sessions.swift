@@ -387,10 +387,15 @@ final class SessionRegistry {
     }
 
     // GET /sessions — voice holder first, then alive sessions by label, stopped last.
-    func json() -> String {
+    // The people a session is shared with (Shares.swift keeps it current): shown on its row.
+    var shared: [String: [ShareTag]] = [:]
+    struct ShareTag: Encodable, Equatable { let name, role: String }
+
+    // `only`: a guest's view (Shares.swift) — that one session, nothing else of Sir's.
+    func json(only: String? = nil) -> String {
         refresh()
         func rank(_ e: Entry) -> Int { e.id == activeId ? 0 : (e.state == "stopped" ? 2 : 1) }
-        let rows = entries.values.sorted {
+        let rows = entries.values.filter { only == nil || $0.id == only }.sorted {
             let (ra, rb) = (rank($0), rank($1))
             if ra != rb { return ra < rb }
             let c = $0.label.caseInsensitiveCompare($1.label)
@@ -399,14 +404,17 @@ final class SessionRegistry {
             Row(id: e.id, label: e.label, project: e.project, state: e.state, since: Self.ms(e.since),
                 until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil,
                 callback: e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) }, voice: e.id == activeId,
-                resumable: resumable(e), tasks: e.tasks, host: DesktopSessions.resolve(cli: e.id, reported: e.host),
+                resumable: only == nil && resumable(e), tasks: e.tasks, host: only == nil ? DesktopSessions.resolve(cli: e.id, reported: e.host) : nil,
+                shared: shared[e.id] ?? [],
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
         }
         let day = daily.snapshot()
         let today = Today(costUsd: (day.costUsd * 10_000).rounded() / 10_000, turns: day.turns,
                           spokenSeconds: Int(day.spokenSeconds.rounded()), rateLimits: rateLimits)
-        let data = try? JSONEncoder().encode(Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots))
+        let data = try? JSONEncoder().encode(only == nil
+            ? Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots)
+            : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: []))
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"sessions":[]}"#
     }
 
@@ -421,8 +429,9 @@ final class SessionRegistry {
         let voice, resumable: Bool
         let tasks: [BackgroundTask]
         let host: String?
+        let shared: [ShareTag]
         let stats: RowStats
-        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats }
+        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, stats }
         func encode(to encoder: Encoder) throws {   // explicit: `until` must be null, not omitted
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(label, forKey: .label)
@@ -431,6 +440,7 @@ final class SessionRegistry {
             try c.encodeIfPresent(callback, forKey: .callback)
             try c.encode(voice, forKey: .voice); try c.encode(resumable, forKey: .resumable)
             try c.encode(tasks, forKey: .tasks); try c.encode(host, forKey: .host)
+            if !shared.isEmpty { try c.encode(shared, forKey: .shared) }
             try c.encode(stats, forKey: .stats)
         }
     }
