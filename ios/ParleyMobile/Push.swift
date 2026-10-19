@@ -39,6 +39,11 @@ enum PushPayload {
         (payload["label"] as? String).flatMap(Frame.clean)
     }
 
+    /// v7: a guest's call — the share whose room carries it.
+    static func share(_ payload: [AnyHashable: Any]) -> String? {
+        (payload["share"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// What CallKit shows for an incoming call: "Parley · Tippfrei", or just "Parley".
     static func callerName(_ label: String?) -> String {
         label.map { "Parley · \($0)" } ?? "Parley"
@@ -58,7 +63,7 @@ final class PushRegistry: NSObject, @preconcurrency PKPushRegistryDelegate {
     private(set) var token: String?
     var onToken: ((String) -> Void)?
     /// Must report the call to CallKit and call the completion once it has.
-    var onIncoming: ((_ label: String?, _ reported: @escaping () -> Void) -> Void)?
+    var onIncoming: ((_ label: String?, _ share: String?, _ reported: @escaping () -> Void) -> Void)?
 
     override init() {
         super.init()
@@ -80,6 +85,6 @@ final class PushRegistry: NSObject, @preconcurrency PKPushRegistryDelegate {
     func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload,
                       for type: PKPushType, completion: @escaping () -> Void) {
         guard type == .voIP, let onIncoming else { completion(); return }
-        onIncoming(PushPayload.label(payload.dictionaryPayload), completion)
+        onIncoming(PushPayload.label(payload.dictionaryPayload), PushPayload.share(payload.dictionaryPayload), completion)
     }
 }

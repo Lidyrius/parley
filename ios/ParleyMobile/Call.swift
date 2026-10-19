@@ -65,7 +65,18 @@ final class CallController {
     @ObservationIgnored private var ringExpiry: Task<Void, Never>?
     static let ringSeconds = 40.0
 
-    @ObservationIgnored private let relay: Relay
+    /// The line a call runs on: the own Mac's room, or a share's (v7: a guest's call) — `use(line:)`.
+    @ObservationIgnored private let home: Relay
+    @ObservationIgnored private(set) var relay: Relay
+    @ObservationIgnored private let out: Locked<AudioOut>
+    var line: Relay { relay }
+
+    /// v7: the next call runs on this relay (a share's room); after it, the own Mac's again.
+    func use(line: Relay) {
+        guard phase == .none || relay === line else { return }
+        relay = line
+        out.value = line.audioOut
+    }
     @ObservationIgnored private let wake = WakeListener()
     @ObservationIgnored private let audio: CallAudio
     @ObservationIgnored private var provider: CXProvider?
@@ -85,9 +96,11 @@ final class CallController {
 
     init(relay: Relay, demo: Bool) {
         self.relay = relay
+        home = relay
         isDemo = demo
-        let out = relay.audioOut
-        audio = CallAudio(meter: meter, speech: wake.feed, send: { out.send($0) })
+        let out = Locked(relay.audioOut)
+        self.out = out
+        audio = CallAudio(meter: meter, speech: wake.feed, send: { out.value.send($0) })
         wake.onWake = { [weak self] in
             guard let self else { return }
             if listeningForBarge { bargeHeard() } else { wakeHeard() }
@@ -549,6 +562,8 @@ final class CallController {
         relay.send(Outgoing.call(started: false))
         Task { try? await Task.sleep(for: .seconds(2)); UIApplication.shared.endBackgroundTask(sending) }
         reset()
+        relay = home                     // a guest's call is over: the own Mac's line again
+        out.value = home.audioOut
         onEnded()
         if declinedOnLockScreen { onDeclined(declinedLabel) }
     }

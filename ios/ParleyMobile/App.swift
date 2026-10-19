@@ -139,7 +139,7 @@ final class AppModel {
     }
 
     @ObservationIgnored private var push: PushRegistry?
-    @ObservationIgnored private var isForeground = false
+    @ObservationIgnored private(set) var isForeground = false
     @ObservationIgnored private let pushEnvironment = PushEnvironment.current()
     @ObservationIgnored let activity = ActivityLink()
 
@@ -196,8 +196,15 @@ final class AppModel {
         activity.start()
         let push = PushRegistry()
         push.onToken = { [weak self] _ in self?.sendPushToken() }
-        push.onIncoming = { [weak self] label, reported in
+        push.onIncoming = { [weak self] label, share, reported in
             guard let self else { reported(); return }
+            // v7: a guest's call rides that share's room.
+            if let share, let r = guestRelay(share: share) {
+                call.use(line: r)
+                if r.link == .idle { r.reconnect() }
+                call.reportIncoming(label: label, reported: reported)
+                return
+            }
             call.reportIncoming(label: label, reported: reported)
             if pairing == nil { call.hangUp() }  // a host that still has this phone's token
         }
@@ -423,6 +430,12 @@ final class AppModel {
         relay.send(Outgoing.push(token: token, env: pushEnvironment))
     }
 
+    /// v7: a guest's call tokens on his share's room (the VoIP one rings him, the alert one asks).
+    func sendPushTokens(on r: Relay) {
+        if let token = push?.token, !demo { r.send(Outgoing.push(token: token, env: pushEnvironment)) }
+        sendAlertToken(on: r)
+    }
+
     func handle(_ event: RelayEvent) {
         switch event {
         case .opened:
@@ -433,16 +446,17 @@ final class AppModel {
             sendPushToken()
             sendAlertToken()
             sendActivityTokens()
-            if call.phase.isActive { relay.send(Outgoing.call(started: true)) }
+            // (Only a call on this line — a guest's call runs on his share's room, v7.)
+            if call.phase.isActive, call.line === relay { relay.send(Outgoing.call(started: true)) }
             call.relayChanged()
         case .closed:
             call.relayChanged()
         case .audio(let frame):
-            call.play(frame)
+            if call.line === relay { call.play(frame) }
         case .frame(.peer):
             call.relayChanged()
         case .frame(.audio(let state, let label)):
-            call.hostAudioChanged(state, label: label)
+            if call.line === relay { call.hostAudioChanged(state, label: label) }
         case .frame(.history(let id, let items, let before, let more)):
             let old = histories[id] ?? []
             histories[id] = Self.merge(old, page: items, before: before)
@@ -457,9 +471,9 @@ final class AppModel {
             let seen = Set(items.filter { $0.kind == .user || $0.kind == .voice }.compactMap(\.text))
             pending[id]?.removeAll { seen.contains($0) }
         case .frame(.caption(let c)):
-            call.captionReceived(c)
+            if call.line === relay { call.captionReceived(c) }
         case .frame(.slides(let s)):
-            call.slidesReceived(s)
+            if call.line === relay { call.slidesReceived(s) }
         case .frame(.snapshotOpened(let id, let results)):
             opened[id] = results
         case .frame(.palette(let p)):
@@ -497,7 +511,7 @@ struct RootView: View {
         }
         // The system camera opens the QR's parley:// link here.
         .sheet(item: Binding(get: { model.pendingJoin }, set: { model.pendingJoin = $0 })) { JoinView(link: $0) }
-        .fullScreenCover(item: Binding(get: { model.guestAsks.first }, set: { _ in })) { GuestAskView(ask: $0) }
+        .fullScreenCover(item: Binding(get: { model.call.isBusy ? nil : model.guestAsks.first }, set: { _ in })) { GuestAskView(ask: $0) }
         .onOpenURL { url in
             // v7: someone shares a session with this phone.
             if url.host == "join" || (url.scheme == "https" && url.path == "/join") {

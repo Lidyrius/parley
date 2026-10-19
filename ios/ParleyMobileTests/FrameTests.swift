@@ -499,5 +499,11 @@ struct FrameTests {
             #expect(Fmt.cardState(snap.sessions[0], at: 0) == "Rückfrage an Max")
         } else { Issue.record("no sessions") }
     }
+
+    @Test func guestCallPushNamesItsShare() {
+        #expect(PushPayload.share(["label": "Rückfrage · Website", "share": "s1"]) == "s1")
+        #expect(PushPayload.share(["label": "Website"]) == nil)
+        #expect(PushPayload.share(["share": ""]) == nil)
+    }
 }
 

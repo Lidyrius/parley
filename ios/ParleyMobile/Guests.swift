@@ -85,6 +85,11 @@ extension AppModel {
         return relay
     }
 
+    /// The relay of the share the owner's Mac calls `share` (a guest's VoIP push names it).
+    func guestRelay(share: String) -> Relay? {
+        guests.first { $0.share == share }.flatMap { guestRelays[$0.id] }
+    }
+
     /// The share a session belongs to, if it is someone else's.
     func guestShare(of id: String) -> GuestShare? {
         guests.first { g in guestRelays[g.id]?.snapshot?.sessions.contains { $0.id == id } == true }
@@ -103,8 +108,29 @@ extension AppModel {
         switch event {
         case .opened:
             guard let r = guestRelays[id] else { return }
-            if guests[i].active { sendAlertToken(on: r) }   // so his questions reach him as a push
+            if guests[i].active { sendPushTokens(on: r) }   // so his questions ring / reach him as a push
             else { r.send(Outgoing.join(name: guests[i].name, device: UIDevice.current.name, pub: guests[i].pub)) }
+            if call.line === r {
+                if call.phase.isActive { r.send(Outgoing.call(started: true)) }
+                call.relayChanged()
+            }
+        case .closed, .frame(.peer):
+            if let r = guestRelays[id], call.line === r { call.relayChanged() }
+        // Part 3: a call on his own line — the owner's Mac rings him for a question.
+        case .audio(let frame):
+            if let r = guestRelays[id], call.line === r { call.play(frame) }
+        case .frame(.audio(let state, let label)):
+            if let r = guestRelays[id], call.line === r { call.hostAudioChanged(state, label: label) }
+        case .frame(.caption(let c)):
+            if let r = guestRelays[id], call.line === r { call.captionReceived(c) }
+        case .frame(.slides(let s)):
+            if let r = guestRelays[id], call.line === r { call.slidesReceived(s) }
+        case .frame(.ring(let label)):
+            // In the foreground (in the background the VoIP push rings instead).
+            if let r = guestRelays[id], isForeground, call.phase == .none {
+                call.use(line: r)
+                call.reportIncoming(label: label)
+            }
         case .frame(.shareMove(let m)):
             // Let in: the fresh room, sealed to this phone's key — the invite's room is dead from here on.
             guard !guests[i].active, let room = guests[i].open(m),
