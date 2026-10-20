@@ -277,13 +277,16 @@ const basename = (cwd: string) => cwd.split(/[\\/]/).pop() ?? '' // Windows cwd 
 // back on /presence as a delivery. Module state starts over on a hot reload; what must outlive
 // one (the open turn, the ids already submitted) is in $.state.
 
-let interactive = false // a prompt box: under -p / the SDK the process ends after the Stop
+// A prompt box: under -p / the SDK the process ends after the Stop. null = the mod (re)loaded
+// into a session already running (no session.start seen) — that's an interactive one: a -p run
+// is over long before a reload reaches it.
+let interactive: boolean | null = null
 let hostAsync = { ok: false, at: -Infinity } // GET /health says async:1; asked again each minute
 let open = false // the app's last answer carried a delivery: presence every 0.5 s until it's gone
 const taken = new Set<string>() // delivery ids submitted (beside `delivered`, at once: no race)
 
 async function hostCarries($: EngineInterface): Promise<boolean> {
-  if (!interactive) return false
+  if (interactive === false) return false
   const t = await $.clock.now()
   if (t - hostAsync.at < 60000) return hostAsync.ok
   const res = await $.http.fetch(`${APP}/health`).catch(() => null)
@@ -423,7 +426,7 @@ async function arm($: EngineInterface) {
 
 export const register: Register = on => {
   // A (re)load starts the module's own state over, as the engine does for a hot reload.
-  label = ''; selfId = ''; home = ''; interactive = false; open = false
+  label = ''; selfId = ''; home = ''; interactive = null; open = false
   loop = null; watcher = null; over = null; beat = sentAt = fetchedAt = -Infinity
   hostAsync = { ok: false, at: -Infinity }
   taken.clear()
@@ -452,6 +455,7 @@ export const register: Register = on => {
     // Every Stop ends the turn — one without <speak> too, or presence says "working" forever.
     await update($, isWorking, () => false)
     await update($, tasks, () => (e.background_tasks ?? []).map(t => ({ type: t.type, description: t.description })))
+    home ||= e.cwd // reloaded into a running session: no session.start gave us the folder
     await arm($)
     const spoken = parseSpeak(e.last_assistant_message ?? '')
     if (!spoken) return next(e)
