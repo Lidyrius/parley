@@ -71,7 +71,9 @@ internal sealed class TrayApp : ApplicationContext
         _shares = new ShareHub(_server)
         {
             ToSir = frame => _ = PhoneCall.Reply(frame),
-            Notify = Notifier.Notify,
+            // A guest asks to join: on the PC, and as an alert on Sir's phone — its socket is often
+            // closed (background); the tap opens the app, whose hello brings the ask again.
+            Notify = (title, body) => { Notifier.Notify(title, body); _ = Apns.SendAlert(title, body, ""); },
             Push = (token, env, title, body, session) => _ = Apns.SendAlertTo(token, env, title, body, session),
             CallGuest = (line, turn, share) => CallGuest(line, turn, share),
         };
@@ -417,6 +419,8 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneHello hello:
                 RelayHost.SayHello(hello.Device);   // the setup's pairing step waits for this
                 if (_pendingPalette is { } pending) _ = PhoneCall.Reply(pending.Frame);
+                // Guests still waiting for Sir's yes: the ask again, in case the phone missed it.
+                foreach (var s in _shares.List().Where(s => s.State == "asking")) _ = PhoneCall.Reply(Shares.JoinFrame(s));
                 break;
             case PhonePaletteSaved saved:
                 Log.Write($"palette: the phone saved {saved.Name}");

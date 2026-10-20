@@ -144,7 +144,15 @@ final class AppController: ObservableObject {
         // and typed messages (delivered like a routed instruction).
         let shares = self.shares
         shares.toSir = { [phone] in phone.reply($0) }
-        shares.notify = { title, body in Task { @MainActor in Notifier.notify(title: title, body: body) } }
+        // A guest asks to join: on the Mac, and as an alert on Sir's phone — its socket is often
+        // closed (background), so the ask frame alone would never reach it; the tap opens the app,
+        // whose hello brings the ask again (below).
+        shares.notify = { [phone, apns] title, body in
+            Task { @MainActor in Notifier.notify(title: title, body: body) }
+            if let target = phone.alertTarget {
+                Task.detached { _ = await apns.notify(token: target.token, env: target.env, title: title, body: body, session: "") }
+            }
+        }
         // v7: a guest's question (<speak to="Max">) goes to him; unanswered it comes back to Sir.
         server.askGuest = { [shares] id, turn, respond in shares.ask(share: id, turn, respond: respond) }
         shares.voiceForSir = { [server] turn, respond in server.voiceForSir(turn, respond: respond) }
@@ -162,6 +170,8 @@ final class AppController: ObservableObject {
             if case .hello(let device) = event {
                 Task { @MainActor in self?.phoneHello = (device.isEmpty ? "Ihrem Handy" : device, Date()) }
                 Task { @MainActor in if let p = self?.pendingPalette { phone.reply(p.frame) } }
+                // Guests still waiting for Sir's yes: the ask again, in case the phone missed it.
+                for s in shares.list() where s.state == "asking" { phone.reply(Shares.askFrame(s)) }
                 return
             }
             if case .paletteSaved(let name) = event {
