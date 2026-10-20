@@ -70,6 +70,7 @@ import de.developaway.parley.Session
 import de.developaway.parley.SessionState
 import de.developaway.parley.Stats
 import de.developaway.parley.Today
+import de.developaway.parley.ordered
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -272,21 +273,26 @@ private fun Sessions(m: AppModel, list: List<Session>, c: Colors, open: (String)
         when {
             list.isEmpty() -> Notice(c, Icons.Filled.Notifications, "Keine Sessions",
                 "Sobald eine Claude-Code- oder Codex-Session über Parley spricht, erscheint sie hier.")
-            m.asGrid -> list.chunked(2).forEach { row ->
+            m.asGrid -> list.ordered().chunked(2).forEach { row ->
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     row.forEach { s -> Tile(s, at, c, canSend, Modifier.weight(1f).fillMaxHeight(), { open(s.id) }) { act(s) } }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
-            else -> Column(Modifier.fillMaxWidth().card(c)) {
-                list.forEachIndexed { i, s ->
-                    if (i > 0) HorizontalDivider(Modifier.padding(start = 54.dp), color = c.stroke)
-                    ListRow(s, at, c, canSend, { open(s.id) }) { act(s) }
+            else -> list.ordered().groupBy { it.group }.forEach { (g, rows) ->
+                Text(GROUPS[g], fontSize = 13.sp, color = c.secondary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+                Column(Modifier.fillMaxWidth().card(c)) {
+                    rows.forEachIndexed { i, s ->
+                        if (i > 0) HorizontalDivider(Modifier.padding(start = 54.dp), color = c.stroke)
+                        ListRow(s, at, c, canSend, { open(s.id) }) { act(s) }
+                    }
                 }
             }
         }
     }
 }
+
+private val GROUPS = listOf("BRAUCHT INPUT", "ARBEITET", "ANGEHALTEN", "BEENDET")
 
 @Composable
 private fun Choice(icon: ImageVector, name: String, on: Boolean, c: Colors, pick: () -> Unit) {

@@ -1,5 +1,7 @@
 package de.developaway.parley.ui
 
+import android.content.Context
+import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,6 +32,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -88,6 +91,7 @@ fun ProgressBar(fraction: Double, color: Color, c: Colors, modifier: Modifier = 
 fun SessionRing(s: Session, color: Color, at: Double, size: Dp = 30.dp) {
     val animated = s.isLive || s.state in setOf(SessionState.working, SessionState.queued, SessionState.background, SessionState.waiting)
     val t by rememberSeconds(animated)
+    val still = animationsOff(LocalContext.current)
     val left = s.remaining(at) ?: 0.0
     Canvas(Modifier.size(size).alpha(if (s.state == SessionState.stopped) 0.7f else 1f)) {
         val u = this.size.width / 40f
@@ -101,9 +105,18 @@ fun SessionRing(s: Session, color: Color, at: Double, size: Dp = 30.dp) {
             s.state == SessionState.working -> rotate(360 * cycle(1.6), c) { arc(0.28) }
             s.state == SessionState.queued -> rotate(360 * cycle(4.0), c) { arc(0.12) }
             s.state == SessionState.background -> {
+                // One dot per background job (at most 5), circling together and pulsing in a wave.
+                val tb = if (still) 0.0 else t
+                val n = s.tasks.size.coerceIn(1, 5)
+                val base = listOf(3.5, 3.3, 3.0, 2.7, 2.5)[n - 1]
                 arc(1.0, 0.35f)
-                rotate(360 * cycle(2.4), c) { drawCircle(color, 3.5f * u, Offset(c.x, 5 * u)) }
-                drawCircle(color, 4 * u, c)
+                for (i in 0 until n) {
+                    val a = 2 * PI * (i.toDouble() / n + tb / 2.4) - PI / 2
+                    val b = 0.5 + 0.5 * sin(2 * PI * (tb / 1.8 - i.toDouble() / n))
+                    drawCircle(color, (base * (0.85 + 0.3 * b)).toFloat() * u,
+                        Offset(c.x + (15 * cos(a)).toFloat() * u, c.y + (15 * sin(a)).toFloat() * u))
+                }
+                drawCircle(color, (4 + 1.2 * (0.5 - 0.5 * cos(2 * PI * tb / 3.2))).toFloat() * u, c)
             }
             s.state == SessionState.waiting && s.until != null -> arc(left)
             s.state == SessionState.parked -> {
@@ -115,6 +128,10 @@ fun SessionRing(s: Session, color: Color, at: Double, size: Dp = 30.dp) {
         }
     }
 }
+
+/** The system's "remove animations" (animator scale 0). */
+private fun animationsOff(ctx: Context): Boolean =
+    Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
 
 /** A small speech-like waveform for a speaking session. */
 @Composable

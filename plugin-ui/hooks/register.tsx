@@ -143,6 +143,19 @@ export function timer(s: Sess, at: number): string {
 // The ring per tile (design C). Its source depends on the state alone, never on the clock,
 // so the redraw every second leaves the running SMIL animation alone. A countdown starts
 // from where it stood when first drawn (`from`, fraction left) and drains to `until`.
+// One dot per background job (at most 5), evenly spaced, circling together; each pulses in turn
+// and the core breathes.
+function orbit(jobs: number, col: string): string {
+  const n = Math.min(5, Math.max(1, jobs)), base = [3.5, 3.3, 3, 2.7, 2.5][n - 1]
+  const dots = Array.from({ length: n }, (_, i) => {
+    const a = 2 * Math.PI * i / n, x = (20 + 15 * Math.sin(a)).toFixed(2), y = (20 - 15 * Math.cos(a)).toFixed(2)
+    const lo = (base * 0.85).toFixed(2), hi = (base * 1.15).toFixed(2)
+    return `<circle cx="${x}" cy="${y}" r="${base}" fill="${col}"><animate attributeName="r" values="${lo};${hi};${lo}" dur="1.8s" begin="${(1.8 * i / n).toFixed(2)}s" repeatCount="indefinite"/></circle>`
+  }).join('')
+  return `<g>${dots}<animateTransform attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" dur="2.4s" repeatCount="indefinite"/></g>`
+    + `<circle cx="20" cy="20" r="4" fill="${col}"><animate attributeName="r" values="4;5.2;4" dur="3.2s" repeatCount="indefinite"/></circle>`
+}
+
 export function ringSvg(s: Sess, from: number, at: number): string {
   const r = 15, c = +(2 * Math.PI * r).toFixed(2), col = STATE[s.state].hex
   const arc = (frac: number, extra = '') =>
@@ -155,7 +168,7 @@ export function ringSvg(s: Sess, from: number, at: number): string {
     : s.state === 'working' ? spin(0.28, 1.6)
     : s.state === 'queued' ? spin(0.12, 4)
     : s.state === 'background'
-      ? `${arc(1).replace('stroke-width="3"', 'stroke-width="3" stroke-opacity="0.35"')}<g><circle cx="20" cy="5" r="3.5" fill="${col}"/><animateTransform attributeName="transform" type="rotate" from="0 20 20" to="360 20 20" dur="2.4s" repeatCount="indefinite"/></g><circle cx="20" cy="20" r="4" fill="${col}"/>`
+      ? `${arc(1).replace('stroke-width="3"', 'stroke-width="3" stroke-opacity="0.35"')}${orbit(s.tasks?.length ?? 1, col)}`
     : s.state === 'waiting' && s.until
       ? arc(from, `<animate attributeName="stroke-dasharray" from="${(c * from).toFixed(2)} ${c}" to="0 ${c}" dur="${Math.max(0.1, (s.until - at) / 1000).toFixed(1)}s" fill="freeze"/>`)
     : s.state === 'parked' ? `<rect x="14" y="13" width="4" height="14" rx="1.5" fill="${col}"/><rect x="22" y="13" width="4" height="14" rx="1.5" fill="${col}"/>`

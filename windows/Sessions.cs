@@ -586,7 +586,8 @@ public sealed class SessionRegistry
         [property: JsonPropertyName("asking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Asking,
         [property: JsonPropertyName("stats")] object Stats);
 
-    // GET /sessions — voice holder first, then alive sessions by label, stopped last.
+    // GET /sessions — by status group (needs input, working, halted, stopped), newest change
+    // first within a group, then label, then id. As macOS.
     // `only`: a guest's view (Shares.cs) — that one session, nothing else of Sir's.
     public string Json(string? only = null)
     {
@@ -594,10 +595,16 @@ public sealed class SessionRegistry
         {
             Refresh();
             var active = _activeId;
-            int Rank(Entry e) => e.Id == active ? 0 : e.State == "stopped" ? 2 : 1;
+            int Rank(Entry e) =>
+                e.State == "stopped" ? 3
+                : e.Id == active || e.CallbackAt is not null
+                    || e.State is "speaking" or "listening" or "transcribing" or "queued" ? 0
+                : e.State is "working" or "background" ? 1
+                : 2;
             var rows = _entries.Values
                 .Where(e => only is null || e.Id == only)
                 .OrderBy(Rank)
+                .ThenByDescending(e => e.Since)
                 .ThenBy(e => e.Label, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(e => e.Id, StringComparer.Ordinal)
                 .Select(e => new Row(

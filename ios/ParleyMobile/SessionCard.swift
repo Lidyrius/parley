@@ -451,13 +451,20 @@ private struct Ring: View {
                 Circle().fill(color).frame(width: 2 * r * u, height: 2 * r * u)
             case .spin(let fraction, let period):
                 arc(fraction).rotationEffect(.degrees(360 * cycle(period)))
-            case .background:
+            case .background(let jobs):
                 arc(1).opacity(0.35)
-                Circle().fill(color).frame(width: 7 * u, height: 7 * u)
-                    .position(x: size / 2, y: 5 * u)
-                    .frame(width: size, height: size)
-                    .rotationEffect(.degrees(360 * cycle(2.4)))
-                Circle().fill(color).frame(width: 8 * u, height: 8 * u)
+                // One dot per job (at most five), evenly spaced, circling together; each pulses in
+                // turn and the core breathes.
+                let n = min(5, max(1, jobs)), base = [3.5, 3.3, 3.0, 2.7, 2.5][n - 1]
+                ForEach(0..<n, id: \.self) { i in
+                    let r = base * (0.85 + 0.3 * (0.5 + 0.5 * sin(2 * .pi * (t / 1.8 - Double(i) / Double(n)))))
+                    Circle().fill(color).frame(width: 2 * r * u, height: 2 * r * u)
+                        .position(x: size / 2, y: 5 * u)
+                        .frame(width: size, height: size)
+                        .rotationEffect(.degrees(360 * (Double(i) / Double(n) + cycle(2.4))))
+                }
+                let core = 4 + 1.2 * (0.5 - 0.5 * cos(2 * .pi * t / 3.2))
+                Circle().fill(color).frame(width: 2 * core * u, height: 2 * core * u)
             case .countdown:
                 arc(left)
             case .parked:

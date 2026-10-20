@@ -116,7 +116,8 @@ struct OverviewView: View {
     }
 
     @ViewBuilder
-    private func sessions(_ list: [Session], skew: Double, canSend: Bool) -> some View {
+    private func sessions(_ unsorted: [Session], skew: Double, canSend: Bool) -> some View {
+        let list = SessionGroup.sorted(unsorted)   // the Mac sorts too; this holds with older hosts
         let actions = SessionActions(open: { detail = $0 }, resume: model.resume, callBack: model.callParley, canSend: canSend)
         VStack(alignment: .leading, spacing: 12) {
             SessionsHead(count: list.filter { $0.state != .stopped }.count, asList: $asList,
@@ -127,14 +128,21 @@ struct OverviewView: View {
                 Notice(title: "Keine Sessions", symbol: "waveform",
                        text: "Sobald eine Claude-Code- oder Codex-Session über Parley spricht, erscheint sie hier.")
             } else if asList {
-                VStack(spacing: 0) {
-                    ForEach(Array(list.enumerated()), id: \.element.id) { i, s in
-                        if i > 0 { Divider().padding(.leading, 54) }
-                        SessionRow(session: s, skew: skew, actions: actions)
+                // The list keeps the groups apart under a heading each; the grid runs on without.
+                ForEach(SessionGroup.allCases, id: \.self) { g in
+                    let members = list.filter { SessionGroup($0) == g }
+                    if !members.isEmpty {
+                        Text(g.title).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 4)
+                        VStack(spacing: 0) {
+                            ForEach(Array(members.enumerated()), id: \.element.id) { i, s in
+                                if i > 0 { Divider().padding(.leading, 54) }
+                                SessionRow(session: s, skew: skew, actions: actions)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .background(CardBackground())
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .background(CardBackground())
             } else {
                 Grid(horizontalSpacing: 12, verticalSpacing: 12) {
                     ForEach(rows(list)) { row in

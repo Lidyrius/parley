@@ -90,12 +90,20 @@ struct FormatTests {
         #expect(Session(id: "x", state: .working).remaining(at: at) == nil)
     }
 
+    @Test func groupsNeedsSirFirstThenNewest() {
+        let list = [Session(id: "p", state: .parked, since: 5), Session(id: "w1", state: .working, since: 1),
+                    Session(id: "s", state: .stopped, since: 9), Session(id: "q", state: .queued, since: 2),
+                    Session(id: "b", state: .background, since: 3), Session(id: "c", state: .idle, since: 1, callback: 0)]
+        #expect(SessionGroup.sorted(list).map(\.id) == ["q", "c", "b", "w1", "p", "s"])
+    }
+
     @Test func ringPerState() {
         #expect(RingKind(Session(id: "a", state: .speaking)) == .live)
         #expect(RingKind(Session(id: "a", state: .queued, voice: true)) == .live)
         #expect(RingKind(Session(id: "a", state: .working)) == .spin(fraction: 0.28, period: 1.6))
         #expect(RingKind(Session(id: "a", state: .queued)) == .spin(fraction: 0.12, period: 4))
-        #expect(RingKind(Session(id: "a", state: .background)) == .background)
+        #expect(RingKind(Session(id: "a", state: .background)) == .background(jobs: 0))
+        #expect(RingKind(Session(id: "a", state: .background, tasks: [.init(), .init(), .init()])) == .background(jobs: 3))
         #expect(RingKind(Session(id: "a", state: .waiting, until: at)) == .countdown)
         #expect(RingKind(Session(id: "a", state: .waiting)) == .stopped)   // as the mod: no end, no countdown
         #expect(RingKind(Session(id: "a", state: .parked)) == .parked)

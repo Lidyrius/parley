@@ -241,6 +241,9 @@ test('background: a Stop with running background work reports "background"; a ne
   expect(bgLabel({ ...s, tasks: [{ type: 'subagent', description: 'a' }] })).toBe('Agent im Hintergrund')
   expect(bgLabel({ ...s, tasks: [{ type: 'shell', description: 'npm test' }] })).toBe('Job im Hintergrund')
   expect(bgLabel({ ...s, state: 'idle' })).toBe(null)
+  // one dot per job on the orbit (plus the core), at most five
+  const dots = (n: number) => (ringSvg({ ...s, tasks: Array(n).fill({ type: 'shell', description: 'x' }) }, 1, 0).match(/<circle cx="(?!20")/g) ?? []).length
+  expect([dots(1), dots(3), dots(9)]).toEqual([1, 3, 5])
 })
 
 test('split pane: wheel over the top half scrolls sessions, below it the history from its newest', async () => {

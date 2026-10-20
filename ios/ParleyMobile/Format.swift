@@ -115,7 +115,7 @@ enum ConnectionStatus: Equatable, Sendable {
 enum RingKind: Equatable, Sendable {
     case live                                   // pulse: speaking / listening / transcribing / holds the voice
     case spin(fraction: Double, period: Double) // rotating arc: working (fast), queued (slow)
-    case background                             // orbiting dot
+    case background(jobs: Int)                  // a dot per job on the orbit
     case countdown                              // draining arc: a pause with an end
     case parked, idle, stopped
 
@@ -124,7 +124,7 @@ enum RingKind: Equatable, Sendable {
         switch s.state {
         case .working: self = .spin(fraction: 0.28, period: 1.6)
         case .queued: self = .spin(fraction: 0.12, period: 4)
-        case .background: self = .background
+        case .background: self = .background(jobs: s.tasks.count)
         case .waiting where s.until != nil: self = .countdown
         case .parked: self = .parked
         case .idle: self = .idle
@@ -137,5 +137,41 @@ enum RingKind: Equatable, Sendable {
         case .live, .spin, .background, .countdown: true
         case .parked, .idle, .stopped: false
         }
+    }
+}
+
+/// The overview's order: what needs Sir first, then what works, then what rests; newest change
+/// first inside each (the host's `/sessions` order, Sessions.group on the Mac).
+enum SessionGroup: Int, CaseIterable, Comparable {
+    case input, working, paused, stopped
+
+    init(_ s: Session) {
+        switch s.state {
+        case .stopped: self = .stopped
+        case _ where s.voice || s.callback != nil: self = .input
+        case .speaking, .listening, .transcribing, .queued: self = .input
+        case .working, .background: self = .working
+        default: self = .paused
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .input: "BRAUCHT INPUT"
+        case .working: "ARBEITET"
+        case .paused: "ANGEHALTEN"
+        case .stopped: "BEENDET"
+        }
+    }
+
+    static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+
+    static func sorted(_ list: [Session]) -> [Session] {
+        list.enumerated().sorted { x, y in
+            let (a, b) = (x.element, y.element)
+            if SessionGroup(a) != SessionGroup(b) { return SessionGroup(a) < SessionGroup(b) }
+            if a.since != b.since { return a.since > b.since }
+            return x.offset < y.offset
+        }.map(\.element)
     }
 }

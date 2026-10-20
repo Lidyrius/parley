@@ -49,7 +49,20 @@ data class Session(
         if (state != SessionState.waiting || until == null) return null
         return ((until - at) / maxOf(1.0, until - since)).coerceIn(0.0, 1.0)
     }
+
+    /** Status group for the overview: 0 Braucht Input, 1 Arbeitet, 2 Angehalten, 3 Beendet. As the host. */
+    val group: Int get() = when {
+        state == SessionState.stopped -> 3
+        isLive || state == SessionState.queued || callback != null -> 0
+        state == SessionState.working || state == SessionState.background -> 1
+        else -> 2
+    }
 }
+
+/** The overview's order: by group, newest change first, then label (any case), then id. */
+fun List<Session>.ordered(): List<Session> =
+    sortedWith(compareBy<Session> { it.group }.thenByDescending { it.since }
+        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.label }.thenBy { it.id })
 
 /** v7: one guest of a shared session — the share's id (to remove him), his name and role. */
 data class ShareTag(val id: String, val name: String, val role: String = "")

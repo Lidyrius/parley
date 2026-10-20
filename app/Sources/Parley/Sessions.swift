@@ -392,13 +392,21 @@ final class SessionRegistry {
     var asking: [String: String] = [:]          // a question waits for this guest (by session)
     struct ShareTag: Encodable, Equatable { let id, name, role: String }
 
+    /// The overview's order: 0 needs Sir (voice, an update queued, a call put off), 1 working,
+    /// 2 paused (waiting, parked, idle), 3 stopped.
+    static func group(_ e: Entry, voice: Bool) -> Int {
+        if e.state == "stopped" { return 3 }
+        if voice || ["speaking", "listening", "transcribing", "queued"].contains(e.state) || e.callbackAt != nil { return 0 }
+        return ["working", "background"].contains(e.state) ? 1 : 2
+    }
+
     // `only`: a guest's view (Shares.swift) — that one session, nothing else of Sir's.
     func json(only: String? = nil) -> String {
         refresh()
-        func rank(_ e: Entry) -> Int { e.id == activeId ? 0 : (e.state == "stopped" ? 2 : 1) }
         let rows = entries.values.filter { only == nil || $0.id == only }.sorted {
-            let (ra, rb) = (rank($0), rank($1))
+            let (ra, rb) = (Self.group($0, voice: $0.id == activeId), Self.group($1, voice: $1.id == activeId))
             if ra != rb { return ra < rb }
+            if $0.since != $1.since { return $0.since > $1.since }   // newest change first
             let c = $0.label.caseInsensitiveCompare($1.label)
             return c != .orderedSame ? c == .orderedAscending : $0.id < $1.id
         }.map { e in

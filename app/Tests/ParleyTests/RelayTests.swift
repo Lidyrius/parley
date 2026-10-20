@@ -252,3 +252,19 @@ final class RelayClientTests: XCTestCase {
         XCTAssertEqual(world.states, [true, false])
     }
 }
+
+final class SessionOrderTests: XCTestCase {
+    /// Working before paused, newest change first inside a group.
+    func testWorkingFirstThenNewestFirst() throws {
+        var t = Date(timeIntervalSince1970: 1_760_000_000)
+        let reg = SessionRegistry(now: { t }, phase: { "idle" }, daily: DailyStats())
+        for (id, state) in [("a", "idle"), ("b", "working"), ("c", "background"), ("d", "idle")] {
+            reg.presence(id: id, label: id.uppercased(), project: id, state: state)
+            _ = reg.json()
+            t += 1
+        }
+        let all = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(reg.json().utf8)) as? [String: Any])
+        let rows = try XCTUnwrap(all["sessions"] as? [[String: Any]])
+        XCTAssertEqual(rows.compactMap { $0["id"] as? String }, ["c", "b", "d", "a"])
+    }
+}
