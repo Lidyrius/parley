@@ -71,8 +71,13 @@ final class ControlServer: @unchecked Sendable {
 
     // Parked (paused-but-resumable) sessions. Their Stop hook short-polls /wake; we hand
     // back a pending instruction to wake them — no keystrokes needed. Keyed by session key.
-    private struct Parked { var label: String; var project: String; var cwd: String; var pending: String?; var lastSeen: Date }
+    private struct Parked { var label: String; var project: String; var cwd: String; var pending: String?; var lastSeen: Date; var since: Date }
     private var parked: [String: Parked] = [:]
+    // /wake answers `end` (the hook finishes) for a session /close ended, while a newer /turn of
+    // the session is unanswered (the poller is a stale hook), and after parkMax parked.
+    private var closedKeys: Set<String> = []
+    private var turnsInFlight: [String: (count: Int, at: Date)] = [:]   // unanswered /turns, the latest's arrival
+    static let parkMax: TimeInterval = 12 * 3600
 
     // Every session and its state (GET /sessions, POST /resume, the announcement).
     let sessions: SessionRegistry
@@ -168,8 +173,25 @@ final class ControlServer: @unchecked Sendable {
     // A hook's /turn (on `queue`): queued for its voice — unless a dispatched instruction waits
     // for its folder (a session just started there): that is the reply, at once and unvoiced;
     // the session's opening line is moot now.
-    func receiveTurn(_ turn: TurnPayload, respond: @escaping (TurnReply) -> Void) {
+    func receiveTurn(_ turn: TurnPayload, respond answer: @escaping (TurnReply) -> Void) {
         let key = Self.sessionKey(turn)
+        // The session moved on: its older turns still queued are moot — answered empty, so their
+        // hooks (if still alive) end. Its old parked hook gets `end` at its next /wake.
+        let stale = replyQueue.filter { Self.sessionKey($0.turn) == key && !Self.dialogEvents.contains($0.turn.event) }
+        if !stale.isEmpty {
+            replyQueue.removeAll { item in stale.contains { $0.id == item.id } }
+            Log.write("turn: \(stale.count) older queued turn(s) of \(turn.spokenLabel) answered empty — a newer one arrived")
+            for item in stale { item.respond(TurnReply(transcript: "", park: false)) }
+        }
+        parked[key] = nil
+        closedKeys.remove(key)   // a resumed session (same id) runs again
+        turnsInFlight[key] = ((turnsInFlight[key]?.count ?? 0) + 1, now())
+        let respond: (TurnReply) -> Void = { [weak self] reply in
+            if let self, let f = self.turnsInFlight[key] {
+                self.turnsInFlight[key] = f.count > 1 ? (f.count - 1, f.at) : nil
+            }
+            answer(reply)
+        }
         fireReminders { $0.after == key }    // its turn ended: "wenn Shirts fertig ist"
         sessions.queued(id: key, label: turn.label ?? "", project: turn.project, cwd: turn.cwd)
         claimName(key, cwd: turn.cwd)
@@ -236,7 +258,7 @@ final class ControlServer: @unchecked Sendable {
             wait.answer(.ask)
             let before = self.replyQueue.count
             self.replyQueue.removeAll { $0.id == id }
-            if self.replyQueue.count < before { self.sessions.dialogFinished(id: sid) }
+            if self.replyQueue.count < before { self.sessions.dialogFinished(id: sid); self.syncQueued(sid) }
         }
         return true
     }
@@ -513,20 +535,36 @@ final class ControlServer: @unchecked Sendable {
     private func wakePoll(_ body: Data) -> String {
         let w = Contract.decodeWake(body)
         let key = Self.sessionKey(session: w?.session_id ?? "", pane: w?.tmux_pane ?? "")
-        var p = parked[key] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date())
+        pruneParked()
+        if let why = wakeEnd(key) {
+            Log.write("wake: \(w?.spokenLabel ?? key) — \(why) → its hook ends")
+            parked[key] = nil
+            notifyParked()
+            return Self.turnJSON(TurnReply(transcript: "", park: false), end: true)
+        }
+        var p = parked[key] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date(), since: now())
         p.label = w?.spokenLabel ?? p.label
         p.project = w?.project ?? p.project
         p.cwd = w?.cwd ?? p.cwd
         p.lastSeen = Date()
         let pending = p.pending ?? takePending(w?.cwd, id: key)
         p.pending = nil
-        parked[key] = p
+        // Woken: this hook injects and ends — the next park starts afresh. The mod's copy goes.
+        if pending != nil { parked[key] = nil; sessions.clearPending(id: key) } else { parked[key] = p }
         sessions.wakePoll(id: key, label: w?.label ?? "", project: w?.project ?? "", resumed: pending != nil,
                           cwd: w?.cwd ?? "")
         claimName(key, cwd: w?.cwd)
-        pruneParked()
         notifyParked()
         return Self.turnJSON(TurnReply(transcript: pending ?? "", park: false))
+    }
+
+    // Why a /wake poller should finish (nil = keep polling).
+    private func wakeEnd(_ key: String) -> String? {
+        if closedKeys.contains(key) { return "the session was closed" }
+        // (Bounded by the hook's own /turn timeout, an hour: a reply lost somewhere can't end every park.)
+        if let f = turnsInFlight[key], now().timeIntervalSince(f.at) < 3600 { return "a newer turn is on its way" }
+        if let since = parked[key]?.since, now().timeIntervalSince(since) > Self.parkMax { return "parked over 12 h" }
+        return nil
     }
 
     // MARK: - resuming sessions (menu, voice command, POST /resume)
@@ -542,13 +580,16 @@ final class ControlServer: @unchecked Sendable {
 
     // Hand an instruction to a session: a parked hook picks it up on its next /wake poll
     // (≤3 s) and injects it as the next turn; an idle session's mod gets it as the reply to
-    // its next /presence (≤2 s) and submits it as a prompt.
+    // its next /presence (≤2 s) and submits it as a prompt. Parked, but no /wake for over 30 s
+    // (a stalled poll, or the hook is gone): both copies — whichever takes it first clears the other.
     private func deliver(_ id: String, _ instruction: String) {
-        if sessions.parkedHookAlive(id) {
-            var p = parked[id] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date())
+        let alive = sessions.parkedHookAlive(id)
+        if alive || sessions.entries[id]?.parked == true {
+            var p = parked[id] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date(), since: now())
             p.pending = instruction
             p.lastSeen = Date()
             parked[id] = p
+            if !alive { sessions.setPending(id: id, instruction) }
             sessions.wakeQueued(id: id)
         } else {
             sessions.setPending(id: id, instruction)
@@ -612,6 +653,12 @@ final class ControlServer: @unchecked Sendable {
         default:
             sessions.finished(id: id, reply: reply)
         }
+        syncQueued(id)
+    }
+
+    // The session's `queued` follows the queue: still true while another item of it waits.
+    private func syncQueued(_ id: String) {
+        sessions.setQueued(id: id, replyQueue.contains { Self.sessionKey($0.turn) == id })
     }
 
     func resumableList() -> [ParkedInfo] {
@@ -698,6 +745,7 @@ final class ControlServer: @unchecked Sendable {
         let (turn, respond) = (item.turn, item.respond)
         let dialog = Self.dialogEvents.contains(turn.event)
         sessions.activate(id: Self.sessionKey(turn), speak: dialog ? nil : turn.speak)
+        syncQueued(Self.sessionKey(turn))
         if !dialog { onTurn?(turn) }
         provider(turn) { [weak self] reply in
             guard let self else { return }
@@ -710,13 +758,14 @@ final class ControlServer: @unchecked Sendable {
         }
     }
 
-    private static func turnJSON(_ reply: TurnReply) -> String {
+    // `end` (/wake only, omitted when false): the hook stops polling and finishes.
+    private static func turnJSON(_ reply: TurnReply, end: Bool = false) -> String {
         let esc = reply.transcript
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        struct Wire: Encodable { let transcript: String; let park: Bool; let wait: Int; let resume: String }
+        struct Wire: Encodable { let transcript: String; let park: Bool; let wait: Int; let resume: String; let end: Bool? }
         let data = try? JSONEncoder().encode(Wire(transcript: reply.transcript, park: reply.park,
-                                                  wait: reply.waitSeconds, resume: reply.resume))
+                                                  wait: reply.waitSeconds, resume: reply.resume, end: end ? true : nil))
         return data.flatMap { String(data: $0, encoding: .utf8) }
             ?? #"{"transcript":"\#(esc)","park":\#(reply.park)}"#
     }
@@ -754,6 +803,7 @@ final class ControlServer: @unchecked Sendable {
             var instruction = sessions.presence(id: p.session_id, label: p.label ?? "", project: project,
                                                 state: p.state ?? "idle", usage: p.usage, tasks: p.tasks, host: p.host,
                                                 cwd: p.cwd ?? "")
+            if instruction != nil { parked[p.session_id]?.pending = nil }   // the mod took it first: not the hook too
             // An instruction waits for this folder: an idle session takes it now (a working one
             // gets it as the reply to its turn, or once it is idle).
             claimName(p.session_id, cwd: p.cwd)
@@ -883,6 +933,10 @@ extension ControlServer {
             if let why = closer(id, s.cwd) { fail(id, 409, why); continue }
             sessions.closed(id: id)
             parked[id] = nil
+            closedKeys.insert(id)   // a hook still polling /wake gets `end`
+            let gone = replyQueue.filter { Self.sessionKey($0.turn) == id }
+            replyQueue.removeAll { Self.sessionKey($0.turn) == id }
+            for item in gone { item.respond(TurnReply(transcript: "", park: false)) }
             Log.write("close: \(s.label) (\(id))")
             closed.append(Closed(id: id, label: s.label))
         }

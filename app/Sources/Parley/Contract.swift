@@ -41,7 +41,10 @@ struct TurnReply {
 struct ParkedInfo: Identifiable, Equatable { var id: String; var label: String; var project: String }
 
 // A parked hook's /wake poll: the turn's identity without the spoken line (no `event`,
-// no `speak` — so it can't decode as a TurnPayload).
+// no `speak` — so it can't decode as a TurnPayload). Answered like a /turn ({transcript, park,
+// wait, resume}), plus `"end": true` when the hook should stop polling and finish: the session
+// was closed (/close), a newer /turn of it is unanswered (this poller is a stale hook), or it
+// has been parked over 12 h. Omitted otherwise.
 struct WakePayload: Codable, Equatable {
     var session_id: String?
     var cwd: String?

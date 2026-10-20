@@ -80,6 +80,7 @@ final class AppController: ObservableObject {
     private let apns = APNsClient()
     private var audioWork = 0  // queue items + ack clips in flight; 0 → the phone hears `audio idle`
     static let ringTimeout: TimeInterval = 45
+    static let maxPutOff = 3   // "not now" repeats before a line gives up on the phone
     static let callBackWait: TimeInterval = 30 * 60   // "Ich rufe zurück": how long the line waits for Sir's call
 
     func start() {
@@ -549,6 +550,7 @@ final class AppController: ObservableObject {
         // answer — the current question still stands. Capped so it can't loop forever.
         var wav = Data()
         var text = ""
+        var sttFailed = false   // Groq unreachable / refused: not silence
         for hop in 0..<4 {
             setStatus(key, "listening")
             Log.write("record start")
@@ -556,8 +558,10 @@ final class AppController: ObservableObject {
             Log.write("record done bytes=\(wav.count)")
 
             setStatus(key, "transcribing")
-            text = await transcribe(wav, config: config)
-            Log.write("transcribe done chars=\(text.count)")
+            let heard = await transcribeChecked(wav, config: config)
+            sttFailed = heard == nil
+            text = heard ?? ""
+            Log.write("transcribe done chars=\(text.count)\(sttFailed ? " (failed)" : "")")
 
             // Resumable = parked: its hook polls /wake, or the mod gets it via /presence.
             let targets = text.isEmpty || hop >= 3 ? [] : server.resumableList()
@@ -643,19 +647,22 @@ final class AppController: ObservableObject {
         // (background) as the sign-off; returning "" makes the hook exit cleanly.
         // "Stop heißt Stop" — the reply isn't fed back. But the session PARKS instead of
         // ending, so it stays resumable by voice/menu. Likewise a silent turn parks.
-        if intent == .stop {
-            setStatus(key, "paused")
-            Log.write("turn end (stop → parked, resumable)")
-            return TurnReply(transcript: "", park: true)
-        }
-        if text.isEmpty {
-            setStatus(key, "paused")
-            Log.write("turn end (silence → parked, resumable)")
-            return TurnReply(transcript: "", park: true)
+        if intent == .stop || text.isEmpty {
+            let reply = Self.quietEnd(stop: intent == .stop, sttFailed: sttFailed)
+            setStatus(key, reply.park ? "paused" : "idle")
+            Log.write(intent == .stop ? "turn end (stop → parked, resumable)"
+                      : reply.park ? "turn end (silence → parked, resumable)" : "turn end (transcription failed → not parked)")
+            return reply
         }
         setStatus(key, "sent")
         Log.write("turn end")
         return TurnReply(transcript: text, park: false)
+    }
+
+    // A listening turn with nothing to feed back: "Stopp" and silence park (resumable); a failed
+    // transcription just ends the turn — a network error must not leave its hook parked for good.
+    nonisolated static func quietEnd(stop: Bool, sttFailed: Bool) -> TurnReply {
+        TurnReply(transcript: "", park: stop || !sttFailed)
     }
 
     // Resume a session from the menu (mouse fallback for the voice command) — no dialog.
@@ -784,7 +791,15 @@ final class AppController: ObservableObject {
         }
         var outcome = await ring()
         var calledBack = false
+        var putOff = 0
         while case .later(let after) = outcome {
+            // The whole queue waits meanwhile: three "not now" in a row, then the Mac's way.
+            putOff += 1
+            guard putOff <= Self.maxPutOff else {
+                Log.write("phone: put off \(Self.maxPutOff) times → not reached")
+                outcome = .missed
+                break
+            }
             if let key { setStatus(key, "waiting") }
             if let after {
                 let at = Date().addingTimeInterval(after)
@@ -1443,7 +1458,12 @@ final class AppController: ObservableObject {
     }
 
     private func transcribe(_ wav: Data, config: AppConfig) async -> String {
-        guard config.sttReady else { NSLog("Parley: STT not configured"); return "" }
+        await transcribeChecked(wav, config: config) ?? ""
+    }
+
+    // nil = the transcription failed (not configured, HTTP error, network); "" = nothing said.
+    private func transcribeChecked(_ wav: Data, config: AppConfig) async -> String? {
+        guard config.sttReady else { NSLog("Parley: STT not configured"); return nil }
         // Too little captured audio → skip Groq (it rejects < 0.01s) and end cleanly.
         // 44-byte WAV header + ~0.2s of 16 kHz mono 16-bit.
         let minBytes = 44 + (16000 * 2) / 5
@@ -1463,7 +1483,7 @@ final class AppController: ObservableObject {
                 // Groq blocks VPN / datacenter IPs with a 403 "check your network settings".
                 let hint = code == 403 ? "Groq blockt dieses Netzwerk — VPN aus?" : "Transkription fehlgeschlagen (HTTP \(code))."
                 Notifier.notify(title: "Parley — Fehler", body: hint)
-                return ""   // never feed an error body back as the reply
+                return nil   // never feed an error body back as the reply
             }
             let text = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1474,7 +1494,7 @@ final class AppController: ObservableObject {
             NSLog("Parley: STT error: \(error.localizedDescription)")
             lastError = "STT: \(error.localizedDescription)"
             Notifier.notify(title: "Parley — Fehler", body: "Groq nicht erreichbar (Netzwerk/VPN?).")
-            return ""
+            return nil
         }
     }
 

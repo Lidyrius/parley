@@ -15,7 +15,7 @@ namespace Parley;
 public sealed class Server
 {
     private readonly HttpListener _listener = new();
-    private readonly SemaphoreSlim _turnGate = new(1, 1);   // serializes the pipeline
+    private readonly FifoGate _turnGate = new();   // serializes the pipeline, first come first served
     private readonly Func<TurnPayload, Task<(string transcript, bool park, int wait, string resume)>> _runTurn;
     private readonly Action _onReady;
     private int _queued;
@@ -24,8 +24,20 @@ public sealed class Server
 
     // Parked (paused-but-resumable) sessions. Their Stop hook short-polls /wake; we hand
     // back a pending instruction to wake them — no keystrokes. Keyed by session key.
-    private sealed class Parked { public string Label = "", Project = ""; public string? Pending; public DateTime LastSeen; }
+    private sealed class Parked { public string Label = "", Project = ""; public string? Pending; public DateTime LastSeen, Since = DateTime.UtcNow; }
     private readonly ConcurrentDictionary<string, Parked> _parked = new();
+    // A hook parked longer than this is told to end (`end`): nobody is coming back to it.
+    private static readonly TimeSpan ParkLimit = TimeSpan.FromHours(12);
+
+    // /wake, /presence, Deliver and the per-session queue below change together under this.
+    private readonly object _lock = new();
+    // What waits at the gate per session key: a newer /turn answers the older ones "" and
+    // /close all of them. `_atGate` counts those not yet let in (Sessions.Waiting reads it).
+    private sealed class Waiter { public readonly CancellationTokenSource Drop = new(); public bool Turn; }
+    private readonly Dictionary<string, List<Waiter>> _waiters = new();
+    private readonly ConcurrentDictionary<string, int> _atGate = new();
+    // Closed by POST /close: its hook's next /wake answers `end` (until a new /turn revives it).
+    private readonly HashSet<string> _closed = new();
     public event Action<List<ParkedInfo>>? OnParkedChanged;
 
     public readonly record struct ParkedInfo(string Id, string Label, string Project);
@@ -67,6 +79,7 @@ public sealed class Server
         _runTurn = runTurn;
         _onReady = onReady;
         Delivery = new Delivery(Sessions, (id, instruction) => Deliver(id, instruction));
+        Sessions.Waiting = id => _atGate.TryGetValue(id, out var n) && n > 0;
         Sessions.ReminderRows = () => Reminders.Rows();
         Sessions.SnapshotRows = () => Snapshots.Rows();
         // 127.0.0.1 covers native Git Bash and WSL2 mirrored networking. (WSL NAT mode
@@ -164,18 +177,27 @@ public sealed class Server
                 }
                 using var hold = PhoneCall.Hold();   // released after the reply — never leaks on an error
                 Interlocked.Increment(ref _queued);
-                if (_turnGate.CurrentCount == 0)   // another turn is active → this one waits
+                if (_turnGate.Busy)   // another turn is active → this one waits
                     Notifier.Notify("Parley", $"Projekt {turn.SpokenLabel} wartet auf Antwort");
-                await _turnGate.WaitAsync();   // FIFO-ish serialization; hook connection stays open
+                var w = Enlist(id, turn: true);   // older ones of this session are answered "" now
+                var entered = await Enter(id, w);   // FIFO; hook connection stays open
+                Interlocked.Decrement(ref _queued);
+                if (!entered)   // a newer /turn of this session, or /close: no one listens for it
+                {
+                    Delist(id, w);
+                    Log.Write($"turn dropped ({turn.SpokenLabel}: a newer turn, or closed)");
+                    await Respond(ctx, 200, TurnJson("", false, 0, ""));
+                    return;
+                }
                 (string transcript, bool park, int wait, string resume) r = ("", false, 0, "");
                 try
                 {
-                    Interlocked.Decrement(ref _queued);
                     Sessions.Activate(id, turn.Speak);
                     r = await _runTurn(turn);
                 }
                 finally
                 {
+                    Delist(id, w);
                     Sessions.Finished(id, r.transcript, r.park, r.wait, r.resume);
                     _turnGate.Release();
                 }
@@ -185,25 +207,38 @@ public sealed class Server
 
             // /wake — a parked session's Stop hook short-polls this. Answer immediately with
             // any pending resume instruction (consuming it), else empty; (re)register so the
-            // session stays listed as resumable.
+            // session stays listed as resumable. `end`: closed, a newer /turn of this session,
+            // or parked past ParkLimit — the hook stops polling and finishes.
             if (req.HttpMethod == "POST" && path == "/wake")
             {
                 var turn = TurnPayload.Decode(body);
                 var pending = "";
+                var end = false;
                 if (turn is not null)
                 {
                     var key = SessionKey(turn);
-                    var p = _parked.GetOrAdd(key, _ => new Parked());
-                    p.Label = turn.SpokenLabel;
-                    p.Project = turn.Project;
-                    p.LastSeen = DateTime.UtcNow;
-                    pending = Interlocked.Exchange(ref p.Pending, null) ?? "";
-                    Sessions.WakePoll(key, turn.Label ?? "", turn.Project, pending.Length > 0, turn.Cwd);
-                    Delivery.ClaimName(key, turn.Cwd);
-                    Prune();
+                    lock (_lock)
+                    {
+                        Prune();
+                        var p = _parked.GetOrAdd(key, _ => new Parked());
+                        end = _closed.Contains(key) || DateTime.UtcNow - p.Since > ParkLimit
+                            || (key.Length > 0 && _waiters.TryGetValue(key, out var queued) && queued.Any(x => x.Turn));
+                        if (end) _parked.TryRemove(key, out _);
+                        else
+                        {
+                            p.Label = turn.SpokenLabel;
+                            p.Project = turn.Project;
+                            p.LastSeen = DateTime.UtcNow;
+                            pending = p.Pending ?? "";
+                            p.Pending = null;
+                            Sessions.WakePoll(key, turn.Label ?? "", turn.Project, pending.Length > 0, turn.Cwd);
+                        }
+                    }
+                    if (end) Log.Write($"wake: {turn.SpokenLabel} — end");
+                    else Delivery.ClaimName(key, turn.Cwd);
                     NotifyParked();
                 }
-                await Respond(ctx, 200, TurnJson(pending, false, 0, ""));
+                await Respond(ctx, 200, TurnJson(pending, false, 0, "", end));
                 return;
             }
 
@@ -220,8 +255,13 @@ public sealed class Server
                 var project = string.IsNullOrEmpty(presence.Project)
                     ? Path.GetFileName((presence.Cwd ?? "").TrimEnd('/', '\\'))
                     : presence.Project;
-                var instruction = Sessions.Presence(presence.SessionId, presence.Label ?? "", project,
-                    presence.State ?? "idle", presence.Usage, presence.Tasks, presence.Host, presence.Cwd);
+                string? instruction;
+                lock (_lock)   // the mod took it: the parked hook doesn't (and the other way round)
+                {
+                    instruction = Sessions.Presence(presence.SessionId, presence.Label ?? "", project,
+                        presence.State ?? "idle", presence.Usage, presence.Tasks, presence.Host, presence.Cwd);
+                    if (instruction is not null && _parked.TryGetValue(presence.SessionId, out var hook)) hook.Pending = null;
+                }
                 // A session started for an instruction (POST /dispatch, a wake routed to the
                 // Zentrale) gets it on the first presence from its folder.
                 Delivery.ClaimName(presence.SessionId, presence.Cwd);
@@ -616,7 +656,14 @@ public sealed class Server
             if (s.State == "stopped") { Fail(id, 409, "already stopped"); continue; }
             if (Closer(id) is { } why) { Fail(id, 409, why); continue; }
             Sessions.Closed(id);
-            _parked.TryRemove(id, out _);
+            List<Waiter> drop;
+            lock (_lock)
+            {
+                _closed.Add(id);
+                _parked.TryRemove(id, out _);
+                drop = _waiters.TryGetValue(id, out var list) ? list.ToList() : new();
+            }
+            foreach (var d in drop) d.Drop.Cancel();   // its queued turns are answered "", dialogs dropped
             Log.Write($"close: {s.Label} ({id})");
             closed.Add(new { id, label = s.Label });
         }
@@ -636,17 +683,21 @@ public sealed class Server
 
     // Hand an instruction to a session: a parked hook picks it up on its next /wake poll
     // (≤3 s) and injects it as the next turn; an idle session's mod gets it as the reply to
-    // its next /presence (≤2 s) and submits it as a prompt.
+    // its next /presence (≤2 s) and submits it as a prompt. Parked (its hook may be slow to
+    // poll): both get it — whichever takes it first clears the other (/wake, /presence).
     private void Deliver(string id, string instruction)
     {
-        if (Sessions.ParkedHookAlive(id))
+        lock (_lock)
         {
-            var p = _parked.GetOrAdd(id, _ => new Parked());
-            p.Pending = instruction;
-            p.LastSeen = DateTime.UtcNow;
-            Sessions.WakeQueued(id);
+            Prune();
+            if (_parked.TryGetValue(id, out var p) && (p.Pending is not null || Sessions.IsParked(id)))
+            {
+                p.Pending = instruction;
+                Sessions.SetPending(id, instruction);
+                Sessions.WakeQueued(id);
+            }
+            else Sessions.SetPending(id, instruction);
         }
-        else Sessions.SetPending(id, instruction);
         NotifyParked();
     }
 
@@ -658,15 +709,16 @@ public sealed class Server
 
     public bool StartResume(string id)
     {
-        if (id.Length > 0) _resumedAt = DateTime.UtcNow;
+        if (id.Length == 0 || !Sessions.CanResume(id)) return false;   // as macOS: nothing ends for a no
+        _resumedAt = DateTime.UtcNow;
         // During Sir's timer: no dialog — the wait ends now and the session reports when done.
-        if (id.Length > 0 && Sessions.EndWait(id) is { } early)
+        if (Sessions.EndWait(id) is { } early)
         {
             Log.Write($"resume: {id} — Sir ends the wait early");
             Deliver(id, early);
             return true;
         }
-        if (id.Length == 0 || !Sessions.TryQueueResume(id)) return false;
+        if (!Sessions.TryQueueResume(id)) return false;
         _ = Task.Run(() => RunResumeDialog(id));
         return true;
     }
@@ -680,11 +732,14 @@ public sealed class Server
         var turn = new TurnPayload { Event = ResumeEvent, SessionId = id, Project = project, Label = label, Listen = true };
         using var hold = PhoneCall.Hold();
         Interlocked.Increment(ref _queued);
-        await _turnGate.WaitAsync();
+        var w = Enlist(id, turn: false);
+        var entered = await Enter(id, w);
+        Interlocked.Decrement(ref _queued);
+        Delist(id, w);
+        if (!entered) return;   // closed meanwhile: nothing to resume
         var transcript = "";
         try
         {
-            Interlocked.Decrement(ref _queued);
             Sessions.Activate(id, null);
             transcript = (await _runTurn(turn)).transcript;
         }
@@ -788,18 +843,24 @@ public sealed class Server
             Event = PermissionEvent, SessionId = id, Cwd = p.Cwd ?? "", Project = project, Label = spoken,
             Speak = Permission.Question(spoken, tool, p.ToolInput), Listen = true, Deadline = deadline,
         };
+        Sessions.MarkQueued(id);   // shown as queued until its question is asked
         var job = Task.Run<string?>(async () =>
         {
             using var hold = PhoneCall.Hold();
             Interlocked.Increment(ref _queued);
+            var w = Enlist(id, turn: false);
             var entered = false;
             try
             {
                 var wait = deadline - DateTime.UtcNow;
-                entered = await _turnGate.WaitAsync(wait > TimeSpan.Zero ? wait : TimeSpan.Zero);
+                entered = await Enter(id, w, wait > TimeSpan.Zero ? wait : TimeSpan.Zero);
             }
-            finally { Interlocked.Decrement(ref _queued); }
-            if (!entered) return null;   // the gate stayed busy until the deadline
+            finally { Interlocked.Decrement(ref _queued); Delist(id, w); }
+            if (!entered)   // the gate stayed busy until the deadline, or the session was closed
+            {
+                Sessions.Unqueued(id);
+                return null;
+            }
             try
             {
                 Sessions.Activate(id, null);
@@ -831,6 +892,42 @@ public sealed class Server
     // Resumable (parked) sessions, for the tray and the voice resume command.
     public List<ParkedInfo> ResumableList() => Sessions.ResumableList();
 
+    // Line up at the gate for session `id`. A /turn drops the older /turns of that session still
+    // waiting (their hooks are gone or moved on), and its parked entry; it revives a closed one.
+    private Waiter Enlist(string id, bool turn)
+    {
+        var w = new Waiter { Turn = turn };
+        var drop = new List<Waiter>();
+        lock (_lock)
+        {
+            if (!_waiters.TryGetValue(id, out var list)) _waiters[id] = list = new();
+            if (turn && id.Length > 0)   // no session key (neither id nor pane): nothing to match
+            {
+                drop.AddRange(list.Where(o => o.Turn));
+                _parked.TryRemove(id, out _);
+                _closed.Remove(id);
+            }
+            list.Add(w);
+        }
+        _atGate.AddOrUpdate(id, 1, (_, n) => n + 1);
+        foreach (var o in drop) o.Drop.Cancel();   // outside the lock: continuations may run inline
+        return w;
+    }
+
+    // Wait for the gate (FIFO): false = dropped (or `timeout` passed) before it was this one's turn.
+    private async Task<bool> Enter(string id, Waiter w, TimeSpan? timeout = null)
+    {
+        try { return await _turnGate.WaitAsync(timeout ?? Timeout.InfiniteTimeSpan, w.Drop.Token); }
+        finally { _atGate.AddOrUpdate(id, 0, (_, n) => Math.Max(0, n - 1)); }
+    }
+
+    private void Delist(string id, Waiter w)
+    {
+        lock (_lock)
+            if (_waiters.TryGetValue(id, out var list) && list.Remove(w) && list.Count == 0) _waiters.Remove(id);
+    }
+
+    // Caller holds _lock.
     private void Prune()
     {
         var cutoff = DateTime.UtcNow.AddSeconds(-90);
@@ -840,14 +937,16 @@ public sealed class Server
 
     private void NotifyParked() { try { OnParkedChanged?.Invoke(ResumableList()); } catch { } }
 
-    private static string TurnJson(string transcript, bool park, int wait, string resume) =>
-        JsonSerializer.Serialize(new WireReply(transcript, park, wait, resume));
+    private static string TurnJson(string transcript, bool park, int wait, string resume, bool end = false) =>
+        JsonSerializer.Serialize(new WireReply(transcript, park, wait, resume, end ? true : null));
 
+    // `end` only on /wake, and only when set: the hook stops polling and finishes.
     private sealed record WireReply(
         [property: JsonPropertyName("transcript")] string Transcript,
         [property: JsonPropertyName("park")] bool Park,
         [property: JsonPropertyName("wait")] int Wait,
-        [property: JsonPropertyName("resume")] string Resume);
+        [property: JsonPropertyName("resume")] string Resume,
+        [property: JsonPropertyName("end"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? End);
 
     private static async Task Respond(HttpListenerContext ctx, int status, string json)
     {
@@ -857,6 +956,49 @@ public sealed class Server
         ctx.Response.ContentLength64 = bytes.Length;
         await ctx.Response.OutputStream.WriteAsync(bytes);
         ctx.Response.Close();
+    }
+}
+
+// A lock taken first come, first served (SemaphoreSlim promises no order): turns are voiced
+// in the order their hooks arrived. Release hands it straight to the next waiter.
+public sealed class FifoGate
+{
+    private readonly object _lock = new();
+    private readonly LinkedList<TaskCompletionSource<bool>> _waiters = new();
+    private bool _held;
+
+    public bool Busy { get { lock (_lock) return _held; } }
+
+    public Task WaitAsync() => WaitAsync(Timeout.InfiniteTimeSpan);
+
+    // False = `timeout` passed or `cancel` fired before this one was let in.
+    public async Task<bool> WaitAsync(TimeSpan timeout, CancellationToken cancel = default)
+    {
+        LinkedListNode<TaskCompletionSource<bool>> node;
+        lock (_lock)
+        {
+            if (!_held) { _held = true; return true; }
+            if (timeout == TimeSpan.Zero || cancel.IsCancellationRequested) return false;
+            node = _waiters.AddLast(new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
+        }
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        await Task.WhenAny(node.Value.Task, Task.Delay(timeout, stop.Token));
+        stop.Cancel();   // the delay's timer, if it is still running
+        lock (_lock)
+        {
+            if (node.List is null) return true;   // handed over (maybe just now)
+            _waiters.Remove(node);
+            return false;
+        }
+    }
+
+    public void Release()
+    {
+        lock (_lock)
+        {
+            if (_waiters.First is { } next) { _waiters.RemoveFirst(); next.Value.SetResult(true); }   // stays held
+            else _held = false;
+        }
     }
 }
 

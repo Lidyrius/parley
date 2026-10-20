@@ -391,6 +391,12 @@ public sealed class TurnPipeline
             Log.Write("turn end (stop → parked, resumable)");
             return ("", true, 0, "");
         }
+        // A failed transcription is not silence: parking on it would loop the hook forever.
+        if (text.Length == 0 && _sttFailed)
+        {
+            Log.Write("turn end (transcription failed → not parked)");
+            return ("", false, 0, "");
+        }
         if (text.Length == 0)
         {
             Log.Write("turn end (silence → parked, resumable)");
@@ -417,8 +423,13 @@ public sealed class TurnPipeline
         }
         var outcome = await RingOnce();
         var calledBack = false;
-        while (outcome.Kind == RingKind.Later)
+        for (var repeats = 0; outcome.Kind == RingKind.Later; repeats++)
         {
+            if (repeats >= 3)   // put off three times: the line waits as a notification
+            {
+                Log.Write("phone: put off 3 times → not reached");
+                break;
+            }
             if (outcome.After is double after)
             {
                 var at = DateTime.UtcNow.AddSeconds(after);
@@ -489,6 +500,9 @@ public sealed class TurnPipeline
         await SpeakLine(de ? "Danke für Ihren Rückruf, Sir." : "Thank you for calling back, Sir.", config);
     }
 
+    // The last ListenOnce's transcription failed (key, HTTP, network) — not silence.
+    private bool _sttFailed;
+
     /// `preroll`: a barge-in at the PC's mic; a phone barge-in brings the phone's own.
     private async Task<(byte[] wav, string text)> ListenOnce(Config config, bool barged = false, IReadOnlyList<byte[]>? preroll = null)
     {
@@ -509,8 +523,9 @@ public sealed class TurnPipeline
         LiveStatus.Set("transcribing");
 
         var minBytes = 44 + 16000 * 2 / 5;   // header + ~0.2s
-        var text = wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
-        Log.Write($"transcribe done chars={text.Length}");
+        var (text, failed) = wav.Length >= minBytes ? await Groq.TryTranscribe(wav, config) : ("", false);
+        _sttFailed = failed;
+        Log.Write($"transcribe done chars={text.Length}{(failed ? " (failed)" : "")}");
         return (wav, text);
     }
 

@@ -474,11 +474,11 @@ final class SessionsLoopbackTests: XCTestCase {
         var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
         req.httpMethod = method
         if !json.isEmpty { req.httpBody = Data(json.utf8) }
-        for attempt in 0..<20 {   // the listener comes up asynchronously
+        for attempt in 0..<100 {   // the listener comes up asynchronously (slow under a full parallel run)
             do {
                 let (data, _) = try await URLSession.shared.data(for: req)
                 return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            } catch where attempt < 19 { try await Task.sleep(nanoseconds: 50_000_000) }
+            } catch where attempt < 99 { try await Task.sleep(nanoseconds: 50_000_000) }
         }
         throw URLError(.cannotConnectToHost)
     }

@@ -320,12 +320,13 @@ export const register: Register = on => {
   // Wrap the existing Stop hook (stop-hook.sh does the transport): show what is spoken,
   // wait while the app speaks + records, then show what came back.
   on('classic.Stop', async ($, e, next) => {
+    // Every Stop ends the turn — one without <speak> too, or presence says "working" forever.
+    await update($, isWorking, () => false)
+    await update($, tasks, () => (e.background_tasks ?? []).map(t => ({ type: t.type, description: t.description })))
     const spoken = parseSpeak(e.last_assistant_message ?? '')
     if (!spoken) return next(e)
 
     label ||= (await readLabel($, e.cwd)) || basename(e.cwd)
-    await update($, isWorking, () => false)
-    await update($, tasks, () => (e.background_tasks ?? []).map(t => ({ type: t.type, description: t.description })))
     await update($, isHidden, () => false) // hidden until the next spoken line
     await update($, line, () => spoken.text)
     await update($, phase, () => 'speaking')
@@ -359,6 +360,12 @@ export const register: Register = on => {
       await update($, phase, () => 'parked') // done: the session is parked, not just "ready"
     }
     return res
+  }).catch(($, e, next) => next(e)) // replay-safe: once called, next(e) hands back its result, the hook doesn't run twice
+
+  // Esc or an API error ends the turn without a Stop hook: not working any more.
+  on('turn.complete', async ($, e, next) => {
+    if (!e.agentId && (e.isAborted || e.reason === 'error')) await update($, isWorking, () => false)
+    return next(e)
   }).catch(($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {

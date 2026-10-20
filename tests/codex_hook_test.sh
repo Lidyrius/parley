@@ -119,6 +119,17 @@ out="$(run_hook "$park_input")"; wait_server
 jq -e 'length == 2' < <(jq -s . "$bodyfile") >/dev/null || fail "park/wake did not issue two requests"
 echo "PASS: wait and park/wake"
 
+# 5b. /wake answering "end": true finishes a parked hook (and a waiting one) without injecting.
+start_server '{"park":true}' '{"transcript":""}' '{"transcript":"","park":false,"end":true}'
+out="$(run_hook "$park_input")"; wait_server
+[ "$out" = '{}' ] || fail "parked hook on end: [$out]"
+jq -e 'length == 3' < <(jq -s . "$bodyfile") >/dev/null || fail "parked hook did not stop at end"
+
+start_server '{"wait":30,"resume":"zu spät"}' '{"transcript":"","end":true}'
+out="$(run_hook "$wait_input")"; wait_server
+[ "$out" = '{}' ] || fail "waiting hook on end: [$out]"
+echo "PASS: /wake end finishes the hook"
+
 # 6. Missing fields and app failure must fail open with valid JSON.
 missing='{"hook_event_name":"Stop","cwd":"/tmp/project","session_id":"missing"}'
 out="$(run_hook "$missing")"

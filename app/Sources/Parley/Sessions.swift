@@ -161,6 +161,13 @@ final class SessionRegistry {
         update(id) { e, _ in e.queued = false }
     }
 
+    // What the queue holds for the session (the server knows): a dialog ending must not hide its
+    // own /turn still waiting behind it.
+    func setQueued(id: String, _ queued: Bool) {
+        guard entries[id] != nil, entries[id]?.queued != queued else { return }
+        update(id) { e, _ in e.queued = queued }
+    }
+
     // An instruction waiting for the session's folder was handed to it just now (as the
     // reply to its /presence) → it is working on it.
     func handedOver(id: String) {
@@ -177,6 +184,12 @@ final class SessionRegistry {
     func setPending(id: String, _ instruction: String) {
         guard entries[id] != nil else { return }
         update(id) { e, _ in e.pending = instruction }
+    }
+
+    // The parked hook took the instruction first: the mod's copy goes.
+    func clearPending(id: String) {
+        guard entries[id]?.pending != nil else { return }
+        update(id) { e, _ in e.pending = nil }
     }
 
     // A parked hook polled /wake. `resumed` = it was handed an instruction and goes on working.
@@ -510,6 +523,8 @@ final class SessionRegistry {
     private func refresh() {
         let t = now()
         for (id, var e) in entries {
+            // The wait is over: its hook injected the resume and ended — it polls /wake no more.
+            if e.parked, let u = e.waitUntil, t >= u { e.parked = false }
             let s = state(of: e, at: t)
             if s == "stopped", t.timeIntervalSince(lastSignal(e)) > Self.keepStopped, id != activeId {
                 entries[id] = nil

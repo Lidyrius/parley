@@ -333,3 +333,34 @@ test('a finished turn parks the band — there is no "bereit"', async ($, on) =>
   expect(await ui.find({ type: 'Text', text: /bereit/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('a Stop without <speak>, or an interrupted turn, ends "working" — presence says idle', async ($, on) => {
+  const clock = mock.clock(on)
+  const bodies: string[] = []
+  on('http.fetch', async ($, e) => {
+    if (e.url.endsWith('/presence')) bodies.push(e.init?.body ?? '')
+    return { value: { status: 200, ok: true, headers: {}, text: e.url.endsWith('/sessions') ? '{"sessions":[]}' : '{}' } }
+  })
+  on('session.usage', async () => ({ value: { startedAt: 0, context: { window: 200000 }, rateLimits: [] } }) as never)
+  on('command.register', async () => ({ value: undefined }) as never)
+  on('session.id', async () => ({ value: 's1' }))
+  on('session.start', async ($, e) => ({ cwd: e.cwd }) as never)
+  on('classic.Stop', async () => ({}))
+  on('turn.start', async ($, e) => ({ turnId: e.turnId }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'desktop', isInteractive: true } as never)
+  await $.classic.Stop({ stop_hook_active: false, last_assistant_message: '<speak-end>Ok.</speak-end>', cwd: '/tmp/parley-demo' } as never)
+  await $.turn.start({ text: '', turnId: 't2' } as never)
+  await clock.advance(2100)
+  expect(bodies.at(-1)).toContain('"state":"working"')
+
+  await $.classic.Stop({ stop_hook_active: false, last_assistant_message: 'Fertig, ohne Tag.', cwd: '/tmp/parley-demo' } as never)
+  await clock.advance(2100)
+  expect(bodies.at(-1)).toContain('"state":"idle"')
+
+  await $.turn.start({ text: '', turnId: 't3' } as never)
+  await $.turn.complete({ answer: '', durationMs: 5, isAborted: true, turnId: 't3', reason: 'aborted' } as never)
+  await clock.advance(2100)
+  expect(bodies.at(-1)).toContain('"state":"idle"')
+})

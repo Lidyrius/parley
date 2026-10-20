@@ -9,6 +9,9 @@
 #    Otherwise emit {"decision":"block","reason":<transcript>} so Claude Code feeds the
 #    spoken reply back into THIS session as the next turn — no tmux, no keystrokes,
 #    works in Warp / iTerm / any terminal.
+# 4. Parked / waiting: short-poll POST /wake. Its reply is {"transcript":…} like /turn's, plus
+#    "end": true when this hook should finish now (session closed, a newer /turn of it, or
+#    parked over 12 h) — so a stale hook never loops forever.
 set -euo pipefail
 
 PORT="${PARLEY_PORT:-8787}"
@@ -170,6 +173,7 @@ if [ "${wait_s:-0}" -gt 0 ] 2>/dev/null; then
   while [ "$(date +%s)" -lt "$until_s" ]; do
     wresp="$(curl -fsS --max-time 10 -X POST "http://${HOST}:${PORT}/wake" \
       -H 'Content-Type: application/json' -d "$wpayload" 2>/dev/null)" || wresp=""
+    [ "$(printf '%s' "$wresp" | jq -r '.end // false' 2>/dev/null)" = "true" ] && finish
     wtext="$(printf '%s' "$wresp" | jq -r '.transcript // ""' 2>/dev/null || true)"
     wtext="$(printf '%s' "$wtext" | perl -0777 -pe 's/^\s+|\s+$//g')"
     [ -n "$wtext" ] && inject "$wtext"
@@ -192,6 +196,7 @@ fi
 while true; do
   wresp="$(curl -fsS --max-time 20 -X POST "http://${HOST}:${PORT}/wake" \
     -H 'Content-Type: application/json' -d "$wpayload" 2>/dev/null)" || finish
+  [ "$(printf '%s' "$wresp" | jq -r '.end // false' 2>/dev/null)" = "true" ] && finish
   wtext="$(printf '%s' "$wresp" | jq -r '.transcript // ""' 2>/dev/null || true)"
   wtext="$(printf '%s' "$wtext" | perl -0777 -pe 's/^\s+|\s+$//g')"
   [ -n "$wtext" ] && inject "$wtext"

@@ -64,6 +64,10 @@ public sealed class SessionRegistry
     // A session's label appeared or changed → pre-render its clips. Set once at startup.
     public Action<string>? OnLabel;
 
+    // Items of a session still waiting at the server's gate (its /turn, resume dialog, permission
+    // question): its queued flag follows them, so a finished dialog never hides a queued /turn.
+    public Func<string, bool> Waiting = _ => false;
+
     public SessionRegistry(Func<DateTime>? now = null, Func<string>? phase = null, DailyStats? daily = null)
     {
         _now = now ?? (() => DateTime.UtcNow);
@@ -134,6 +138,16 @@ public sealed class SessionRegistry
         }
     }
 
+    // A permission question for it waits at the gate: shown queued until it is asked. As macOS.
+    public void MarkQueued(string id) => Update(id, "", "", (e, _) => e.Queued = true);
+
+    // An item left the gate without being voiced (a permission question nobody waits for any more).
+    public void Unqueued(string id)
+    {
+        lock (_gate)
+            if (_entries.ContainsKey(id)) Update(id, "", "", (e, _) => e.Queued = Waiting(id));
+    }
+
     // The session now holds the voice: its turn (`speak` = the line) or its resume dialog (null).
     public void Activate(string id, string? speak)
     {
@@ -142,7 +156,7 @@ public sealed class SessionRegistry
             _activeId = id;
             Update(id, "", "", (e, t) =>
             {
-                e.Queued = false;
+                e.Queued = Waiting(id);
                 if (speak is null) return;
                 e.HookAt = t;
                 e.Turns++;
@@ -160,7 +174,7 @@ public sealed class SessionRegistry
             Update(id, "", "", (e, t) =>
             {
                 e.HookAt = t;
-                e.Queued = false;
+                e.Queued = Waiting(id);
                 e.AfterWait = false;
                 e.WaitUntil = waitSeconds > 0 ? t.AddSeconds(waitSeconds) : null;
                 e.WaitResume = waitSeconds > 0 ? resume : null;
@@ -181,7 +195,7 @@ public sealed class SessionRegistry
             if (_activeId == id) _activeId = null;
             Update(id, "", "", (e, _) =>
             {
-                e.Queued = false;
+                e.Queued = Waiting(id);
                 if (replied) e.Replies++;
             });
         }
@@ -209,7 +223,7 @@ public sealed class SessionRegistry
             e.HookAt = t;
             e.WakeAt = t;
             e.Parked = !resumed;
-            if (resumed) Inject(e, t);
+            if (resumed) { e.Pending = null; Inject(e, t); }   // the hook took it: not the mod too
         });
 
     // An instruction rode back on this session's presence (pending by folder, POST /dispatch or
@@ -342,6 +356,16 @@ public sealed class SessionRegistry
     {
         lock (_gate)
             return _entries.TryGetValue(id, out var e) && HookParked(e);
+    }
+
+    // Answered with park (or polling through a wait), however long ago its last /wake was.
+    public bool IsParked(string id)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            return _entries.TryGetValue(id, out var e) && e.Parked;
+        }
     }
 
     // Any session besides `id` that isn't stopped → the turn gets announced.
@@ -698,6 +722,7 @@ public sealed class SessionRegistry
         var t = _now();
         foreach (var e in _entries.Values.ToList())
         {
+            if (e.WaitUntil is { } u && t >= u) e.Parked = false;   // the wait is over: its hook goes on, not parked
             var s = StateOf(e, t);
             if (s == "stopped" && e.Id != _activeId && t - LastSignal(e) > KeepStopped)
             {

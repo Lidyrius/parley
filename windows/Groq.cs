@@ -15,9 +15,12 @@ public static class Groq
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     /// wav: 16 kHz mono 16-bit WAV bytes. Returns "" on failure (never an error body).
-    public static async Task<string> Transcribe(byte[] wav, Config config)
+    public static async Task<string> Transcribe(byte[] wav, Config config) => (await TryTranscribe(wav, config)).text;
+
+    // `failed`: no key, an HTTP error or no network — not silence (a turn must not park on it).
+    public static async Task<(string text, bool failed)> TryTranscribe(byte[] wav, Config config)
     {
-        if (!config.SttReady) return "";
+        if (!config.SttReady) return ("", true);
         try
         {
             using var form = new MultipartFormDataContent();
@@ -41,18 +44,18 @@ public static class Groq
                 // Groq blocks VPN / datacenter IPs with a 403 "check your network settings".
                 Notifier.Notify("Parley — Fehler",
                     code == 403 ? "Groq blockt dieses Netzwerk — VPN aus?" : $"Transkription fehlgeschlagen (HTTP {code}).");
-                return "";
+                return ("", true);
             }
             var text = body.Trim();
             var clean = CleanTranscript(text);
             if (clean.Length == 0 && text.Length > 0) Log.Write($"stt: dropped Whisper hallucination \"{text}\"");
-            return clean;
+            return (clean, false);
         }
         catch (Exception e)
         {
             Log.Write($"stt error: {e.Message}");
             Notifier.Notify("Parley — Fehler", "Groq nicht erreichbar (Netzwerk/VPN?).");
-            return "";
+            return ("", true);
         }
     }
 
