@@ -1,10 +1,13 @@
 package de.developaway.parley.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.speech.tts.TextToSpeech
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,15 +24,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AddLink
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.GppGood
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.LooksOne
@@ -63,6 +70,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -71,6 +80,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -83,11 +93,14 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import de.developaway.parley.AppModel
 import de.developaway.parley.Fmt
 import de.developaway.parley.GuestAsk
+import de.developaway.parley.GuestRoles
+import de.developaway.parley.GuestShare
 import de.developaway.parley.JoinLink
 import de.developaway.parley.JoinRequest
 import de.developaway.parley.Prefs
 import de.developaway.parley.Relay
 import de.developaway.parley.Session
+import de.developaway.parley.codeDigits
 import de.developaway.parley.ShareTag
 import java.util.Locale
 
@@ -220,62 +233,116 @@ fun ShareSessionSheet(m: AppModel, session: Session, close: () -> Unit) {
     }
 }
 
-/** "Max möchte beitreten": his role, what he may do, the owner's own role — then yes or no. */
+/** The share code in four boxes — clay while typed or shown, red when wrong, green once it matches. */
+@Composable
+private fun CodeBoxes(code: String, c: Colors, tint: Color = c.accent) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        for (i in 0 until 4) {
+            val digit = code.getOrNull(i)
+            Box(Modifier.size(56.dp, 66.dp).clip(RoundedCornerShape(14.dp)).background(c.card)
+                .border(2.dp, if (digit != null || i == code.length) tint else c.stroke, RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center) {
+                Text(digit?.toString() ?: "", fontSize = 30.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = c.text)
+            }
+        }
+    }
+}
+
+/**
+ * "Max möchte beitreten": first the code Max sends (his phone shows it) — then his role, what he
+ * may do, the owner's own role — and yes or no.
+ */
 @Composable
 private fun ApproveJoin(m: AppModel, r: JoinRequest) {
     val c = LocalColors.current
     val ctx = LocalContext.current
+    var entered by remember(r.id) { mutableStateOf("") }
+    var checked by remember(r.id) { mutableStateOf(r.code == null) }
     var role by remember(r.id) { mutableStateOf("") }
     var listen by remember(r.id) { mutableStateOf(false) }
     var full by remember(r.id) { mutableStateOf(false) }
     var mine by remember(r.id) { mutableStateOf(Prefs.string(ctx, "myShareRole")) }
+    val earlier = remember(r.id) { GuestRoles.of(ctx, r) }
+    val focus = remember { FocusRequester() }
+    fun type(text: String) {
+        entered = text.filter { it in '0'..'9' }.take(4)
+        if (entered == r.code) checked = true
+    }
+    val wrong = !checked && entered.length == 4
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp).padding(bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Avatar(r.name, c, 56.dp)
             Text("${r.name} möchte beitreten", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = c.text, textAlign = TextAlign.Center)
-            Text("Session „${r.label}“ · über Ihren Link", fontSize = 15.sp, color = c.secondary, textAlign = TextAlign.Center)
+            Text("Session „${r.label}“${r.device?.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""}", fontSize = 15.sp, color = c.secondary,
+                textAlign = TextAlign.Center)
             r.code?.let { code ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.GppGood, null, tint = c.ink(c.idle), modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("${r.device?.takeIf { it.isNotEmpty() }?.let { "$it · " } ?: ""}Prüfcode $code",
-                        fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink(c.idle))
+                if (!checked) {
+                    Text("Geben Sie den Code ein, den ${r.name} Ihnen schickt.", fontSize = 15.sp, color = c.text, textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 6.dp))
+                    BasicTextField(entered, ::type, Modifier.focusRequester(focus),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)) {
+                        CodeBoxes(entered, c, if (wrong) c.red else c.accent)
+                    }
+                    LaunchedEffect(Unit) { focus.requestFocus() }
+                    if (wrong) Text("Der Code stimmt nicht", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.red)
+                    TextButton({
+                        val clip = ctx.getSystemService(ClipboardManager::class.java)?.primaryClip
+                        clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(ctx)?.toString()?.let(::codeDigits)?.let(::type)
+                    }) {
+                        Icon(Icons.Filled.ContentPaste, null, tint = c.accent, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Einfügen", color = c.accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Text("Kein Code bekommen? Fragen Sie kurz nach.", fontSize = 13.sp, color = c.secondary, textAlign = TextAlign.Center)
+                } else {
+                    CodeBoxes(code, c, c.green)
+                    Text("✓ Code stimmt, es ist ${r.name}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink(c.green))
                 }
-                Text("Derselbe Code steht auf dem Handy des Gastes.", fontSize = 13.sp, color = c.secondary)
             }
         }
-        Caps("Wofür ist ${r.name} zuständig?", c)
-        Field(role, { role = it }, "z. B. Marketing und Rückfragen zu Texten", c)
-        Caps("Darf", c)
-        Row(Modifier.fillMaxWidth().clip(Pill).background(c.text.copy(alpha = 0.06f)).padding(3.dp)) {
-            listOf(false to "Lesen und schreiben", true to "Nur zuhören").forEach { (value, text) ->
-                Box(Modifier.weight(1f).height(36.dp).clip(Pill)
-                    .background(if (listen == value) (if (c.dark) Color(0xFF48484A) else Color.White) else Color.Transparent)
-                    .clickable { listen = value }, contentAlignment = Alignment.Center) {
-                    Text(text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = if (listen == value) c.text else c.secondary)
+        if (!checked) BigButton("Ablehnen", c, filled = false) { m.removeShare(r.id) }
+        else {
+            Caps("Wofür ist ${r.name} zuständig?", c)
+            Field(role, { role = it }, "z. B. Marketing und Rückfragen zu Texten", c)
+            if (earlier.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Zuletzt:", fontSize = 13.sp, color = c.secondary, modifier = Modifier.padding(start = 4.dp))
+                earlier.forEach { e ->
+                    Text(e, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.accent, maxLines = 1,
+                        modifier = Modifier.clip(Pill).background(c.accent.copy(alpha = 0.12f)).clickable { role = e }
+                            .padding(horizontal = 12.dp, vertical = 7.dp))
                 }
             }
-        }
-        Row(Modifier.fillMaxWidth().card(c, radius = 14.dp).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Verlauf ab Beitritt", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = c.text)
-                Text("Ältere Nachrichten bleiben verborgen", fontSize = 13.sp, color = c.secondary)
+            Caps("Darf", c)
+            Row(Modifier.fillMaxWidth().clip(Pill).background(c.text.copy(alpha = 0.06f)).padding(3.dp)) {
+                listOf(false to "Lesen und schreiben", true to "Nur zuhören").forEach { (value, text) ->
+                    Box(Modifier.weight(1f).height(36.dp).clip(Pill)
+                        .background(if (listen == value) (if (c.dark) Color(0xFF48484A) else Color.White) else Color.Transparent)
+                        .clickable { listen = value }, contentAlignment = Alignment.Center) {
+                        Text(text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = if (listen == value) c.text else c.secondary)
+                    }
+                }
             }
-            Switch(!full, { full = !it }, colors = SwitchDefaults.colors(checkedTrackColor = c.idle, checkedThumbColor = Color.White))
-        }
-        Caps("Und Ihre Rolle hier?", c)
-        Field(mine, { mine = it }, "z. B. Technik und Entscheidungen", c)
-        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            BigButton("Ablehnen", c, filled = false, modifier = Modifier.weight(1f)) { m.removeShare(r.id) }
-            BigButton("Zulassen", c, modifier = Modifier.weight(1f)) {
+            Row(Modifier.fillMaxWidth().card(c, radius = 14.dp).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Verlauf ab Beitritt", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = c.text)
+                    Text("Ältere Nachrichten bleiben verborgen", fontSize = 13.sp, color = c.secondary)
+                }
+                Switch(!full, { full = !it }, colors = SwitchDefaults.colors(checkedTrackColor = c.idle, checkedThumbColor = Color.White))
+            }
+            Caps("Und Ihre Rolle hier?", c)
+            Field(mine, { mine = it }, "z. B. Technik und Entscheidungen", c)
+            BigButton("${r.name} zulassen", c, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Prefs.set(ctx, "myShareRole", mine)
+                GuestRoles.remember(ctx, r, role)
                 m.approve(r, role, listen, full, mine)
             }
+            BigButton("Ablehnen", c, filled = false) { m.removeShare(r.id) }
+            Text("Freigaben für Befehle und Dateien kommen immer zu Ihnen.", fontSize = 13.sp, color = c.secondary,
+                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         }
-        Text("Freigaben für Befehle und Dateien kommen immer zu Ihnen.", fontSize = 13.sp, color = c.secondary,
-            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -304,6 +371,46 @@ private fun JoinView(m: AppModel, link: JoinLink, close: () -> Unit) {
         }
         Text("Ende-zu-Ende verschlüsselt. ${host ?: "Der Gastgeber"} lässt Sie herein und kann Sie jederzeit entfernen.",
             fontSize = 13.sp, color = c.secondary, textAlign = TextAlign.Center)
+    }
+}
+
+/**
+ * After "Beitreten": the four digits to send the owner — he types them in before he lets this phone
+ * in. Closes by itself once he has; a dead invite says so instead.
+ */
+@Composable
+private fun JoinCodeView(m: AppModel, g: GuestShare, close: () -> Unit) {
+    val c = LocalColors.current
+    val ctx = LocalContext.current
+    val host = g.host.ifEmpty { "den Gastgeber" }
+    val dead = m.guestRelays[g.id]?.failure == Relay.Failure.unknownRoom
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(Modifier.fillMaxWidth()) {
+            Text("Schließen", fontSize = 17.sp, color = c.secondary, modifier = Modifier.clip(Pill).clickable(onClick = close).padding(8.dp))
+        }
+        Avatar(g.host.ifEmpty { g.label }, c, 56.dp)
+        if (dead) {
+            Icon(Icons.Filled.AddLink, null, tint = c.secondary, modifier = Modifier.size(28.dp))
+            Text("Einladung abgelaufen oder schon benutzt. Bitten Sie um einen neuen Link.", fontSize = 17.sp, color = c.secondary,
+                textAlign = TextAlign.Center)
+        } else {
+            Text("Fast drin, ${g.name}", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = c.text, textAlign = TextAlign.Center)
+            Text("Schicken Sie diesen Code an $host. Damit weiß $host, dass wirklich Sie es sind.", fontSize = 15.sp, color = c.secondary,
+                textAlign = TextAlign.Center)
+            CodeBoxes(g.code, c)
+            Text("Session „${g.label}“ · gilt nur für diese Anfrage", fontSize = 13.sp, color = c.secondary, textAlign = TextAlign.Center)
+            val text = "Mein Parley-Code für „${g.label}“: ${g.code}"
+            BigButton("Code an $host schicken", c, icon = Icons.Filled.Share) {
+                ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), null))
+            }
+            TextButton({ ctx.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Parley-Code", g.code)) },
+                Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.ContentCopy, null, tint = c.accent, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Code kopieren", color = c.accent, fontSize = 17.sp)
+            }
+        }
     }
 }
 
@@ -423,10 +530,14 @@ private fun GuestAskScreen(m: AppModel, ask: GuestAsk) {
 @Composable
 fun ShareOverlays(m: AppModel) {
     val c = LocalColors.current
-    m.pendingJoin?.let { link ->
+    // The join sheet turns into the code to send once "Beitreten" is tapped — gone when he is let in.
+    val joining = m.joining?.let { id -> m.guests.firstOrNull { it.id == id && !it.active } }
+    if (m.joining != null && joining == null) LaunchedEffect(m.joining) { m.joining = null }
+    if (m.pendingJoin != null || joining != null) {
         val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet({ m.pendingJoin = null }, sheetState = state, containerColor = c.background) {
-            JoinView(m, link) { m.pendingJoin = null }
+        ModalBottomSheet({ m.pendingJoin = null; m.joining = null }, sheetState = state, containerColor = c.background) {
+            if (joining != null) JoinCodeView(m, joining) { m.joining = null }
+            else m.pendingJoin?.let { link -> JoinView(m, link) { m.pendingJoin = null } }
         }
     }
     m.joinRequests.firstOrNull()?.let { r ->

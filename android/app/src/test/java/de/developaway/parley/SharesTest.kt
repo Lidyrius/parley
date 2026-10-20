@@ -21,6 +21,16 @@ class SharesTest {
         o.keys().asSequence().sorted().joinToString(",", "{", "}") { "\"$it\":" + JSONObject.valueToString(o.get(it)) }
     }
 
+    @Test fun pastedCodeAndRememberedRoles() {
+        assertEquals("4821", codeDigits("Mein Parley-Code für „Shirts“: 4821"))
+        assertEquals("1234", codeDigits("12 1234567"))
+        assertNull(codeDigits("12 34"))
+        assertEquals("w1", GuestRoles.key(JoinRequest("s", "w", "W", "Max", who = "w1")))
+        assertEquals("name:max", GuestRoles.key(JoinRequest("s", "w", "W", "Max", who = "")))
+        assertEquals(listOf("B", "A"), GuestRoles.add(listOf("A", "B"), "B"))
+        assertEquals(6, GuestRoles.add(listOf("1", "2", "3", "4", "5", "6"), "7").size)
+    }
+
     @Test fun shareFramesAndJoinLinks() {
         val link = "parley://join?u=https%3A%2F%2Frelay.example&r=AAAAAAAAAAAAAAAAAAAAAA&k=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB&e=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC&s=Website&h=Sydney"
         val j = JoinLink.parse(link)!!
@@ -44,6 +54,8 @@ class SharesTest {
             Frames.parse("""{"t":"join","id":"s1","session":"w","label":"Website","name":"Max"}"""))
         assertEquals(Incoming.Join(JoinRequest("s1", "w", "Website", "Max", "Pixel 9", "0042")),
             Frames.parse("""{"t":"join","id":"s1","session":"w","label":"Website","name":"Max","device":"Pixel 9","code":"0042"}"""))
+        assertEquals(Incoming.Join(JoinRequest("s1", "w", "Website", "Max", "Pixel 9", "0042", "abc")),
+            Frames.parse("""{"t":"join","id":"s1","session":"w","label":"Website","name":"Max","device":"Pixel 9","code":"0042","who":"abc"}"""))
         assertEquals(Incoming.Move(ShareMove("s1", "P", "B", "Marketing", true)),
             Frames.parse("""{"t":"move","share":"s1","pub":"P","box":"B","role":"Marketing","listen":true}"""))
         assertEquals(Incoming.ShareEnd, Frames.parse("""{"t":"share-end"}"""))
@@ -58,7 +70,7 @@ class SharesTest {
 
         assertEquals("""{"id":"w","op":"create","t":"share"}""", sorted(Outgoing.shareCreate("w")))
         assertEquals("""{"id":"s1","op":"remove","t":"share"}""", sorted(Outgoing.shareRemove("s1")))
-        assertEquals("""{"device":"Pixel","name":"Max","pub":"P","t":"join"}""", sorted(Outgoing.join("Max", "Pixel", "P")))
+        assertEquals("""{"device":"Pixel","name":"Max","pub":"P","t":"join","who":"W"}""", sorted(Outgoing.join("Max", "Pixel", "P", "W")))
         assertEquals("""{"full":true,"id":"s1","listen":false,"mine":"T","op":"approve","role":"M","t":"share"}""",
             sorted(Outgoing.shareApprove("s1", "M", false, true, "T")))
     }

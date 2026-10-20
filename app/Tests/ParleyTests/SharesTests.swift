@@ -64,9 +64,10 @@ final class SharesTests: XCTestCase {
         XCTAssertEqual(perms, 0o600)                                           // keys inside
 
         hub.guest(invite.id, .say(id: "web", text: "vorab"))                    // not let in yet: nothing
-        hub.guest(invite.id, .join(name: "  Max ", device: "iPhone", pub: pub))
+        hub.guest(invite.id, .join(name: "  Max ", device: "iPhone", pub: pub, who: "max-phone"))
         XCTAssertEqual(hub.list().first?.state, "asking")
         XCTAssertTrue(box.toSir.last?.contains(#""name":"Max""#) ?? false)      // Sir's phone asks him
+        XCTAssertTrue(box.toSir.last?.contains(#""who":"max-phone""#) ?? false) // …and knows him again
         XCTAssertEqual(instruction("web"), "")
 
         hub.approve(invite.id, role: "Marketing", listen: false, full: false, mine: "Technik")
@@ -121,6 +122,7 @@ final class SharesTests: XCTestCase {
         XCTAssertNil(Shares.author("Mach weiter").0)
 
         XCTAssertEqual(RelayFrame.parse(#"{"t":"join","name":"Max","device":"iPhone","pub":"P"}"#), .join(name: "Max", device: "iPhone", pub: "P"))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"join","name":"Max","pub":"P","who":"m1"}"#), .join(name: "Max", device: "", pub: "P", who: "m1"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"share","op":"create","id":"web"}"#), .shareCreate(session: "web"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"share","op":"approve","id":"x","role":"M","listen":true}"#),
                        .shareApprove(id: "x", role: "M", listen: true, full: false, mine: nil))

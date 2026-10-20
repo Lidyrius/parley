@@ -22,8 +22,9 @@ Protokoll: `docs/IPHONE.md` → v7.
 - [x] **S2 Ein Beitritt pro Link.** Fragt schon jemand, werden weitere Anfragen ignoriert (geloggt);
       nach Ja oder Nein ist der Einladungsraum geschlossen.
 - [x] **S3 Sir sieht, wer fragt.** Name und Gerät des Gastes in der Anfrage; ein vierstelliger
-      Prüfcode, den beide Seiten sehen (aus dem Schlüssel des Gastes abgeleitet), damit Sir am Telefon
-      gegenprüfen kann.
+      Prüfcode (aus dem Schlüssel des Gastes abgeleitet). Der Gast sieht ihn sofort nach „Beitreten“ und
+      schickt ihn Sir (WhatsApp & Co.); Sir tippt oder fügt ihn ein, erst dann kann er zulassen.
+      Wiederkehrende Gäste (feste Geräte-ID `who`): Sirs Handy bietet die Rollen von früher an.
 - [x] **S4 Keine Identitäts-Täuschung.** Gast-Text wird entschärft: „[Parley]“, „[Nachricht von …]“,
       „[Antwort von …]“ und `<speak` im Text werden neutralisiert, der Name ohne Klammern/Zeilenumbrüche.
 - [x] **S5 Strikte Grenzen.** Der Gast erreicht nur: seine Session (Verlauf, Bilder, Nachricht),

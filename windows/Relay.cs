@@ -221,7 +221,7 @@ public static class RelayFrame
                         default: return null;
                     }
                 case "join":   // v7: a guest on a share's room says who he is, with his share key
-                    return new PhoneJoin(Str("name") ?? "", Str("device") ?? "", Str("pub") ?? "");
+                    return new PhoneJoin(Str("name") ?? "", Str("device") ?? "", Str("pub") ?? "", Str("who")?.Trim() ?? "");
                 case "answer": // v7: a guest answers his question, or passes it on to Sir
                     if (Str("id") is not { Length: > 0 } aid) return null;
                     return new PhoneAnswer(aid, Str("text") ?? "", Flag("pass"));
@@ -281,7 +281,7 @@ public sealed record PhoneSnapshotDelete(string Id) : PhoneMessage;
 public sealed record PhoneShareCreate(string Session) : PhoneMessage;
 public sealed record PhoneShareApprove(string Id, string Role, bool Listen, bool Full, string? Mine) : PhoneMessage;
 public sealed record PhoneShareRemove(string Id) : PhoneMessage;
-public sealed record PhoneJoin(string Name, string Device, string Pub) : PhoneMessage;
+public sealed record PhoneJoin(string Name, string Device, string Pub, string Who) : PhoneMessage;
 public sealed record PhoneAnswer(string Id, string Text, bool Pass) : PhoneMessage;
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never

@@ -169,7 +169,8 @@ final class AppModel {
             relay.startDemo()
             images["demo-5"] = Demo.screenshot()
             // `-demoCall speaking|listening|idle|incoming|connecting` opens the call screen.
-            // `-demoJoin`: a guest asks to join (the approval sheet).
+            // `-demoJoin` (+ `-demoJoinOk`): a guest asks to join (the approval sheet, code typed in);
+            // `-demoGuestCode`: this phone joined someone's share (the code to send back).
             // `-demoAway`: Unterwegs and Stumm on; `-demoPalette <id>`: a palette (contrast checks).
             if arguments.contains("-demoAway") { away = true; silent = true }
             // `-demoPairing` (+ `-demoScanner [found|denied]`): the first-launch screens.
@@ -183,7 +184,16 @@ final class AppModel {
                                       replies: ["Variante A", "Variante B"], seconds: 120)]
             }
             if arguments.contains("-demoJoin") {
-                joinRequests = [JoinRequest(id: "demo-join", session: "demo-shirts", label: "Shirts", name: "Max")]
+                let r = JoinRequest(id: "demo-join", session: "demo-shirts", label: "Shirts", name: "Marco",
+                                    device: "iPhone 16", code: "4821", who: "demo-marco")
+                PastRoles.remember("Fotos und Produkttexte", for: r)
+                PastRoles.remember("Marketing und Texte", for: r)
+                joinRequests = [r]
+            }
+            if arguments.contains("-demoGuestCode") {   // a share link opened: the code to send back
+                pendingJoin = JoinLink(pairing: Pairing(relay: URL(string: "https://relay.example")!, room: "demo-room-0000000",
+                                                        secret: "demo-secret-00000", key: nil),
+                                       label: "Shirts", host: "Sydney")
             }
             if let i = arguments.firstIndex(of: "-demoCall") {
                 let state = i + 1 < arguments.count ? Demo.CallState(rawValue: arguments[i + 1]) : nil

@@ -1,6 +1,8 @@
 package de.developaway.parley
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -82,3 +84,23 @@ object Prefs {
     fun string(c: Context, key: String) = p(c).getString(key, "") ?: ""
     fun set(c: Context, key: String, v: String) = p(c).edit().putString(key, v).apply()
 }
+
+/**
+ * v7: the roles this phone gave a guest before — by his phone's `who`, else by his name — newest
+ * first, offered again when he asks next time (as chips; nothing is filled in by itself).
+ */
+object GuestRoles {
+    fun key(r: JoinRequest): String = r.who?.takeIf { it.isNotEmpty() } ?: ("name:" + r.name.lowercase())
+    fun add(roles: List<String>, role: String): List<String> = (listOf(role) + roles.filter { it != role }).take(6)
+    private fun all(c: Context): JSONObject = runCatching { JSONObject(Prefs.string(c, "guestRoles")) }.getOrDefault(JSONObject())
+
+    fun of(c: Context, r: JoinRequest): List<String> = all(c).optJSONArray(key(r))?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+
+    fun remember(c: Context, r: JoinRequest, role: String) {
+        val t = role.trim().takeIf { it.isNotEmpty() } ?: return
+        Prefs.set(c, "guestRoles", all(c).put(key(r), JSONArray(add(of(c, r), t))).toString())
+    }
+}
+
+/** The four digits of a pasted share code: the first four in a row ("Mein Parley-Code …: 4821"). */
+fun codeDigits(text: String): String? = Regex("[0-9]{4}").find(text)?.value

@@ -65,6 +65,7 @@ struct JoinRequest: Identifiable, Equatable, Sendable, Decodable {
     var name: String
     var device: String? = nil
     var code: String? = nil         // four digits the guest sees too (from his key)
+    var who: String? = nil          // his phone's lasting id (the roles he had before)
 }
 
 /// v7: Sir let the guest in — the fresh room he moves to, and what he may do (`move` frame).
@@ -413,8 +414,8 @@ enum Outgoing {
     static func answer(id: String, text: String, pass: Bool = false) -> String {
         pass ? encode(["t": .s("answer"), "id": .s(id), "pass": .b(true)]) : encode(["t": .s("answer"), "id": .s(id), "text": .s(text)])
     }
-    static func join(name: String, device: String, pub: String) -> String {
-        encode(["t": .s("join"), "name": .s(name), "device": .s(device), "pub": .s(pub)])
+    static func join(name: String, device: String, pub: String, who: String) -> String {
+        encode(["t": .s("join"), "name": .s(name), "device": .s(device), "pub": .s(pub), "who": .s(who)])
     }
     /// Can't talk now (on the ringing screen): ring again in `after` s, or nil = I'll call back.
     static func later(after: Int?) -> String {

@@ -460,7 +460,11 @@ struct FrameTests {
         #expect(Frame.decode(#"{"t":"share","id":"s1","session":"w","link":"parley://join?x"}"#) == .shareLink(id: "s1", session: "w", link: "parley://join?x"))
 
         #expect(Outgoing.shareCreate(session: "w") == #"{"id":"w","op":"create","t":"share"}"#)
-        #expect(Outgoing.join(name: "Max", device: "iPhone", pub: "P") == #"{"device":"iPhone","name":"Max","pub":"P","t":"join"}"#)
+        #expect(Outgoing.join(name: "Max", device: "iPhone", pub: "P", who: "m1") == #"{"device":"iPhone","name":"Max","pub":"P","t":"join","who":"m1"}"#)
+        #expect(Frame.decode(#"{"t":"join","id":"s1","session":"w","label":"W","name":"Max","code":"0042","who":"m1"}"#)
+                == .joinRequest(JoinRequest(id: "s1", session: "w", label: "W", name: "Max", code: "0042", who: "m1")))
+        #expect(PastRoles.code(in: "Mein Parley-Code für „Shirts 2“: 4821") == "4821")
+        #expect(PastRoles.code(in: "kein Code") == nil)
         #expect(Outgoing.shareApprove(id: "s1", role: "M", listen: false, full: true, mine: "T")
                 == #"{"full":true,"id":"s1","listen":false,"mine":"T","op":"approve","role":"M","t":"share"}"#)
     }

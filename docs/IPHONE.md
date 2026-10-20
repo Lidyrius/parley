@@ -364,13 +364,15 @@ the guest's phone dials it as `phone`. The relay needs nothing new.
 - **Owner (Sir's phone ↔ host, his own room):** `{"t":"share","op":"create","id":<session>}` →
   host `{"t":"share","id":<share>,"session","link"}` with
   `link = parley://join?u=<relay>&r=<room>&k=<secret>&e=<key>&s=<session label>&h=<host name>`
-  (one-time, 24 h). A guest asks → host `{"t":"join","id","session","label","name","device","code"}`;
+  (one-time, 24 h). A guest asks → host `{"t":"join","id","session","label","name","device","code","who"}`;
   Sir answers `{"t":"share","op":"approve","id","role","listen","full","mine"}` or
   `{"t":"share","op":"remove","id"}` (also to end an active share). Rows in `/sessions` carry
   `shared: [{id, name, role}]` and `asking: <name>` while a question waits for that guest.
-- **Guest (his phone ↔ host, the share's room):** on open `{"t":"join","name","device","pub"}` —
-  `pub` = a fresh P-256 public key (x9.63, base64url). One join per link; Sir decides on the first.
-  Both sides show `code` = SHA-256(pub as UTF-8), first 4 bytes big-endian mod 10000 (4 digits).
+- **Guest (his phone ↔ host, the share's room):** on open `{"t":"join","name","device","pub","who"}` —
+  `pub` = a fresh P-256 public key (x9.63, base64url); `who` = the guest phone's lasting id (≤ 64
+  chars; Sir's phone offers the roles it gave him before). One join per link; Sir decides on the first.
+  `code` = SHA-256(pub as UTF-8), first 4 bytes big-endian mod 10000 (4 digits): the guest sends it
+  to Sir (WhatsApp & co.), Sir types or pastes it before he can let him in.
   After Sir's yes the host sends `{"t":"move","share","pub","box","role","listen"}`: `box` =
   AES-GCM (nonce‖ciphertext‖tag, base64url) of `{"r","k","e"}` — the fresh room — under
   HKDF-SHA256(ECDH(host key, guest key), salt = share id, info = "parley-share-move", 32 bytes).

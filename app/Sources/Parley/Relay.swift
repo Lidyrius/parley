@@ -150,7 +150,8 @@ enum RelayFrame {
         case "hello":
             return .hello(device: String((f["device"] as? String ?? "").prefix(60)))
         case "join":   // v7: a guest on a share's room says who he is, with his share key
-            return .join(name: f["name"] as? String ?? "", device: f["device"] as? String ?? "", pub: f["pub"] as? String ?? "")
+            return .join(name: f["name"] as? String ?? "", device: f["device"] as? String ?? "", pub: f["pub"] as? String ?? "",
+                         who: String((f["who"] as? String ?? "").prefix(64)))
         case "answer": // v7: a guest answers his question, or passes it on to Sir
             guard let id = f["id"] as? String, !id.isEmpty else { return nil }
             return .answer(id: id, text: f["text"] as? String ?? "", pass: f["pass"] as? Bool ?? false)
@@ -269,7 +270,7 @@ enum PhoneEvent: Equatable, Sendable {
     case shareCreate(session: String)
     case shareApprove(id: String, role: String, listen: Bool, full: Bool, mine: String?)
     case shareRemove(String)
-    case join(name: String, device: String, pub: String)
+    case join(name: String, device: String, pub: String, who: String = "")
     case answer(id: String, text: String, pass: Bool)
 }
 

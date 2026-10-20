@@ -20,6 +20,7 @@ public sealed class ShareGuest
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("device")] public string Device { get; set; } = "";   // what the guest's phone calls itself
     [JsonPropertyName("pub")] public string Pub { get; set; } = "";         // his share key (P-256, x9.63, base64url): the move is sealed to it
+    [JsonPropertyName("who")] public string Who { get; set; } = "";         // his phone's stable id: Sir's phone remembers the roles it gave him
     [JsonPropertyName("role")] public string Role { get; set; } = "";
     [JsonPropertyName("listen")] public bool Listen { get; set; }           // "nur zuhören": reads, never writes
     [JsonPropertyName("full")] public bool Full { get; set; }               // also sees the history from before he joined
@@ -257,7 +258,7 @@ public static class Shares
         JsonSerializer.Serialize(new
         {
             t = "join", id = s.Id, session = s.Session, label = s.Label, name = s.Guest?.Name ?? "",
-            device = s.Guest?.Device ?? "", code = Code(s.Guest?.Pub ?? ""),
+            device = s.Guest?.Device ?? "", code = Code(s.Guest?.Pub ?? ""), who = s.Guest?.Who ?? "",
         });
 
     // Frames to the guest: move to a fresh room (after Sir's yes, sealed to him), a question and
@@ -580,6 +581,7 @@ public sealed class ShareHub
                         Name = Shares.CleanName(j.Name),
                         Device = new StringInfo(j.Device).LengthInTextElements > 40 ? new StringInfo(j.Device).SubstringByTextElements(0, 40) : j.Device,
                         Pub = j.Pub,
+                        Who = j.Who.Length > 64 ? j.Who[..64] : j.Who,
                     };
                     s.State = "asking";
                     Store();

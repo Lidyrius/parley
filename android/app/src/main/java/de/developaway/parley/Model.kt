@@ -54,8 +54,12 @@ data class Session(
 /** v7: one guest of a shared session — the share's id (to remove him), his name and role. */
 data class ShareTag(val id: String, val name: String, val role: String = "")
 
-/** v7: a guest asks to join one of Sir's sessions (`join` frame). `code`: four digits the guest sees too. */
-data class JoinRequest(val id: String, val session: String, val label: String, val name: String, val device: String? = null, val code: String? = null)
+/**
+ * v7: a guest asks to join one of Sir's sessions (`join` frame). `code`: four digits the guest sees too
+ * (and sends Sir); `who`: his phone's stable id — the roles Sir gave him before are offered again.
+ */
+data class JoinRequest(val id: String, val session: String, val label: String, val name: String, val device: String? = null, val code: String? = null,
+                       val who: String? = null)
 
 /** v7: Sir let the guest in — the fresh room sealed to the guest's key (`pub`: the host's half, `box`: the room). */
 data class ShareMove(val share: String, val pub: String, val box: String, val role: String? = null, val listen: Boolean? = null)
@@ -180,7 +184,7 @@ object Frames {
             "join" -> {
                 val id = o.s("id"); val session = o.s("session"); val label = o.s("label"); val name = o.s("name")
                 if (id != null && session != null && label != null && name != null)
-                    Incoming.Join(JoinRequest(id, session, label, name, o.s("device"), o.s("code"))) else Incoming.Ignored
+                    Incoming.Join(JoinRequest(id, session, label, name, o.s("device"), o.s("code"), o.s("who"))) else Incoming.Ignored
             }
             "move" -> {
                 val share = o.s("share"); val pub = o.s("pub"); val box = o.s("box")
@@ -297,7 +301,7 @@ object Outgoing {
     fun shareApprove(id: String, role: String, listen: Boolean, full: Boolean, mine: String) =
         obj("t" to "share", "op" to "approve", "id" to id, "role" to role, "listen" to listen, "full" to full, "mine" to mine)
     fun shareRemove(id: String) = obj("t" to "share", "op" to "remove", "id" to id)
-    fun join(name: String, device: String, pub: String) = obj("t" to "join", "name" to name, "device" to device, "pub" to pub)
+    fun join(name: String, device: String, pub: String, who: String) = obj("t" to "join", "name" to name, "device" to device, "pub" to pub, "who" to who)
     /** v7: the guest's answer to a question, or `pass` = give it to the owner. */
     fun answer(id: String, text: String, pass: Boolean = false) =
         if (pass) obj("t" to "answer", "id" to id, "pass" to true) else obj("t" to "answer", "id" to id, "text" to text)

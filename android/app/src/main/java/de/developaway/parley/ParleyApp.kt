@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class ParleyApp : Application() {
     lateinit var model: AppModel; private set
@@ -61,6 +62,8 @@ class AppModel(private val app: Application) {
     val guests = mutableStateListOf<GuestShare>()
     val guestRelays = mutableMapOf<String, Relay>()
     var pendingJoin by mutableStateOf<JoinLink?>(null)
+    /** The share just asked to join: its sheet shows the code for the owner until he lets this phone in. */
+    var joining by mutableStateOf<String?>(null)
     val shareLinks = mutableStateMapOf<String, String>()
     val joinRequests = mutableStateListOf<JoinRequest>()
     var guestNotice by mutableStateOf<String?>(null)
@@ -81,7 +84,16 @@ class AppModel(private val app: Application) {
         relay.demo(Frames.snapshot(org.json.JSONObject(Demo.frame(System.currentTimeMillis()))))
         histories["demo-shirts"] = Demo.history
         // `join`: a guest asks to join (the approval sheet); `ask`: a question as a guest.
-        if (kind == "join") joinRequests += JoinRequest("demo-join", "demo-shirts", "Shirts", "Max", "Pixel 9", "4821")
+        // `code`: the guest's code to send the owner after "Beitreten".
+        if (kind == "join") JoinRequest("demo-join", "demo-shirts", "Shirts", "Max", "Pixel 9", "4821", "demo-who").let {
+            GuestRoles.remember(app, it, "Marketing")
+            GuestRoles.remember(app, it, "Texte und Kampagne")
+            joinRequests += it
+        }
+        if (kind == "code") GuestShare.create(Pairing("https://relay.example", "demo-room", "demo"), "Shirts", "Sydney", "Max").let {
+            guests += it
+            joining = it.id
+        }
         if (kind == "ask") guestAsks += GuestAsk("demo-ask", "demo-shirts", "Shirts",
             "Max, für die Überschrift habe ich zwei Varianten. Welche passt zur Kampagne?", listOf("Variante A", "Variante B"), 120)
         if (kind in setOf("speaking", "listening", "idle", "incoming", "connecting")) call.demo(kind)
@@ -242,6 +254,9 @@ class AppModel(private val app: Application) {
 
     private fun saveGuests() = GuestStore.save(app, guests.toList())
 
+    /** This phone as a guest, the same in every join: the owner's phone remembers the roles it gave it. */
+    private val who: String get() = Prefs.string(app, "guestWho").ifEmpty { UUID.randomUUID().toString().also { Prefs.set(app, "guestWho", it) } }
+
     /** "Beitreten": keep the share, dial its room, say who I am. */
     fun join(link: JoinLink, name: String) {
         val g = GuestShare.create(link.pairing, link.label, link.host, name.trim())
@@ -249,6 +264,7 @@ class AppModel(private val app: Application) {
         guests += g
         saveGuests()
         pendingJoin = null
+        joining = g.id
         connect(g)
     }
 
@@ -273,7 +289,7 @@ class AppModel(private val app: Application) {
         // Not let in yet: say who I am (and the key the fresh room is sealed to). Let in: nothing —
         // the iPhone sends its push tokens here; Android has no push (its call rings over this room).
         r.onOpened = {
-            guests.firstOrNull { it.id == g.id }?.let { if (!it.active) r.send(Outgoing.join(it.name, Build.MODEL ?: "Android", it.pub)) }
+            guests.firstOrNull { it.id == g.id }?.let { if (!it.active) r.send(Outgoing.join(it.name, Build.MODEL ?: "Android", it.pub, who)) }
             call.opened(r)   // a guest's call on this room says so again
         }
         r.onClosed = { call.linkChanged(r) }
@@ -291,7 +307,7 @@ class AppModel(private val app: Application) {
         when (f) {
             // The owner's host came (back) into the invite room after we did: ask again (one join per link and key).
             is Incoming.Peer -> {
-                if (f.host && !g.active) guestRelays[id]?.send(Outgoing.join(g.name, Build.MODEL ?: "Android", g.pub))
+                if (f.host && !g.active) guestRelays[id]?.send(Outgoing.join(g.name, Build.MODEL ?: "Android", g.pub, who))
                 guestRelays[id]?.let { toCall(it, f) }
             }
             // Part 3: a call on his own line — the owner's host rings him for a question (in the

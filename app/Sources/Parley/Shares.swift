@@ -11,6 +11,7 @@ struct Share: Codable, Equatable {
         var name: String
         var device = ""         // what the guest's phone calls itself
         var pub = ""            // his share key (P-256, x9.63, base64url): the move is sealed to it
+        var who: String?        // his phone's lasting id: Sir's phone offers the roles he had before
         var role = ""
         var listen = false      // "nur zuhören": reads, never writes
         var full = false        // also sees the history from before he joined
@@ -164,9 +165,9 @@ enum Shares {
     }
 
     static func askFrame(_ s: Share) -> String {
-        struct Wire: Encodable { let t = "join"; let id, session, label, name, device, code: String }
+        struct Wire: Encodable { let t = "join"; let id, session, label, name, device, code, who: String }
         return ControlServer.encode(Wire(id: s.id, session: s.session, label: s.label, name: s.guest?.name ?? "",
-                                         device: s.guest?.device ?? "", code: Shares.code(s.guest?.pub ?? "")))
+                                         device: s.guest?.device ?? "", code: Shares.code(s.guest?.pub ?? ""), who: s.guest?.who ?? ""))
     }
 
     // Frames to the guest: move to a fresh room (after Sir's yes, sealed to him), the share's id
@@ -382,7 +383,7 @@ final class ShareHub: @unchecked Sendable {
             guard let s = self.shares.first(where: { $0.id == id }), let client = self.clients[id] else { return }
             if let from, from !== client { return }
             switch event {
-            case .join(let name, let device, let pub) where s.state != "active":
+            case .join(let name, let device, let pub, let who) where s.state != "active":
                 // S2: one join per link — whoever asks first; Sir decides on him.
                 guard s.state == "invited" else {
                     if s.guest?.pub != pub { Log.write("share: a second join on \(s.label)'s link — ignored") }
@@ -393,7 +394,7 @@ final class ShareHub: @unchecked Sendable {
                     return
                 }
                 guard let i = self.shares.firstIndex(where: { $0.id == id }) else { return }
-                self.shares[i].guest = Share.Guest(name: Shares.cleanName(name), device: String(device.prefix(40)), pub: pub)
+                self.shares[i].guest = Share.Guest(name: Shares.cleanName(name), device: String(device.prefix(40)), pub: pub, who: who)
                 self.shares[i].state = "asking"
                 self.store()
                 let asked = self.shares[i]

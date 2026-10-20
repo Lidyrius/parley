@@ -59,15 +59,23 @@ extension AppModel {
         for g in guests { connect(g) }
     }
 
-    /// "Beitreten": keep the share, dial its room, say who I am.
-    func join(_ link: JoinLink, as name: String) {
+    /// This phone, the same on every join: the owner's phone knows a guest again by it.
+    static var guestWho: String {
+        if let id = UserDefaults.standard.string(forKey: "guestWho") { return id }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: "guestWho")
+        return id
+    }
+
+    /// "Beitreten": keep the share, dial its room, say who I am. The share's id (its code screen follows it).
+    @discardableResult func join(_ link: JoinLink, as name: String) -> String {
         let g = GuestShare(pairing: link.pairing, label: link.label, host: link.host,
                            name: name.trimmingCharacters(in: .whitespacesAndNewlines))
         guests.removeAll { $0.pairing.room == g.pairing.room }
         guests.append(g)
         PairingStore.saveGuests(guests)
-        pendingJoin = nil
-        connect(g)
+        if !demo { connect(g) }
+        return g.id
     }
 
     /// Leave a share (or give up waiting): the owner's Mac ends it when told; the room just goes quiet.
@@ -109,7 +117,7 @@ extension AppModel {
         case .opened:
             guard let r = guestRelays[id] else { return }
             if guests[i].active { sendPushTokens(on: r) }   // so his questions ring / reach him as a push
-            else { r.send(Outgoing.join(name: guests[i].name, device: UIDevice.current.name, pub: guests[i].pub)) }
+            else { r.send(Outgoing.join(name: guests[i].name, device: UIDevice.current.name, pub: guests[i].pub, who: Self.guestWho)) }
             if call.line === r {
                 if call.phase.isActive { r.send(Outgoing.call(started: true)) }
                 call.relayChanged()
@@ -190,6 +198,7 @@ extension AppModel {
 
     func approve(_ r: JoinRequest, role: String, listen: Bool, full: Bool, mine: String) {
         joinRequests.removeAll { $0.id == r.id }
+        PastRoles.remember(role, for: r)
         relay.send(Outgoing.shareApprove(id: r.id, role: role, listen: listen, full: full, mine: mine))
     }
 
@@ -197,5 +206,30 @@ extension AppModel {
     func removeShare(_ id: String) {
         joinRequests.removeAll { $0.id == id }
         relay.send(Outgoing.shareRemove(id: id))
+    }
+}
+
+/// The roles Sir gave a guest before (on this phone), newest first: offered when he asks again.
+enum PastRoles {
+    static func key(_ r: JoinRequest) -> String {
+        if let who = r.who, !who.isEmpty { return who }
+        return "name:" + r.name.lowercased()
+    }
+
+    static func roles(for r: JoinRequest) -> [String] {
+        (UserDefaults.standard.dictionary(forKey: "pastRoles") as? [String: [String]])?[key(r)] ?? []
+    }
+
+    static func remember(_ role: String, for r: JoinRequest) {
+        let role = role.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !role.isEmpty else { return }
+        var all = UserDefaults.standard.dictionary(forKey: "pastRoles") as? [String: [String]] ?? [:]
+        all[key(r)] = Array(([role] + (all[key(r)] ?? []).filter { $0 != role }).prefix(6))
+        UserDefaults.standard.set(all, forKey: "pastRoles")
+    }
+
+    /// The first four digits in a row in `text` ("Mein Parley-Code für „Shirts“: 4821" → "4821").
+    static func code(in text: String) -> String? {
+        text.firstMatch(of: /\d{4}/).map { String($0.output) }
     }
 }
