@@ -76,6 +76,7 @@ internal sealed class TrayApp : ApplicationContext
             Notify = (title, body) => { Notifier.Notify(title, body); _ = Apns.SendAlert(title, body, ""); },
             Push = (token, env, title, body, session) => _ = Apns.SendAlertTo(token, env, title, body, session),
             CallGuest = (line, turn, share) => CallGuest(line, turn, share),
+            WelcomeGuest = (line, text, share) => WelcomeGuest(line, text, share),
         };
         _server.AskGuest = (id, turn) => _shares.AskGuest(id, turn);
         RelayHost.Start = StartRelay;   // the setup connects once the relay is chosen / the phone pairs
@@ -222,25 +223,9 @@ internal sealed class TrayApp : ApplicationContext
     private static async Task<string?> CallGuest(PhoneLine line, TurnPayload turn, Share share)
     {
         var name = share.Guest?.Name ?? "Gast";
-        var label = $"Rückfrage · {share.Label}";
-        line.TakeLater(out _);
-        line.TakeDeclined();
         // Held to the end: the line going idle is what hangs his phone up.
         using var hold = line.Hold();
-        if (!line.Active)
-        {
-            _ = line.SendRing(label);
-            var (token, env) = line.PushTarget;
-            if (token.Length > 0) _ = Apns.SendVoipTo(token, env, label, share.Id);
-            Log.Write($"share: ringing {name} for {share.Label}");
-            var until = DateTime.UtcNow + Ringer.AnswerWait;
-            while (!line.Active)
-            {
-                if (line.TakeLater(out _)) { Log.Write($"share: {name} can't talk now"); return null; }
-                if (line.TakeDeclined() || DateTime.UtcNow >= until) { Log.Write($"share: {name} didn't pick up"); return null; }
-                await Task.Delay(100);
-            }
-        }
+        if (!await RingGuest(line, $"Rückfrage · {share.Label}", share)) return null;
         var config = Config.Load();
         line.SetSpeaker(share.Label);
         if (await GoogleTts.Synthesize(turn.Speak, config) is { } pcm)
@@ -265,6 +250,40 @@ internal sealed class TrayApp : ApplicationContext
                 await line.PlayAsync(AudioOut.ApplyRate(byePcm, config.SpeakingRate), GoogleTts.SampleRate);
         }
         return text;   // the hold ends here: the line goes idle and his phone hangs up
+    }
+
+    // A guest just let in: ring his line, say the welcome, hang up — no listening. As macOS.
+    private static async Task WelcomeGuest(PhoneLine line, string text, Share share)
+    {
+        using var hold = line.Hold();
+        if (!await RingGuest(line, $"Willkommen · {share.Label}", share)) return;
+        var config = Config.Load();
+        line.SetSpeaker(share.Label);
+        if (await GoogleTts.Synthesize(text, config) is { } pcm)
+            await line.PlayAsync(AudioOut.ApplyRate(pcm, config.SpeakingRate), GoogleTts.SampleRate);
+        line.TakeBarge();
+    }   // the hold ends here: the line goes idle and his phone hangs up
+
+    // Ring a guest's line (his room's `ring` + a VoIP push naming the share) until he picks up;
+    // false = not now, declined or no answer.
+    private static async Task<bool> RingGuest(PhoneLine line, string label, Share share)
+    {
+        var name = share.Guest?.Name ?? "Gast";
+        line.TakeLater(out _);
+        line.TakeDeclined();
+        if (line.Active) return true;
+        _ = line.SendRing(label);
+        var (token, env) = line.PushTarget;
+        if (token.Length > 0) _ = Apns.SendVoipTo(token, env, label, share.Id);
+        Log.Write($"share: ringing {name} for {share.Label}");
+        var until = DateTime.UtcNow + Ringer.AnswerWait;
+        while (!line.Active)
+        {
+            if (line.TakeLater(out _)) { Log.Write($"share: {name} can't talk now"); return false; }
+            if (line.TakeDeclined() || DateTime.UtcNow >= until) { Log.Write($"share: {name} didn't pick up"); return false; }
+            await Task.Delay(100);
+        }
+        return true;
     }
 
     // ---- the Wachhund (Watchdog.cs) ---------------------------------------------------

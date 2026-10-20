@@ -149,6 +149,7 @@ extension AppModel {
             guests[i].listen = m.listen ?? false
             guests[i].active = true
             PairingStore.saveGuests(guests)
+            openWhenShared = id   // his session opens as soon as it arrives on the fresh room
             guestRelays[id]?.use(moved)
             guestRelays[id]?.reconnect()
             Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }

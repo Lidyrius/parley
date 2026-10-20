@@ -27,6 +27,7 @@ struct Share: Codable, Equatable {
     var state: String           // invited (link out) | asking (guest waits for Sir) | active
     var guest: Guest?
     var mine: String?           // Sir's own role in this session
+    var welcomed: Bool?         // the guest got his welcome call (once, on his first hello after the yes)
 
     var config: RelayConfig { RelayConfig(url: url, room: room, secret: secret, key: key) }
 }
@@ -154,6 +155,15 @@ enum Shares {
         return t
     }
 
+    /// What Parley says when it rings the guest right after Sir let him in.
+    static func welcome(_ s: Share, owner: String) -> String {
+        guard let g = s.guest else { return "" }
+        let hi = "Hallo \(g.name), schön, dass du dabei bist."
+        if g.listen { return "\(hi) Du hörst hier mit, ich halte dich auf dem Laufenden, bis \(owner) fertig ist." }
+        if g.role.isEmpty { return "\(hi) Ich melde mich bei dir, wenn ich dich brauche, und halte dich auf dem Laufenden, bis \(owner) fertig ist." }
+        return "\(hi) Ich melde mich bei dir für alles rund um \(g.role) und halte dich auf dem Laufenden, bis \(owner) fertig ist."
+    }
+
     static func left(_ s: Share) -> String {
         "[Parley] \(s.guest?.name ?? "Der Gast") ist nicht mehr in dieser Session. Alles geht wieder nur an Sir. Antworte nur kurz mit <speak-end>."
     }
@@ -216,6 +226,7 @@ final class ShareHub: @unchecked Sendable {
     private var lines: [String: PhoneHub] = [:]
     private var calling: Set<String> = []
     var callGuest: (@Sendable (PhoneHub, TurnPayload, Share) async -> String?)?
+    var welcomeGuest: (@Sendable (PhoneHub, String, Share) async -> Void)?   // rings him and says the welcome
     static let askTimeout: TimeInterval = 120
     var askTimeoutOverride: TimeInterval?       // tests
 
@@ -225,6 +236,7 @@ final class ShareHub: @unchecked Sendable {
     var toSir: (@Sendable (String) -> Void)?              // a frame to Sir's phone
     var notify: (@Sendable (String, String) -> Void)?     // a notification on the Mac (title, body)
     var hostName = Host.current().localizedName ?? "Mac"
+    var ownerName = NSFullUserName().split(separator: " ").first.map(String.init) ?? NSUserName()   // "Sydney" in the welcome
 
     init(server: ControlServer, file: URL? = Shares.file, now: @escaping () -> Date = { Date() },
          relayURL: @escaping () -> String = { RelayConfig.load().url },
@@ -277,6 +289,7 @@ final class ShareHub: @unchecked Sendable {
             s.guest?.joined = self.now()
             s.mine = mine?.trimmingCharacters(in: .whitespacesAndNewlines)
             s.state = "active"
+            s.welcomed = false
             Shares.room(&s)
             guard let sealed = Shares.sealMove(s, to: pub), let old = self.clients.removeValue(forKey: id) else {
                 Log.write("share: the guest's key is unusable"); return
@@ -436,6 +449,7 @@ final class ShareHub: @unchecked Sendable {
             case .hello where s.state == "active":
                 // Back online (e.g. opened from the push): the questions still open, again.
                 for (qid, a) in self.asks where a.share == id { client.sendText(Shares.askFrame(id: qid, s, a.turn)) }
+                if s.welcomed == false { self.welcome(id) }   // nil: let in before welcomes existed
             case .call, .push, .later, .barge:
                 // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley.
                 if s.state == "active" { self.lines[id]?.handle(event) }
@@ -446,6 +460,26 @@ final class ShareHub: @unchecked Sendable {
                 self.store()
             default:
                 break   // anything else (calls, resume, Sir's own controls) isn't a guest's
+            }
+        }
+    }
+
+    // Just let in, his first hello on the fresh room: a notification, then Parley rings him and
+    // says who he is here. 1.5 s later — his push tokens follow the hello.
+    private func welcome(_ id: String) {
+        guard let i = shares.firstIndex(where: { $0.id == id }) else { return }
+        shares[i].welcomed = true
+        store()
+        let s = shares[i], owner = ownerName
+        queue.asyncAfter(deadline: .now() + 1.5) {
+            guard let s = self.shares.first(where: { $0.id == s.id && $0.state == "active" }), let g = s.guest else { return }
+            Log.write("share: welcoming \(g.name) to \(s.label)")
+            if let token = g.push {
+                self.push?(token, g.env ?? "production", "Parley · \(s.label)", "\(owner) hat dich hereingelassen – Parley ruft dich gleich an.", s.session)
+            }
+            if let line = self.lines[id], let call = self.welcomeGuest {
+                let text = Shares.welcome(s, owner: owner)
+                Task { await call(line, text, s) }
             }
         }
     }

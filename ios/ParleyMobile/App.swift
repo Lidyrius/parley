@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             await AppModel.shared.deliverLater(after)
             return
         }
-        guard let id = response.notification.request.content.userInfo["session"] as? String else { return }
+        guard let id = response.notification.request.content.userInfo["session"] as? String, !id.isEmpty else { return }   // "": a join ask, a reminder
         await MainActor.run { AppModel.shared.open(session: id) }
     }
 }
@@ -131,6 +131,8 @@ final class AppModel {
     var pendingJoin: JoinLink?
     var shareLinks: [String: String] = [:]
     var joinRequests: [JoinRequest] = []
+    /// Just let in as a guest: that share's session opens once its first snapshot is here.
+    var openWhenShared: String?
     var guestNotice: String?
     /// v7: questions for this phone as a guest (the Rückfrage screen shows the first).
     var guestAsks: [GuestAsk] = []
@@ -535,6 +537,12 @@ struct RootView: View {
         }
         // The system camera opens the QR's parley:// link here.
         .sheet(item: Binding(get: { model.pendingJoin }, set: { model.pendingJoin = $0 })) { JoinView(link: $0) }
+        .onChange(of: model.openWhenShared.flatMap { model.guestRelays[$0]?.snapshot?.sessions.first?.id }) { _, id in
+            guard let id else { return }
+            model.openWhenShared = nil
+            model.pendingJoin = nil
+            model.open(session: id)
+        }
         .fullScreenCover(item: Binding(get: { model.call.isBusy ? nil : model.guestAsks.first }, set: { _ in })) { GuestAskView(ask: $0) }
         .onOpenURL { url in
             // v7: someone shares a session with this phone.

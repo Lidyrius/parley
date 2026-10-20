@@ -12,11 +12,15 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 class ParleyApp : Application() {
@@ -68,6 +72,8 @@ class AppModel(private val app: Application) {
     val joinRequests = mutableStateListOf<JoinRequest>()
     var guestNotice by mutableStateOf<String?>(null)
     val guestAsks = mutableStateListOf<GuestAsk>()
+    /** A session to bring up (MainActivity opens it and clears this): the share this phone was just let into. */
+    var showSession by mutableStateOf<String?>(null)
 
     var demo = false; private set
     /** Just paired from the scanner: it shows "Verbunden, Sir." a moment before the overview. */
@@ -320,7 +326,15 @@ class AppModel(private val app: Application) {
                 val moved = runCatching { Pairing.check(g.pairing.relay, room.first, room.second, room.third) }.getOrNull() ?: return
                 guests[i] = g.copy(pairing = moved, share = f.move.share, role = f.move.role ?: "", listen = f.move.listen ?: false, active = true)
                 saveGuests()
-                guestRelays[id]?.let { it.use(moved); it.reconnect() }
+                guestRelays[id]?.let { r ->
+                    r.use(moved)
+                    r.reconnect()
+                    // Just let in: his session opens as soon as the fresh room shows it (the welcome call follows).
+                    scope.launch {
+                        withTimeoutOrNull(20_000) { snapshotFlow { r.snapshot?.sessions?.firstOrNull()?.id }.filterNotNull().first() }
+                            ?.let { showSession = it }
+                    }
+                }
             }
             is Incoming.ShareEnd -> {
                 guestNotice = "${if (g.host.isEmpty()) "Die Freigabe" else g.host + " hat die Freigabe"} für „${g.label}“ beendet."

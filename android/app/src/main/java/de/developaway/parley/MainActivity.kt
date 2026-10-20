@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(demoSession) { demoSession?.let { session = it } }
                 var compose by rememberSaveable { mutableStateOf(false) }
                 var settings by rememberSaveable { mutableStateOf(false) }
+                LaunchedEffect(m.showSession) { m.showSession?.let { session = it; compose = false; settings = false; m.showSession = null } }
                 val call = m.call
                 // Over the lock screen only while it rings or talks.
                 LaunchedEffect(call.phase) { showOverLock(call.phase != CallPhase.none) }

@@ -81,6 +81,12 @@ final class SharesTests: XCTestCase {
         let rows = server.sessionsJSON()
         XCTAssertTrue(rows.contains(#""shared":[{"#) && rows.contains(#""name":"Max""#) && rows.contains(#""role":"Marketing""#), rows)
 
+        XCTAssertEqual(s.welcomed, false)
+        hub.guest(invite.id, .hello(device: "iPhone"))                          // his first hello on the new room
+        XCTAssertEqual(hub.list().first?.welcomed, true)                         // → welcomed, once
+        XCTAssertEqual(Shares.welcome(s, owner: "Sydney"),
+                       "Hallo Max, schön, dass du dabei bist. Ich melde mich bei dir für alles rund um Marketing und halte dich auf dem Laufenden, bis Sydney fertig ist.")
+
         hub.guest(invite.id, .say(id: "web", text: "Nimm Variante B."))
         XCTAssertEqual(hub.list().count, 1)
         XCTAssertEqual(instruction("web"), "[Nachricht von Max · Marketing]\nNimm Variante B.")

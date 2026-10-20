@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -42,6 +43,7 @@ public sealed class Share
     [JsonPropertyName("state")] public string State { get; set; } = "invited";   // invited (link out) | asking (guest waits for Sir) | active
     [JsonPropertyName("guest")] public ShareGuest? Guest { get; set; }
     [JsonPropertyName("mine")] public string? Mine { get; set; }           // Sir's own role in this session
+    [JsonPropertyName("welcomed")] public bool? Welcomed { get; set; }     // the guest got his welcome call (once, on his first hello after the yes)
 
     [JsonIgnore] public RelayConfig Config => new(Url, Room, Secret, Key);
 
@@ -247,6 +249,33 @@ public static class Shares
         return t;
     }
 
+    // What Parley says when it rings a guest who was just let in.
+    public static string Welcome(Share s, string owner)
+    {
+        var name = s.Guest?.Name ?? "";
+        var hi = $"Hallo {name}, schön, dass du dabei bist.";
+        if (s.Guest?.Listen == true) return $"{hi} Du hörst hier mit, ich halte dich auf dem Laufenden, bis {owner} fertig ist.";
+        if (s.Guest?.Role is { Length: > 0 } role) return $"{hi} Ich melde mich bei dir für alles rund um {role} und halte dich auf dem Laufenden, bis {owner} fertig ist.";
+        return $"{hi} Ich melde mich bei dir, wenn ich dich brauche, und halte dich auf dem Laufenden, bis {owner} fertig ist.";
+    }
+
+    // Sir's first name for the welcome: the first word of his Windows display name, else his user name.
+    public static string Owner()
+    {
+        try
+        {
+            var size = 256u;
+            var buffer = new StringBuilder((int)size);
+            if (GetUserNameExW(3, buffer, ref size) && buffer.ToString().Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries) is [var first, ..])
+                return first;
+        }
+        catch { }
+        return Environment.UserName;
+    }
+
+    [DllImport("secur32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetUserNameExW(int format, StringBuilder name, ref uint size);   // 3 = NameDisplay
+
     public static string Left(Share s) =>
         $"[Parley] {s.Guest?.Name ?? "Der Gast"} ist nicht mehr in dieser Session. Alles geht wieder nur an Sir. Antworte nur kurz mit <speak-end>.";
 
@@ -322,9 +351,12 @@ public sealed class ShareHub
     public Action<string>? ToSir;                          // a frame to Sir's phone
     // A question on the guest's line: ring, ask in Parley's voice, his spoken answer (null = not picked up).
     public Func<PhoneLine, TurnPayload, Share, Task<string?>>? CallGuest;
+    // The welcome on a new guest's line: ring, say hello in Parley's voice, hang up.
+    public Func<PhoneLine, string, Share, Task>? WelcomeGuest;
     public Action<string, string>? Notify;                 // a notification on the PC (title, body)
     public Action<string, string, string, string, string>? Push;   // a guest's notification: token, env, title, body, session
     public string HostName = Environment.UserName;
+    public string Owner = Shares.Owner();
 
     public ShareHub(Server server, string? file = null, Func<DateTime>? now = null, Func<string>? relayUrl = null,
                     Func<Share, ShareHub, RelayClient?>? connect = null)
@@ -399,6 +431,7 @@ public sealed class ShareHub
             s.Guest.Joined = Shares.Ms(_now());
             s.Mine = mine?.Trim();
             s.State = "active";
+            s.Welcomed = false;
             Shares.NewRoom(s);
             if (Shares.SealMove(s, g.Pub) is not { } box) { Log.Write("share: the guest's key is unusable"); return; }
             sealedMove = box;
@@ -633,6 +666,7 @@ public sealed class ShareHub
                     // Back online (e.g. opened from the push): the questions still open, again.
                     foreach (var (qid, q) in _asks.Where(p => p.Value.Share == id))
                         _ = client.SendTextAsync(Shares.AskFrame(qid, s, q.Turn));
+                    if (s.Welcomed == false) { s.Welcomed = true; Store(); after = () => Welcome(id); }   // null: let in before welcomes existed
                     break;
                 case PhoneCallState or PhonePush or PhoneLater or PhoneBarge when active:
                     // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley.
@@ -651,6 +685,27 @@ public sealed class ShareHub
         }
         after?.Invoke();
     }
+
+    // Just let in: an alert and a call with a short hello — 1.5 s after his hello, so the push
+    // tokens he sends right after it are in.
+    private void Welcome(string id) => _ = Task.Run(async () =>
+    {
+        await Task.Delay(1500);
+        Share share;
+        PhoneLine? line;
+        lock (_gate)
+        {
+            if (_shares.FirstOrDefault(x => x.Id == id && x.State == "active") is not { Guest: { } g } s) return;
+            share = s.Clone();
+            _lines.TryGetValue(id, out line);
+            Log.Write($"share: welcoming {g.Name} to {s.Label}");
+            if (g.Push is { } token)
+                Push?.Invoke(token, g.Env ?? "production", $"Parley · {s.Label}", $"{Owner} hat dich hereingelassen – Parley ruft dich gleich an.", s.Session);
+        }
+        if (line is null || WelcomeGuest is not { } welcome) return;
+        try { await welcome(line, Shares.Welcome(share, Owner), share); }
+        catch (Exception e) { Log.Write($"share: the welcome call to {share.Guest?.Name} failed: {e.Message}"); }
+    });
 
     // What a share's room is shown: his session only, only once Sir let him in, and only on the
     // share's current room (never on the invite room it left).

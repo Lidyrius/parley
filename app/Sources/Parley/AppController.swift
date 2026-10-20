@@ -157,6 +157,7 @@ final class AppController: ObservableObject {
         server.askGuest = { [shares] id, turn, respond in shares.ask(share: id, turn, respond: respond) }
         shares.voiceForSir = { [server] turn, respond in server.voiceForSir(turn, respond: respond) }
         shares.callGuest = { [weak self] line, turn, share in await self?.callGuest(line, turn: turn, share: share) }
+        shares.welcomeGuest = { [weak self] line, text, share in await self?.welcomeGuest(line, text: text, share: share) }
         let apns = self.apns
         shares.push = { token, env, title, body, session in
             Task.detached { _ = await apns.notify(token: token, env: env, title: title, body: body, session: session) }
@@ -840,24 +841,7 @@ final class AppController: ObservableObject {
     // Runs beside Sir's own line; nil = he didn't pick up (his Rückfrage screen stays open).
     func callGuest(_ line: PhoneHub, turn: TurnPayload, share: Share) async -> String? {
         let name = share.guest?.name ?? "Gast"
-        let label = "Rückfrage · \(share.label)"
-        _ = line.takeLater()
-        _ = line.takeDeclined()
-        if !line.callActive {
-            line.ring(label: label)
-            if let target = line.pushTarget, apns.configured {
-                let apns = self.apns, id = share.id
-                Task.detached { await apns.push(token: target.token, env: target.env, label: label, share: id) }
-            }
-            Log.write("share: ringing \(name) for \(share.label)")
-            var deadline = Date().addingTimeInterval(Self.ringTimeout)
-            while !line.callActive {
-                if line.takeLater() != nil { Log.write("share: \(name) can't talk now"); return nil }
-                if line.takeDeclined() { deadline = min(deadline, Date()) }
-                guard Date() < deadline else { Log.write("share: \(name) didn't pick up"); return nil }
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
-        }
+        guard await ringGuest(line, label: "Rückfrage · \(share.label)", share: share) else { return nil }
         let config = AppConfig.load()
         line.setSpeaker(share.label)
         let voice = PhoneVoice(link: line, rate: config.speakingRate)
@@ -881,6 +865,39 @@ final class AppController: ObservableObject {
             line.setAudioState(.idle)   // the phone hangs up once the line goes quiet
         }
         return text
+    }
+
+    /// His line rings (ring frame + VoIP push) until he picks up: false if he can't or doesn't.
+    private func ringGuest(_ line: PhoneHub, label: String, share: Share) async -> Bool {
+        let name = share.guest?.name ?? "Gast"
+        _ = line.takeLater()
+        _ = line.takeDeclined()
+        guard !line.callActive else { return true }
+        line.ring(label: label)
+        if let target = line.pushTarget, apns.configured {
+            let apns = self.apns, id = share.id
+            Task.detached { await apns.push(token: target.token, env: target.env, label: label, share: id) }
+        }
+        Log.write("share: ringing \(name) for \(share.label)")
+        var deadline = Date().addingTimeInterval(Self.ringTimeout)
+        while !line.callActive {
+            if line.takeLater() != nil { Log.write("share: \(name) can't talk now"); return false }
+            if line.takeDeclined() { deadline = min(deadline, Date()) }
+            guard Date() < deadline else { Log.write("share: \(name) didn't pick up"); return false }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return true
+    }
+
+    /// Just let in: Parley rings the guest and welcomes him, then hangs up (nothing to answer).
+    func welcomeGuest(_ line: PhoneHub, text: String, share: Share) async {
+        guard await ringGuest(line, label: "Willkommen · \(share.label)", share: share) else { return }
+        let config = AppConfig.load()
+        line.setSpeaker(share.label)
+        let voice = PhoneVoice(link: line, rate: config.speakingRate)
+        if let pcm = await GoogleTTS.synth(text, config: config) { voice.enqueue(pcm) }
+        _ = await voice.finish(beep: false)
+        if line.callActive { line.setAudioState(.idle) }   // the phone hangs up once the line goes quiet
     }
 
     // "Hey Parley" during a call: greeting → listen → route the utterance to a running session
