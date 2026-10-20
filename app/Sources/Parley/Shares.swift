@@ -227,6 +227,8 @@ final class ShareHub: @unchecked Sendable {
     private var calling: Set<String> = []
     var callGuest: (@Sendable (PhoneHub, TurnPayload, Share) async -> String?)?
     var welcomeGuest: (@Sendable (PhoneHub, String, Share) async -> Void)?   // rings him and says the welcome
+    var guestCalled: (@Sendable (PhoneHub, Share) async -> String?)?          // he called: what he says, for the session
+    private var talking: Set<String> = []       // shares whose line Parley is talking on (a question, the welcome, his call)
     static let askTimeout: TimeInterval = 120
     var askTimeoutOverride: TimeInterval?       // tests
 
@@ -341,11 +343,13 @@ final class ShareHub: @unchecked Sendable {
             // And a real call on his line: Parley's voice asks, his spoken answer comes back.
             if let line = self.lines[id], let call = self.callGuest {
                 self.calling.insert(qid)
+                self.talking.insert(id)
                 Task { [weak self] in
                     let text = await call(line, turn, s)
                     self?.queue.async {
                         guard let self else { return }
                         self.calling.remove(qid)
+                        self.talking.remove(id)
                         if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self.end(qid, answer: text) }
                         // else: no answer on the phone — the Rückfrage stays open until its time is up
                     }
@@ -430,15 +434,7 @@ final class ShareHub: @unchecked Sendable {
                     client.sendText(Transcript.imageFrame(key: key, jpeg: Transcript.file(for: sid).flatMap { Transcript.image(in: $0, key: key) }))
                 }
             case .say(let sid, let text) where s.state == "active" && sid == s.session && !(s.guest?.listen ?? true):
-                guard let g = s.guest else { return }
-                let recent = (self.said[id] ?? []).filter { self.now().timeIntervalSince($0) < 60 }
-                guard recent.count < Self.sayLimit else {   // S6
-                    client.sendText(Shares.notice("Zu viele Nachrichten – bitte einen Moment warten."))
-                    return
-                }
-                self.said[id] = recent + [self.now()]
-                Log.write("share: \(g.name) wrote in \(s.label) (\(text.count) chars)")
-                self.server.deliverRouted(id: sid, instruction: Shares.prefix(g) + Shares.defuse(text))
+                self.say(s, text, client: client)
             case .answer(let qid, let text, let pass) where s.state == "active" && self.asks[qid]?.share == id:
                 let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if pass || t.isEmpty {
@@ -452,7 +448,12 @@ final class ShareHub: @unchecked Sendable {
                 if s.welcomed == false { self.welcome(id) }   // nil: let in before welcomes existed
             case .call, .push, .later, .barge:
                 // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley.
-                if s.state == "active" { self.lines[id]?.handle(event) }
+                guard s.state == "active", let line = self.lines[id] else { return }
+                let was = line.callActive
+                line.handle(event)
+                if !was, line.callActive { self.pickUp(id) }   // he called (an answered ring is `talking`)
+            case .wake where s.state == "active":
+                if self.lines[id]?.callActive == true { self.pickUp(id) }   // "Hey Parley" in his call
             case .alert(let token, let env) where s.state == "active":
                 guard let i = self.shares.firstIndex(where: { $0.id == id }) else { return }
                 self.shares[i].guest?.push = token
@@ -460,6 +461,52 @@ final class ShareHub: @unchecked Sendable {
                 self.store()
             default:
                 break   // anything else (calls, resume, Sir's own controls) isn't a guest's
+            }
+        }
+    }
+
+    // S6: a guest's message into the session — typed, or said on his own call.
+    private func say(_ s: Share, _ text: String, client: RelayClient?) {
+        guard let g = s.guest, !g.listen else { return }
+        let recent = (said[s.id] ?? []).filter { now().timeIntervalSince($0) < 60 }
+        guard recent.count < Self.sayLimit else {
+            client?.sendText(Shares.notice("Zu viele Nachrichten – bitte einen Moment warten."))
+            return
+        }
+        said[s.id] = recent + [now()]
+        Log.write("share: \(g.name) wrote in \(s.label) (\(text.count) chars)")
+        server.deliverRouted(id: s.session, instruction: Shares.prefix(g) + Shares.defuse(text))
+    }
+
+    // His own call, with nothing of Parley's under way on his line: Parley asks what to pass on.
+    // Open questions come first — their call is this one then.
+    private func pickUp(_ id: String) {
+        guard !talking.contains(id), let s = shares.first(where: { $0.id == id && $0.state == "active" }),
+              let line = lines[id] else { return }
+        if let (qid, a) = asks.first(where: { $0.value.share == id && !calling.contains($0.key) }), let call = callGuest {
+            calling.insert(qid)
+            talking.insert(id)
+            Task { [weak self] in
+                let text = await call(line, a.turn, s)
+                self?.queue.async {
+                    guard let self else { return }
+                    self.calling.remove(qid)
+                    self.talking.remove(id)
+                    if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self.end(qid, answer: text) }
+                }
+            }
+            return
+        }
+        guard let call = guestCalled else { return }
+        talking.insert(id)
+        Task { [weak self] in
+            let text = await call(line, s)
+            self?.queue.async {
+                guard let self else { return }
+                self.talking.remove(id)
+                if let text, let now = self.shares.first(where: { $0.id == id && $0.state == "active" }) {
+                    self.say(now, text, client: self.clients[id])
+                }
             }
         }
     }
@@ -479,7 +526,11 @@ final class ShareHub: @unchecked Sendable {
             }
             if let line = self.lines[id], let call = self.welcomeGuest {
                 let text = Shares.welcome(s, owner: owner)
-                Task { await call(line, text, s) }
+                self.talking.insert(id)
+                Task { [weak self] in
+                    await call(line, text, s)
+                    self?.queue.async { self?.talking.remove(id) }
+                }
             }
         }
     }

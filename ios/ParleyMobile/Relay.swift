@@ -88,13 +88,14 @@ final class Relay {
         failure = nil
     }
 
-    func startDemo(now: Date = .now) {
+    /// `only`: a share's room — that one session, nothing else (no widget).
+    func startDemo(now: Date = .now, only: String? = nil) {
         isDemo = true
         link = .connected
         hostOnline = true
-        if case .sessions(let s)? = Frame.decode(Demo.frame(now: now)) {
+        if case .sessions(var s)? = Frame.decode(Demo.frame(now: now)) {
+            if let only { s = Snapshot(sessions: s.sessions.filter { $0.id == only }) } else { WidgetFeed.publish(s) }
             snapshot = s
-            WidgetFeed.publish(s)
         }
     }
 

@@ -82,16 +82,18 @@ public static class Slides
     }
 
     // A line's slides to the phone: the timed list now, each image as it is ready.
-    public static async Task Send(IReadOnlyList<SlideSpec> specs, Captions.Timed? timed, string session)
+    // `line`: a guest's call line (Shares.cs), else Sir's.
+    public static async Task Send(IReadOnlyList<SlideSpec> specs, Captions.Timed? timed, string session, PhoneLine? line = null)
     {
+        Func<string, Task> reply = line is null ? PhoneCall.Reply : line.Reply;
         var items = Items(specs, timed, $"slide-{Guid.NewGuid().ToString("N")[..8]}");
-        await PhoneCall.Reply(Frame(items));
+        await reply(Frame(items));
         Log.Write($"phone: {items.Count} slide(s) for this line");
         var images = specs.Zip(items).Where(p => p.First.Image is not null).Select(p => (p.Second.Id, p.First.Image!)).ToList();
         if (images.Count == 0) return;
         _ = Task.Run(async () =>
         {
-            foreach (var (id, source) in images) await PhoneCall.Reply(Transcript.ImageFrame(id, Image(source, session)));
+            foreach (var (id, source) in images) await reply(Transcript.ImageFrame(id, Image(source, session)));
         });
     }
 }

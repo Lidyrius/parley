@@ -77,8 +77,9 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
-/** The card's one action (ios SessionAction): a put-off call first, else "Fortsetzen". */
-private fun action(s: Session): String? = when {
+/** The card's one action (ios SessionAction): a shared session's "Anrufen", a put-off call, else "Fortsetzen". */
+private fun action(s: Session, guest: Boolean = false): String? = when {
+    guest -> "Anrufen"
     s.callback != null -> if (s.callback != 0.0) "Jetzt anrufen" else "Rückrufen"
     s.canResume -> "Fortsetzen"
     else -> null
@@ -105,7 +106,7 @@ fun Overview(m: AppModel, openSession: (String, Boolean) -> Unit, openSettings: 
     var snapshots by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf<String?>(null) }
     // Only a guest somewhere, no own host: just the shared sessions.
-    val own = m.pairing != null || m.demo || m.guests.isEmpty()
+    val own = m.pairing != null || m.guests.isEmpty()
     var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -134,19 +135,25 @@ fun Overview(m: AppModel, openSession: (String, Boolean) -> Unit, openSettings: 
                 }
             }
             if (own) Content(m, c) { detail = it }
-            GuestSection(m) { openSession(it, false) }
+            // Shared sessions sit among the own ones; without the own host's list, on their own.
+            val ownList = own && relay.snapshot != null && relay.status in setOf(ConnectionStatus.connected, ConnectionStatus.connecting)
+            if (!ownList && m.guestSessions.isNotEmpty()) Sessions(m, emptyList(), c) { detail = it }
+            GuestSection(m)
         }
     }
 
-    val open = detail?.let { id -> relay.snapshot?.sessions?.firstOrNull { it.id == id } }
+    val line = detail?.let { m.relay(it) } ?: relay
+    val open = detail?.let { id -> line.snapshot?.sessions?.firstOrNull { it.id == id } }
     if (open != null) {
         val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val guest = m.guestShare(open.id)
         ModalBottomSheet({ detail = null }, sheetState = state, containerColor = c.background) {
-            SessionSheet(open, relay.skew, c,
+            SessionSheet(open, line.skew, c,
                 close = { detail = null },
                 openHistory = { detail = null; openSession(open.id, false) },
                 message = { detail = null; openSession(open.id, true) },
-                share = { detail = null; sharing = open.id })
+                share = if (guest == null) ({ detail = null; sharing = open.id }) else null,
+                leave = guest?.let { g -> { detail = null; m.leave(g.id) } })
         }
     }
     val shared = sharing?.let { id -> relay.snapshot?.sessions?.firstOrNull { it.id == id } }
@@ -251,9 +258,17 @@ private fun TodayCard(d: Today, c: Colors) {
 @Composable
 private fun Sessions(m: AppModel, list: List<Session>, c: Colors, open: (String) -> Unit) {
     val now by rememberNow()
-    val at = now + m.relay.skew
     val canSend = m.relay.canSend
-    val act: (Session) -> Unit = { s -> if (s.callback != null) m.call.startOutgoing() else m.resume(s.id) }
+    // Shared sessions sort in like the own ones: their own line, clock and "Anrufen".
+    @Suppress("NAME_SHADOWING") val list = list + m.guestSessions
+    val guest: (Session) -> Boolean = { m.guestShare(it.id) != null }
+    val at: (Session) -> Double = { now + m.relay(it.id).skew }
+    val can: (Session) -> Boolean = { if (guest(it)) m.demo || m.relay(it.id).canSend else canSend }
+    val act: (Session) -> Unit = { s ->
+        when { guest(s) -> m.callSession(s.id); s.callback != null -> m.call.startOutgoing(); else -> m.resume(s.id) }
+    }
+    val shared = m.guestSessions.firstOrNull()
+    val own = m.pairing != null
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Sessions", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = c.text)
@@ -266,8 +281,9 @@ private fun Sessions(m: AppModel, list: List<Session>, c: Colors, open: (String)
             }
             Spacer(Modifier.weight(1f))
             val busy = m.call.phase != CallPhase.none
-            Capsule(if (busy) "Zum Anruf" else "Anrufen", c, enabled = canSend || busy) {
-                if (busy) m.call.showsScreen = true else m.call.startOutgoing()
+            // The own host — or, with only shares, the (first) shared session.
+            Capsule(if (busy) "Zum Anruf" else "Anrufen", c, enabled = busy || if (own || shared == null) canSend else can(shared)) {
+                when { busy -> m.call.showsScreen = true; !own && shared != null -> m.callSession(shared.id); else -> m.call.startOutgoing() }
             }
         }
         when {
@@ -275,7 +291,7 @@ private fun Sessions(m: AppModel, list: List<Session>, c: Colors, open: (String)
                 "Sobald eine Claude-Code- oder Codex-Session über Parley spricht, erscheint sie hier.")
             m.asGrid -> list.ordered().chunked(2).forEach { row ->
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    row.forEach { s -> Tile(s, at, c, canSend, Modifier.weight(1f).fillMaxHeight(), { open(s.id) }) { act(s) } }
+                    row.forEach { s -> Tile(s, at(s), c, can(s), guest(s), Modifier.weight(1f).fillMaxHeight(), { open(s.id) }) { act(s) } }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
@@ -284,7 +300,7 @@ private fun Sessions(m: AppModel, list: List<Session>, c: Colors, open: (String)
                 Column(Modifier.fillMaxWidth().card(c)) {
                     rows.forEachIndexed { i, s ->
                         if (i > 0) HorizontalDivider(Modifier.padding(start = 54.dp), color = c.stroke)
-                        ListRow(s, at, c, canSend, { open(s.id) }) { act(s) }
+                        ListRow(s, at(s), c, can(s), guest(s), { open(s.id) }) { act(s) }
                     }
                 }
             }
@@ -304,7 +320,7 @@ private fun Choice(icon: ImageVector, name: String, on: Boolean, c: Colors, pick
 
 /** A grid card: symbol + time, the last line (or a waveform while it speaks), name, state, at most one action. */
 @Composable
-private fun Tile(s: Session, at: Double, c: Colors, canSend: Boolean, modifier: Modifier, open: () -> Unit, act: () -> Unit) {
+private fun Tile(s: Session, at: Double, c: Colors, canSend: Boolean, guest: Boolean, modifier: Modifier, open: () -> Unit, act: () -> Unit) {
     Column(modifier.heightIn(min = 184.dp).card(c, live = s.voice).clickable(onClick = open).padding(14.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
             SessionRing(s, c.state(s.state), at)
@@ -320,13 +336,13 @@ private fun Tile(s: Session, at: Double, c: Colors, canSend: Boolean, modifier: 
             maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(cardState(s, at), fontSize = 15.sp, color = stateInk(s, c), maxLines = 1, overflow = TextOverflow.Ellipsis)
         SharedBadge(s.shared, c)
-        action(s)?.let { Spacer(Modifier.height(8.dp)); Capsule(it, c, enabled = canSend, onClick = act) }
+        action(s, guest)?.let { Spacer(Modifier.height(8.dp)); Capsule(it, c, enabled = canSend, onClick = act) }
     }
 }
 
 /** A list row: symbol, name and state, time; the last line in one line; an action only when needed. */
 @Composable
-private fun ListRow(s: Session, at: Double, c: Colors, canSend: Boolean, open: () -> Unit, act: () -> Unit) {
+private fun ListRow(s: Session, at: Double, c: Colors, canSend: Boolean, guest: Boolean, open: () -> Unit, act: () -> Unit) {
     Row(Modifier.fillMaxWidth().background(if (s.voice) c.accent.copy(alpha = 0.08f) else Color.Transparent).clickable(onClick = open)
         .padding(horizontal = 14.dp, vertical = 12.dp)) {
         SessionRing(s, c.state(s.state), at, 28.dp)
@@ -342,14 +358,15 @@ private fun ListRow(s: Session, at: Double, c: Colors, canSend: Boolean, open: (
             if (s.isLive) MiniWave(c.state(s.state), Modifier.width(96.dp).height(16.dp))
             else if (!line.isNullOrEmpty()) Text("„$line“", fontSize = 15.sp, fontStyle = FontStyle.Italic, color = c.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             SharedBadge(s.shared, c)
-            action(s)?.let { Capsule(it, c, enabled = canSend, modifier = Modifier.padding(top = 2.dp), onClick = act) }
+            action(s, guest)?.let { Capsule(it, c, enabled = canSend, modifier = Modifier.padding(top = 2.dp), onClick = act) }
         }
     }
 }
 
 /** Tapping a card: figures, the agent's task, what it said last, and the way to its history or a message. */
 @Composable
-private fun SessionSheet(s: Session, skew: Double, c: Colors, close: () -> Unit, openHistory: () -> Unit, message: () -> Unit, share: () -> Unit) {
+private fun SessionSheet(s: Session, skew: Double, c: Colors, close: () -> Unit, openHistory: () -> Unit, message: () -> Unit,
+                         share: (() -> Unit)?, leave: (() -> Unit)?) {
     val now by rememberNow()
     val at = now + skew
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -382,8 +399,12 @@ private fun SessionSheet(s: Session, skew: Double, c: Colors, close: () -> Unit,
             Capsule("Verlauf öffnen", c, modifier = Modifier.weight(1f).height(50.dp), onClick = openHistory)
             Capsule("Nachricht", c, filled = false, modifier = Modifier.weight(1f).height(50.dp), onClick = message)
         }
-        // v7: share one of the owner's own sessions (a guest's sessions open their history directly).
-        Row(Modifier.fillMaxWidth().height(46.dp).clip(Pill).clickable(onClick = share), horizontalArrangement = Arrangement.Center,
+        // v7: share one of the owner's own sessions; leave one shared with this phone.
+        if (leave != null) Row(Modifier.fillMaxWidth().height(46.dp).clip(Pill).clickable(onClick = leave), horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("Freigabe verlassen", color = c.red, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        }
+        if (share != null) Row(Modifier.fillMaxWidth().height(46.dp).clip(Pill).clickable(onClick = share), horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.GroupAdd, null, tint = c.accent, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))

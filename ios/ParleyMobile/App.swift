@@ -180,6 +180,7 @@ final class AppModel {
             if let i = arguments.firstIndex(of: "-demoPalette"), i + 1 < arguments.count {
                 Appearance.shared.paletteID = arguments[i + 1]
             }
+            if arguments.contains("-demoGuest") { startDemoGuest() }
             if arguments.contains("-demoAsk") {   // `-demoAsk`: a question as a guest
                 guestAsks = [GuestAsk(id: "demo-ask", session: "demo-shirts", label: "Shirts",
                                       text: "Max, für die Überschrift habe ich zwei Varianten. Welche passt zur Kampagne?",

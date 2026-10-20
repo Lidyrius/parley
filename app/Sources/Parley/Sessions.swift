@@ -473,7 +473,7 @@ final class SessionRegistry {
         }.map { e in
             Row(id: e.id, label: e.label, project: e.project, state: e.state, since: Self.ms(e.since),
                 until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil,
-                callback: e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) }, voice: e.id == activeId,
+                callback: only == nil ? e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) } : nil, voice: e.id == activeId,   // Sir's put-off call is not the guest's
                 resumable: only == nil && resumable(e), tasks: e.tasks, host: only == nil ? DesktopSessions.resolve(cli: e.id, reported: e.host) : nil,
                 shared: shared[e.id] ?? [], asking: asking[e.id],
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,

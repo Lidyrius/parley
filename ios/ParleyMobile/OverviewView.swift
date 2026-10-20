@@ -27,8 +27,12 @@ struct OverviewView: View {
                     if model.call.isBusy {
                         CallParleyButton(call: model.call, canCall: relay.canSend, action: model.callParley)
                     }
-                    if model.pairing != nil || model.demo || model.guests.isEmpty { content(relay) }
-                    GuestSection { model.open(session: $0) }
+                    if model.hasOwnMac || model.guests.isEmpty { content(relay) }
+                    // Shared sessions sit among the own ones; without the own Mac's list, on their own.
+                    if !(model.hasOwnMac && relay.snapshot != nil && [.connected, .connecting].contains(relay.status)), !model.guestSessions.isEmpty {
+                        sessions([], skew: 0, canSend: false)
+                    }
+                    GuestSection()
                 }
                 .animation(.snappy, value: model.call.failure)
                 .padding(.horizontal, 16)
@@ -80,11 +84,13 @@ struct OverviewView: View {
                 Button("OK", role: .cancel) {}
             } message: { Text(model.guestNotice ?? "") }
             .sheet(item: $detail) { d in
-                let live = relay.snapshot?.sessions.first { $0.id == d.id } ?? d
-                SessionSheet(session: live, skew: relay.skew,
+                let line = model.relay(for: d.id), guest = model.guestShare(of: d.id)
+                let live = line.snapshot?.sessions.first { $0.id == d.id } ?? d
+                SessionSheet(session: live, skew: line.skew,
                              openHistory: { show(d.id, compose: false) },
                              message: { show(d.id, compose: true) },
-                             canShare: model.guestShare(of: d.id) == nil)
+                             canShare: guest == nil,
+                             leave: guest.map { g in { detail = nil; model.leave(g.id) } })
             }
             .navigationDestination(for: String.self) { SessionView(id: $0) }
         }
@@ -127,12 +133,20 @@ struct OverviewView: View {
 
     @ViewBuilder
     private func sessions(_ unsorted: [Session], skew: Double, canSend: Bool) -> some View {
-        let list = SessionGroup.sorted(unsorted)   // the Mac sorts too; this holds with older hosts
-        let actions = SessionActions(open: { detail = $0 }, resume: model.resume, callBack: model.callParley, canSend: canSend)
+        // The Mac sorts too (this holds with older hosts); shared sessions sort in like the own ones.
+        let list = SessionGroup.sorted(unsorted + model.guestSessions)
+        let actions = SessionActions(open: { detail = $0 }, resume: model.resume, callBack: model.callParley, canSend: canSend,
+                                     guest: { model.guestShare(of: $0) != nil }, call: model.callSession,
+                                     guestCanSend: { model.demo || model.relay(for: $0).canSend })
+        // "Anrufen": the own Mac — or, with only shares, the (first) shared session.
+        let shared = model.guestSessions.first?.id
+        let canCall = model.hasOwnMac ? canSend || model.demo : shared.map(actions.guestCanSend) ?? false
         VStack(alignment: .leading, spacing: 12) {
             SessionsHead(count: list.filter { $0.state != .stopped }.count, asList: $asList,
-                         canCall: canSend || model.demo, inCall: model.call.isBusy) {
-                if model.call.isBusy { model.call.showsScreen = true } else { model.callParley() }
+                         canCall: canCall, inCall: model.call.isBusy) {
+                if model.call.isBusy { model.call.showsScreen = true }
+                else if !model.hasOwnMac, let shared { model.callSession(shared) }
+                else { model.callParley() }
             }
             if list.isEmpty {
                 Notice(title: "Keine Sessions", symbol: "waveform",
@@ -146,7 +160,7 @@ struct OverviewView: View {
                         VStack(spacing: 0) {
                             ForEach(Array(members.enumerated()), id: \.element.id) { i, s in
                                 if i > 0 { Divider().padding(.leading, 54) }
-                                SessionRow(session: s, skew: skew, actions: actions)
+                                SessionRow(session: s, skew: model.relay(for: s.id).skew, actions: actions)
                             }
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -157,7 +171,7 @@ struct OverviewView: View {
                 Grid(horizontalSpacing: 12, verticalSpacing: 12) {
                     ForEach(rows(list)) { row in
                         GridRow(alignment: .top) {
-                            ForEach(row.items) { s in SessionTile(session: s, skew: skew, actions: actions) }
+                            ForEach(row.items) { s in SessionTile(session: s, skew: model.relay(for: s.id).skew, actions: actions) }
                             ForEach(row.items.count..<columns, id: \.self) { _ in
                                 Color.clear.gridCellUnsizedAxes(.vertical)
                             }

@@ -699,7 +699,7 @@ public sealed class SessionRegistry
                 .Select(e => new Row(
                     e.Id, e.Label, e.Project, e.State, Ms(e.Since),
                     e.State == "waiting" && e.WaitUntil is { } u ? Ms(u) : null,
-                    e.CallbackAt is { } cb ? (cb == DateTime.MaxValue ? 0 : Ms(cb)) : null,
+                    only is null && e.CallbackAt is { } cb ? (cb == DateTime.MaxValue ? 0 : Ms(cb)) : null,   // Sir's put-off call is not the guest's
                     e.Id == active,
                     only is null && Resumable(e),
                     e.Tasks,

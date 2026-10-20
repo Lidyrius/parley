@@ -100,6 +100,19 @@ class AppModel(private val app: Application) {
             guests += it
             joining = it.id
         }
+        // `guest`: Marco's phone — no host of its own, Sydney's "Shirts" shared with it, among the sessions.
+        if (kind == "guest") {
+            pairing = null
+            relay.demo(Snapshot())
+            val g = GuestShare.create(Pairing("https://relay.example", "demo-room", "demo"), "Shirts", "Sydney", "Marco")
+                .copy(role = "Marketing", active = true, share = "sh1")
+            guestRelays[g.id] = Relay(scope, deviceName).apply {
+                demo(Frames.snapshot(org.json.JSONObject(Demo.frame(System.currentTimeMillis()))).let { s ->
+                    Snapshot(sessions = s.sessions.filter { it.id == "demo-shirts" })
+                })
+            }
+            guests += g
+        }
         if (kind == "ask") guestAsks += GuestAsk("demo-ask", "demo-shirts", "Shirts",
             "Max, für die Überschrift habe ich zwei Varianten. Welche passt zur Kampagne?", listOf("Variante A", "Variante B"), 120)
         if (kind in setOf("speaking", "listening", "idle", "incoming", "connecting")) call.demo(kind)
@@ -286,6 +299,15 @@ class AppModel(private val app: Application) {
     fun relay(id: String): Relay = guests.firstNotNullOfOrNull { g ->
         guestRelays[g.id]?.takeIf { r -> r.snapshot?.sessions?.any { it.id == id } == true }
     } ?: relay
+
+    /** The sessions shared with this phone: in the same grid / list as the own ones. */
+    val guestSessions: List<Session> get() = guests.filter { it.active }.flatMap { guestRelays[it.id]?.snapshot?.sessions.orEmpty() }
+
+    /** "Anrufen" on a shared session: the call runs on its share's line (the own host's otherwise). */
+    fun callSession(id: String) {
+        guestShare(id)?.let { g -> guestRelays[g.id]?.let { call.use(it) } }
+        call.startOutgoing()
+    }
 
     /** The share a session belongs to, if it is someone else's. */
     fun guestShare(id: String): GuestShare? = guests.firstOrNull { g -> guestRelays[g.id]?.snapshot?.sessions?.any { it.id == id } == true }

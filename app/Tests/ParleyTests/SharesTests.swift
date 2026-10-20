@@ -312,4 +312,31 @@ final class SharesTests: XCTestCase {
         XCTAssertEqual(got.replies.last, "[Antwort von Max · Marketing]\nAm Telefon.")
         XCTAssertTrue(got.toSir.isEmpty)
     }
+
+    // He calls the session himself: Parley asks what to pass on, his words reach it like a typed
+    // message; a call that answers Parley's own ring doesn't start a second dialog.
+    func testTheGuestCallsTheSession() throws {
+        final class Got: @unchecked Sendable { var called = 0; var said: String? = "Bitte Variante B." }
+        let got = Got()
+        hub.guestCalled = { _, _ in got.called += 1; return got.said }
+        hub.welcomeGuest = { _, _, _ in try? await Task.sleep(for: .seconds(0.3)) }
+        let (invite, _) = try XCTUnwrap(hub.create(session: "web"))
+        hub.guest(invite.id, .join(name: "Max", device: "", pub: pub))
+        hub.approve(invite.id, role: "Marketing", listen: false, full: false, mine: nil)
+        _ = instruction("web")
+        func wait(_ cond: () -> Bool) { let end = Date() + 3; while !cond(), Date() < end { RunLoop.current.run(until: Date() + 0.02) } }
+
+        hub.guest(invite.id, .hello(device: "iPhone"))           // the welcome rings him…
+        RunLoop.current.run(until: Date() + 1.6)
+        hub.guest(invite.id, .call(true))                        // …and he answers it: no dialog of his own
+        hub.guest(invite.id, .call(false))
+        XCTAssertEqual(got.called, 0)
+        RunLoop.current.run(until: Date() + 0.4)                 // the welcome is over
+
+        hub.guest(invite.id, .call(true))                        // now he calls
+        wait { got.called == 1 }
+        wait { self.instruction("web") == "[Nachricht von Max · Marketing]\nBitte Variante B." }
+        hub.guest(invite.id, .call(false))
+        XCTAssertEqual(got.called, 1)
+    }
 }

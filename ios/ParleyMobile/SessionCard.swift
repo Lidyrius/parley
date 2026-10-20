@@ -8,6 +8,7 @@ import SwiftUI
 enum SessionAction: Equatable {
     case callBack(now: Bool)   // its call was put off: "Rückrufen" (waits for you) / "Jetzt anrufen"
     case resume                // "Fortsetzen"
+    case call                  // a session shared with this phone: ring it ("Anrufen")
 
     init?(_ s: Session) {
         if let cb = s.callback { self = .callBack(now: cb != 0); return }
@@ -19,6 +20,7 @@ enum SessionAction: Equatable {
         switch self {
         case .callBack(let now): now ? "Jetzt anrufen" : "Rückrufen"
         case .resume: "Fortsetzen"
+        case .call: "Anrufen"
         }
     }
 }
@@ -51,11 +53,19 @@ struct SessionActions {
     var resume: (String) -> Void
     var callBack: () -> Void
     var canSend: Bool
+    /// v7: someone else's session (shared with this phone) — its own line, its own "Anrufen".
+    var guest: (String) -> Bool = { _ in false }
+    var call: (String) -> Void = { _ in }
+    var guestCanSend: (String) -> Bool = { _ in false }
+
+    func action(_ s: Session) -> SessionAction? { guest(s.id) ? .call : SessionAction(s) }
+    func enabled(_ s: Session) -> Bool { guest(s.id) ? guestCanSend(s.id) : canSend }
 
     @MainActor func perform(_ a: SessionAction, _ s: Session) {
         switch a {
         case .callBack: callBack()
         case .resume: resume(s.id)
+        case .call: call(s.id)
         }
     }
 }
@@ -113,8 +123,8 @@ struct SessionTile: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("\(session.name), \(Fmt.cardState(session, at: at)), \(Fmt.cornerTime(session, at: at))")
                 .accessibilityHint("Details öffnen")
-                if let action = SessionAction(session) {
-                    ActionButton(action: action, enabled: actions.canSend) { actions.perform(action, session) }
+                if let action = actions.action(session) {
+                    ActionButton(action: action, enabled: actions.enabled(session)) { actions.perform(action, session) }
                 }
             }
         }
@@ -163,8 +173,8 @@ struct SessionRow: View {
                             .lineLimit(1)
                     }
                     SharedBadge(tags: session.shared)
-                    if let action = SessionAction(session) {
-                        ActionButton(action: action, enabled: actions.canSend) { actions.perform(action, session) }
+                    if let action = actions.action(session) {
+                        ActionButton(action: action, enabled: actions.enabled(session)) { actions.perform(action, session) }
                             .padding(.top, 2)
                     }
                 }
@@ -259,6 +269,7 @@ struct SessionSheet: View {
     let openHistory: () -> Void
     let message: () -> Void
     var canShare = false            // v7: one of the owner's own sessions
+    var leave: (() -> Void)?        // v7: someone else's, shared with this phone — "Freigabe verlassen"
     @Environment(\.dismiss) private var dismiss
     @State private var sharing = false
 
@@ -338,6 +349,15 @@ struct SessionSheet: View {
                                 .frame(maxWidth: .infinity, minHeight: 46)
                         }
                         .buttonStyle(.plain)
+                    }
+                    if let leave {
+                        Button(role: .destructive, action: leave) {
+                            Text("Freigabe verlassen")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
                     }
                 }
                 .padding(20)

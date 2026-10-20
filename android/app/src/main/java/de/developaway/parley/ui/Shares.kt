@@ -416,15 +416,15 @@ private fun JoinCodeView(m: AppModel, g: GuestShare, close: () -> Unit) {
 
 /** On the overview: the sessions others share with this phone, or the wait for their yes. */
 @Composable
-fun GuestSection(m: AppModel, open: (String) -> Unit) {
-    if (m.guests.isEmpty()) return
+fun GuestSection(m: AppModel) {
+    // Shares not (yet) among the sessions: waiting to be let in, or let in and still connecting.
+    val pending = m.guests.filter { !it.active || m.guestRelays[it.id]?.snapshot?.sessions.isNullOrEmpty() }
+    if (pending.isEmpty()) return
     val c = LocalColors.current
-    val now by rememberNow()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Geteilt mit Ihnen", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = c.text)
-        m.guests.forEach { g ->
+        pending.forEach { g ->
             val r = m.guestRelays[g.id]
-            val s = r?.snapshot?.sessions?.firstOrNull()
             Column(Modifier.fillMaxWidth().card(c).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(if (g.host.isEmpty()) g.label else "${g.host} · ${g.label}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
@@ -450,16 +450,6 @@ fun GuestSection(m: AppModel, open: (String) -> Unit) {
                             Spacer(Modifier.width(5.dp))
                             Text("Prüfcode ${g.code}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.ink(c.idle))
                         }
-                    }
-                    s != null -> Row(Modifier.fillMaxWidth().clickable { open(s.id) }, verticalAlignment = Alignment.CenterVertically) {
-                        SessionRing(s, c.state(s.state), now + (r?.skew ?: 0.0), 26.dp)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(s.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = c.text)
-                            Text(if (g.role.isEmpty()) Fmt.stateLabel(s) else "Ihre Rolle: ${g.role}", fontSize = 15.sp, color = c.secondary,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Icon(Icons.Filled.ChevronRight, null, tint = c.secondary)
                     }
                     else -> Text("Verbinde …", fontSize = 15.sp, color = c.secondary)
                 }

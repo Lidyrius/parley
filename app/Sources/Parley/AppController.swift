@@ -159,6 +159,7 @@ final class AppController: ObservableObject {
         shares.voiceForSir = { [server] turn, respond in server.voiceForSir(turn, respond: respond) }
         shares.callGuest = { [weak self] line, turn, share in await self?.callGuest(line, turn: turn, share: share) }
         shares.welcomeGuest = { [weak self] line, text, share in await self?.welcomeGuest(line, text: text, share: share) }
+        shares.guestCalled = { [weak self] line, share in await self?.guestCalled(line, share: share) }
         let apns = self.apns
         shares.push = { token, env, title, body, session in
             Task.detached { _ = await apns.notify(token: token, env: env, title: title, body: body, session: session) }
@@ -859,27 +860,59 @@ final class AppController: ObservableObject {
         guard await ringGuest(line, label: "Rückfrage · \(share.label)", share: share) else { return nil }
         let config = AppConfig.load()
         line.setSpeaker(share.label)
-        let voice = PhoneVoice(link: line, rate: config.speakingRate)
-        if let pcm = await GoogleTTS.synth(turn.speak, config: config) { voice.enqueue(pcm) }
-        _ = await voice.finish(beep: true)
+        await speakToGuest(line, turn.speak, slides: turn.slides ?? [], session: ControlServer.sessionKey(turn), beep: true, config: config)
         guard line.callActive else { return nil }
+        let text = await listenToGuest(line, config: config)
+        Log.write("share: \(name) answered on the phone (\(text.count) chars)")
+        if line.callActive {
+            await speakToGuest(line, text.isEmpty ? "Ich gebe die Frage weiter." : "Danke, ich gebe es weiter.", beep: false, config: config)
+            line.setAudioState(.idle)   // the phone hangs up once the line goes quiet
+        }
+        return text
+    }
+
+    /// The guest called himself (his "Anrufen", or "Hey Parley" in his call): Parley asks what to
+    /// pass on and hands his words to the session like a typed message. nil = nothing to pass on.
+    func guestCalled(_ line: PhoneHub, share: Share) async -> String? {
+        guard line.callActive, let g = share.guest else { return nil }
+        let config = AppConfig.load()
+        line.setSpeaker(share.label)
+        guard !g.listen else {
+            await speakToGuest(line, "Hallo \(g.name). Bei \(share.label) hören Sie nur zu – ich kann nichts weitergeben.", beep: false, config: config)
+            if line.callActive { line.setAudioState(.idle) }
+            return nil
+        }
+        await speakToGuest(line, "Ja, \(g.name)? Was soll ich \(share.label) sagen?", beep: true, config: config)
+        guard line.callActive else { return nil }
+        let text = await listenToGuest(line, config: config)
+        Log.write("share: \(g.name) called in for \(share.label) (\(text.count) chars)")
+        if line.callActive {
+            await speakToGuest(line, text.isEmpty ? "Gut, dann bis später." : "Danke, ich gebe es weiter.", beep: false, config: config)
+            line.setAudioState(.idle)
+        }
+        return text.isEmpty ? nil : text
+    }
+
+    /// One line on a guest's call — with his captions and slides, just as on Sir's phone.
+    private func speakToGuest(_ line: PhoneHub, _ text: String, slides: [SlideSpec] = [], session: String = "",
+                              beep: Bool, config: AppConfig) async {
+        let voice = PhoneVoice(link: line, rate: config.speakingRate)
+        if let pcm = await GoogleTTS.synth(text, config: config) {
+            let t = Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate)
+            if let t { line.reply(Captions.frame(t, last: !beep)) }
+            if !slides.isEmpty { sendSlides(slides, timed: t, session: session, to: line) }
+            voice.enqueue(pcm)
+        }
+        _ = await voice.finish(beep: beep)
+    }
+
+    private func listenToGuest(_ line: PhoneHub, config: AppConfig) async -> String {
         let wav: Data
         switch await PhoneListener(link: line).record() {
         case .finished(let w): wav = w
         case .callEnded(let w, _): wav = w
         }
-        let text = await transcribe(wav, config: config)
-        Log.write("share: \(name) answered on the phone (\(text.count) chars)")
-        if line.callActive {
-            let bye = text.isEmpty ? "Ich gebe die Frage weiter." : "Danke, ich gebe es weiter."
-            if let pcm = await GoogleTTS.synth(bye, config: config) {
-                let v = PhoneVoice(link: line, rate: config.speakingRate)
-                v.enqueue(pcm)
-                _ = await v.finish(beep: false)
-            }
-            line.setAudioState(.idle)   // the phone hangs up once the line goes quiet
-        }
-        return text
+        return await transcribe(wav, config: config)
     }
 
     /// His line rings (ring frame + VoIP push) until he picks up: false if he can't or doesn't.
@@ -909,9 +942,7 @@ final class AppController: ObservableObject {
         guard await ringGuest(line, label: "Willkommen · \(share.label)", share: share) else { return }
         let config = AppConfig.load()
         line.setSpeaker(share.label)
-        let voice = PhoneVoice(link: line, rate: config.speakingRate)
-        if let pcm = await GoogleTTS.synth(text, config: config) { voice.enqueue(pcm) }
-        _ = await voice.finish(beep: false)
+        await speakToGuest(line, text, beep: false, config: config)
         if line.callActive { line.setAudioState(.idle) }   // the phone hangs up once the line goes quiet
     }
 
@@ -1332,11 +1363,11 @@ final class AppController: ObservableObject {
     }
 
     // A line's slides to the phone: the timed list now, each image as it is ready.
-    private func sendSlides(_ specs: [SlideSpec], timed: Captions.Timed?, session: String) {
+    private func sendSlides(_ specs: [SlideSpec], timed: Captions.Timed?, session: String, to line: PhoneHub? = nil) {
+        let phone = line ?? self.phone   // a guest's call line, else Sir's
         let items = Slides.items(specs, timed: timed, prefix: "slide-\(UUID().uuidString.prefix(8))")
         phone.reply(Slides.frame(items))
         Log.write("phone: \(items.count) slide(s) for this line")
-        let phone = self.phone
         let images = zip(specs, items).compactMap { s, o in s.image.map { (o.id, $0) } }
         guard !images.isEmpty else { return }
         DispatchQueue.global(qos: .userInitiated).async {

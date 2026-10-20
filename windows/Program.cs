@@ -78,6 +78,7 @@ internal sealed class TrayApp : ApplicationContext
             Push = (token, env, title, body, session) => _ = Apns.SendAlertTo(token, env, title, body, session),
             CallGuest = (line, turn, share) => CallGuest(line, turn, share),
             WelcomeGuest = (line, text, share) => WelcomeGuest(line, text, share),
+            GuestCalled = (line, share) => GuestCalled(line, share),
         };
         _server.AskGuest = (id, turn) => _shares.AskGuest(id, turn);
         RelayHost.Start = StartRelay;   // the setup connects once the relay is chosen / the phone pairs
@@ -229,9 +230,58 @@ internal sealed class TrayApp : ApplicationContext
         if (!await RingGuest(line, $"Rückfrage · {share.Label}", share)) return null;
         var config = Config.Load();
         line.SetSpeaker(share.Label);
-        if (await GoogleTts.Synthesize(turn.Speak, config) is { } pcm)
-            await line.PlayAsync(AudioOut.ApplyRate(pcm, config.SpeakingRate), GoogleTts.SampleRate);
-        // He talked over the question: listen at once, with what he already said (as Sir's turns).
+        await SpeakToGuest(line, turn.Speak, config, turn.Slides, Server.SessionKey(turn));
+        if (await ListenToGuest(line, config) is not { } text) return null;
+        Log.Write($"share: {name} answered on the phone ({text.Length} chars)");
+        if (line.Active)
+        {
+            line.TakeBarge();
+            await SpeakToGuest(line, text.Trim().Length == 0 ? "Ich gebe die Frage weiter." : "Danke, ich gebe es weiter.", config, last: true);
+        }
+        return text;   // the hold ends here: the line goes idle and his phone hangs up
+    }
+
+    // The guest called himself (his "Anrufen", or "Hey Parley" in his call): Parley asks what to
+    // pass on; his words go to the session like a typed message. null = nothing to pass on. As macOS.
+    private static async Task<string?> GuestCalled(PhoneLine line, Share share)
+    {
+        if (!line.Active || share.Guest is not { } g) return null;
+        using var hold = line.Hold();
+        var config = Config.Load();
+        line.SetSpeaker(share.Label);
+        if (g.Listen)
+        {
+            await SpeakToGuest(line, $"Hallo {g.Name}. Bei {share.Label} hören Sie nur zu – ich kann nichts weitergeben.", config, last: true);
+            line.TakeBarge();
+            return null;
+        }
+        await SpeakToGuest(line, $"Ja, {g.Name}? Was soll ich {share.Label} sagen?", config);
+        if (await ListenToGuest(line, config) is not { } text) return null;
+        Log.Write($"share: {g.Name} called in for {share.Label} ({text.Length} chars)");
+        if (line.Active)
+        {
+            line.TakeBarge();
+            await SpeakToGuest(line, text.Trim().Length == 0 ? "Gut, dann bis später." : "Danke, ich gebe es weiter.", config, last: true);
+        }
+        return text.Trim().Length == 0 ? null : text.Trim();
+    }
+
+    // One line on a guest's call — with his captions and slides, as on Sir's phone.
+    private static async Task SpeakToGuest(PhoneLine line, string text, Config config, IReadOnlyList<SlideSpec>? slides = null,
+                                           string session = "", bool last = false)
+    {
+        if (await GoogleTts.Synthesize(text, config) is not { } raw) return;
+        var pcm = AudioOut.ApplyRate(raw, config.SpeakingRate);
+        var timed = Captions.Timings(text, pcm, GoogleTts.SampleRate);
+        if (timed is not null) await line.Reply(Captions.Frame(timed, last));
+        if (slides is { Count: > 0 }) await Slides.Send(slides, timed, session, line);
+        await line.PlayAsync(pcm, GoogleTts.SampleRate);
+    }
+
+    // The beep (unless he talked over Parley: then at once, with what he already said), his answer
+    // transcribed. null = the call is gone.
+    private static async Task<string?> ListenToGuest(PhoneLine line, Config config)
+    {
         var barged = line.TakeBarge();
         if (!barged)
         {
@@ -241,16 +291,7 @@ internal sealed class TrayApp : ApplicationContext
         if (!line.Active) return null;
         var wav = await new MicCapture().RecordFromPhone(line, barged ? line.RecentMic() : Array.Empty<byte[]>()) ?? Array.Empty<byte>();
         var minBytes = 44 + 16000 * 2 / 5;   // header + ~0.2s
-        var text = wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
-        Log.Write($"share: {name} answered on the phone ({text.Length} chars)");
-        if (line.Active)
-        {
-            var bye = text.Trim().Length == 0 ? "Ich gebe die Frage weiter." : "Danke, ich gebe es weiter.";
-            line.TakeBarge();
-            if (await GoogleTts.Synthesize(bye, config) is { } byePcm)
-                await line.PlayAsync(AudioOut.ApplyRate(byePcm, config.SpeakingRate), GoogleTts.SampleRate);
-        }
-        return text;   // the hold ends here: the line goes idle and his phone hangs up
+        return wav.Length >= minBytes ? await Groq.Transcribe(wav, config) : "";
     }
 
     // A guest just let in: ring his line, say the welcome, hang up — no listening. As macOS.
@@ -260,8 +301,7 @@ internal sealed class TrayApp : ApplicationContext
         if (!await RingGuest(line, $"Willkommen · {share.Label}", share)) return;
         var config = Config.Load();
         line.SetSpeaker(share.Label);
-        if (await GoogleTts.Synthesize(text, config) is { } pcm)
-            await line.PlayAsync(AudioOut.ApplyRate(pcm, config.SpeakingRate), GoogleTts.SampleRate);
+        await SpeakToGuest(line, text, config, last: true);
         line.TakeBarge();
     }   // the hold ends here: the line goes idle and his phone hangs up
 

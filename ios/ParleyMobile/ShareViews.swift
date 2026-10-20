@@ -359,16 +359,17 @@ struct JoinView: View {
 }
 
 /// On the overview: the sessions others share with this phone, or the wait for their yes.
+/// Shares not (yet) among the sessions: waiting to be let in, or let in and still connecting —
+/// once its session is here, it sits in the grid like any other.
 struct GuestSection: View {
     @Environment(AppModel.self) private var model
-    let open: (String) -> Void
 
     var body: some View {
-        if !model.guests.isEmpty {
+        let pending = model.guests.filter { !$0.active || (model.guestRelays[$0.id]?.snapshot?.sessions.isEmpty ?? true) }
+        if !pending.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Geteilt mit Ihnen").font(.title2.bold())
-                ForEach(model.guests) { g in
-                    let sessions = model.guestRelays[g.id]?.snapshot?.sessions ?? []
+                ForEach(pending) { g in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text(g.host.isEmpty ? g.label : "\(g.host) · \(g.label)").font(.subheadline.weight(.semibold))
@@ -390,21 +391,6 @@ struct GuestSection: View {
                             Label("Prüfcode \(g.code)", systemImage: "checkmark.shield")
                                 .font(.subheadline.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(SessionState.idle.ink)
-                        } else if let s = sessions.first {
-                            Button { open(s.id) } label: {
-                                HStack(spacing: 12) {
-                                    RingView(session: s, skew: model.guestRelays[g.id]?.skew ?? 0, size: 26)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(s.name).font(.headline)
-                                        Text(g.role.isEmpty ? Fmt.stateLabel(s) : "Ihre Rolle: \(g.role)")
-                                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
                         } else {
                             Text("Verbinde …").font(.subheadline).foregroundStyle(.secondary)
                         }

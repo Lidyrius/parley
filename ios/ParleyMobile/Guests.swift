@@ -54,6 +54,17 @@ struct GuestShare: Codable, Equatable, Identifiable, Sendable {
 extension AppModel {
     // MARK: the guest's side
 
+    /// `-demoGuest`: Marco's phone — no Mac of its own, Sydney's "Shirts" shared with it.
+    func startDemoGuest() {
+        let g = GuestShare(id: "demo-guest", pairing: Pairing(relay: URL(string: "https://relay.example")!, room: "demo-room-0000000",
+                                                              secret: "demo-secret-00000", key: nil),
+                           label: "Shirts", host: "Sydney", name: "Marco", role: "Marketing", active: true, share: "sh1")
+        let r = Relay()
+        r.startDemo(only: "demo-shirts")
+        guestRelays[g.id] = r
+        guests = [g]
+    }
+
     func startGuests() {
         guests = PairingStore.loadGuests()
         for g in guests { connect(g) }
@@ -91,6 +102,22 @@ extension AppModel {
             if let r = guestRelays[g.id], r.snapshot?.sessions.contains(where: { $0.id == id }) == true { return r }
         }
         return relay
+    }
+
+    /// A Mac of its own — Marco's phone (and `-demoGuest`) has only shares.
+    var hasOwnMac: Bool { pairing != nil || (demo && !ProcessInfo.processInfo.arguments.contains("-demoGuest")) }
+
+    /// The sessions shared with this phone: in the same grid / list as the own ones.
+    var guestSessions: [Session] {
+        guests.filter(\.active).flatMap { guestRelays[$0.id]?.snapshot?.sessions ?? [] }
+    }
+
+    /// "Anrufen" on a shared session: the call runs on its share's line (his own Mac's otherwise).
+    func callSession(_ id: String) {
+        guard let g = guestShare(of: id), let r = guestRelays[g.id] else { callParley(); return }
+        guard call.phase == .none else { call.showsScreen = true; return }
+        call.use(line: r)
+        callParley()
     }
 
     /// The relay of the share the owner's Mac calls `share` (a guest's VoIP push names it).

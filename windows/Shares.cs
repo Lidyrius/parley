@@ -347,12 +347,15 @@ public sealed class ShareHub
     // questions a call is under way for — their time doesn't run out mid-call.
     private readonly Dictionary<string, PhoneLine> _lines = new();
     private readonly HashSet<string> _calling = new();
+    private readonly HashSet<string> _talking = new();   // shares whose line Parley talks on (a question, the welcome, his call)
 
     public Action<string>? ToSir;                          // a frame to Sir's phone
     // A question on the guest's line: ring, ask in Parley's voice, his spoken answer (null = not picked up).
     public Func<PhoneLine, TurnPayload, Share, Task<string?>>? CallGuest;
     // The welcome on a new guest's line: ring, say hello in Parley's voice, hang up.
     public Func<PhoneLine, string, Share, Task>? WelcomeGuest;
+    // He called: what he says, for the session (null = nothing).
+    public Func<PhoneLine, Share, Task<string?>>? GuestCalled;
     public Action<string, string>? Notify;                 // a notification on the PC (title, body)
     public Action<string, string, string, string, string>? Push;   // a guest's notification: token, env, title, body, session
     public string HostName = Environment.UserName;
@@ -512,6 +515,7 @@ public sealed class ShareHub
             if (_lines.TryGetValue(id, out var line) && CallGuest is { } call)
             {
                 _calling.Add(qid);
+                _talking.Add(id);
                 var share = s.Clone();
                 _ = Task.Run(async () =>
                 {
@@ -521,6 +525,7 @@ public sealed class ShareHub
                     lock (_gate)
                     {
                         _calling.Remove(qid);
+                        _talking.Remove(id);
                         if (!string.IsNullOrWhiteSpace(text)) End(qid, answer: text.Trim());
                         // else: no answer on the phone — the Rückfrage stays open until its time is up
                     }
@@ -640,20 +645,8 @@ public sealed class ShareHub
                     _ = Task.Run(() => client.SendTextAsync(Transcript.ImageFrame(im.Key,
                         Transcript.File(im.Id) is { } path ? Transcript.Image(path, im.Key) : null)));
                     break;
-                case PhoneSay say when active && say.Id == s.Session && s.Guest is { Listen: false } g:
-                    var now = _now();
-                    var recent = (_said.GetValueOrDefault(id) ?? new()).Where(t => now - t < TimeSpan.FromSeconds(60)).ToList();
-                    if (recent.Count >= SayLimit)   // S6
-                    {
-                        _ = client.SendTextAsync(Shares.Notice("Zu viele Nachrichten – bitte einen Moment warten."));
-                        return;
-                    }
-                    recent.Add(now);
-                    _said[id] = recent;
-                    Log.Write($"share: {g.Name} wrote in {s.Label} ({say.Text.Length} chars)");
-                    var instruction = Shares.Prefix(g) + Shares.Defuse(say.Text);
-                    var session = s.Session;
-                    after = () => _server.DeliverRouted(session, instruction);
+                case PhoneSay say when active && say.Id == s.Session && s.Guest is { Listen: false }:
+                    after = Say(s, say.Text, client);
                     break;
                 case PhoneAnswer a when active && _asks.TryGetValue(a.Id, out var open) && open.Share == id:
                     var text = a.Text.Trim();
@@ -670,7 +663,16 @@ public sealed class ShareHub
                     break;
                 case PhoneCallState or PhonePush or PhoneLater or PhoneBarge when active:
                     // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley.
-                    if (_lines.TryGetValue(id, out var line)) after = () => line.Handle(message);
+                    if (_lines.TryGetValue(id, out var line))
+                        after = () =>
+                        {
+                            var was = line.Active;
+                            line.Handle(message);
+                            if (!was && line.Active) PickUp(id);   // he called (an answered ring is `_talking`)
+                        };
+                    break;
+                case PhoneWake when active:
+                    if (_lines.TryGetValue(id, out var called) && called.Active) after = () => PickUp(id);   // "Hey Parley" in his call
                     break;
                 case PhoneAlert al when active && s.Guest is not null:
                     var token = al.Token.ToLowerInvariant();
@@ -684,6 +686,73 @@ public sealed class ShareHub
             }
         }
         after?.Invoke();
+    }
+
+    // S6: a guest's message into the session — typed, or said on his own call. Under _gate; the
+    // delivery runs after it (null: nothing to deliver).
+    private Action? Say(Share s, string text, RelayClient? client)
+    {
+        if (s.Guest is not { Listen: false } g) return null;
+        var now = _now();
+        var recent = (_said.GetValueOrDefault(s.Id) ?? new()).Where(t => now - t < TimeSpan.FromSeconds(60)).ToList();
+        if (recent.Count >= SayLimit)
+        {
+            if (client is not null) _ = client.SendTextAsync(Shares.Notice("Zu viele Nachrichten – bitte einen Moment warten."));
+            return null;
+        }
+        recent.Add(now);
+        _said[s.Id] = recent;
+        Log.Write($"share: {g.Name} wrote in {s.Label} ({text.Length} chars)");
+        var instruction = Shares.Prefix(g) + Shares.Defuse(text);
+        var session = s.Session;
+        return () => _server.DeliverRouted(session, instruction);
+    }
+
+    // His own call, with nothing of Parley's under way on his line: Parley asks what to pass on.
+    // Open questions come first — their call is this one then. As macOS.
+    private void PickUp(string id)
+    {
+        lock (_gate)
+        {
+            if (_talking.Contains(id) || _shares.FirstOrDefault(x => x.Id == id && x.State == "active") is not { } s
+                || !_lines.TryGetValue(id, out var line)) return;
+            var share = s.Clone();
+            if (_asks.FirstOrDefault(p => p.Value.Share == id && !_calling.Contains(p.Key)) is { Key: { } qid, Value: { } a }
+                && CallGuest is { } call)
+            {
+                _calling.Add(qid);
+                _talking.Add(id);
+                _ = Task.Run(async () =>
+                {
+                    string? text = null;
+                    try { text = await call(line, a.Turn, share); }
+                    catch (Exception e) { Log.Write($"share: the call with {share.Guest?.Name} failed: {e.Message}"); }
+                    lock (_gate)
+                    {
+                        _calling.Remove(qid);
+                        _talking.Remove(id);
+                        if (!string.IsNullOrWhiteSpace(text)) End(qid, answer: text.Trim());
+                    }
+                });
+                return;
+            }
+            if (GuestCalled is not { } called) return;
+            _talking.Add(id);
+            _ = Task.Run(async () =>
+            {
+                string? text = null;
+                try { text = await called(line, share); }
+                catch (Exception e) { Log.Write($"share: {share.Guest?.Name}'s call failed: {e.Message}"); }
+                Action? deliver = null;
+                lock (_gate)
+                {
+                    _talking.Remove(id);
+                    if (text is not null && _shares.FirstOrDefault(x => x.Id == id && x.State == "active") is { } now)
+                        deliver = Say(now, text, _clients.GetValueOrDefault(id));
+                }
+                deliver?.Invoke();
+            });
+        }
     }
 
     // Just let in: an alert and a call with a short hello — 1.5 s after his hello, so the push
@@ -703,8 +772,10 @@ public sealed class ShareHub
                 Push?.Invoke(token, g.Env ?? "production", $"Parley · {s.Label}", $"{Owner} hat dich hereingelassen – Parley ruft dich gleich an.", s.Session);
         }
         if (line is null || WelcomeGuest is not { } welcome) return;
+        lock (_gate) _talking.Add(id);
         try { await welcome(line, Shares.Welcome(share, Owner), share); }
         catch (Exception e) { Log.Write($"share: the welcome call to {share.Guest?.Name} failed: {e.Message}"); }
+        finally { lock (_gate) _talking.Remove(id); }
     });
 
     // What a share's room is shown: his session only, only once Sir let him in, and only on the
