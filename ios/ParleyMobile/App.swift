@@ -183,12 +183,17 @@ final class AppModel {
                                       text: "Max, für die Überschrift habe ich zwei Varianten. Welche passt zur Kampagne?",
                                       replies: ["Variante A", "Variante B"], seconds: 120)]
             }
-            if arguments.contains("-demoJoin") {
+            if arguments.contains("-demoJoin") || arguments.contains("-demoJoinLater") {
                 let r = JoinRequest(id: "demo-join", session: "demo-shirts", label: "Shirts", name: "Marco",
                                     device: "iPhone 16", code: "4821", who: "demo-marco")
                 PastRoles.remember("Fotos und Produkttexte", for: r)
                 PastRoles.remember("Marketing und Texte", for: r)
-                joinRequests = [r]
+                // `-demoJoinLater`: the ask comes in 3 s after launch (over another sheet, e.g. `-demoSettings`).
+                if arguments.contains("-demoJoinLater") {
+                    Task { @MainActor in try? await Task.sleep(for: .seconds(3)); self.joinRequests = [r] }
+                } else {
+                    joinRequests = [r]
+                }
             }
             if arguments.contains("-demoGuestCode") {   // a share link opened: the code to send back
                 pendingJoin = JoinLink(pairing: Pairing(relay: URL(string: "https://relay.example")!, room: "demo-room-0000000",

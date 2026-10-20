@@ -65,7 +65,17 @@ struct OverviewView: View {
             }
             .sheet(isPresented: $showsSettings) { SettingsView() }
             .sheet(isPresented: $showsSnapshots) { SnapshotsSheet() }
-            .sheet(item: Binding(get: { model.joinRequests.first }, set: { _ in })) { ApproveJoinView(request: $0) }
+            // A guest asks to join: whatever sheet is up (the session, its "Teilen") makes way first —
+            // a sheet can't come up over another one, and the ask would wait unseen.
+            .sheet(item: Binding(get: { otherSheet || model.call.showsScreen ? nil : model.joinRequests.first }, set: { _ in })) {
+                ApproveJoinView(request: $0)
+            }
+            .onChange(of: model.joinRequests.first?.id, initial: true) { _, id in
+                guard id != nil else { return }
+                detail = nil
+                showsSettings = false
+                showsSnapshots = false
+            }
             .alert("Parley", isPresented: Binding(get: { model.guestNotice != nil }, set: { if !$0 { model.guestNotice = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(model.guestNotice ?? "") }
@@ -158,6 +168,8 @@ struct OverviewView: View {
         }
         .animation(.snappy, value: asList)
     }
+
+    private var otherSheet: Bool { detail != nil || showsSettings || showsSnapshots }
 
     /// The sheet's "Verlauf öffnen" / "Nachricht": the session view (with the keyboard for a message).
     private func show(_ id: String, compose: Bool) {
