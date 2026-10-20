@@ -28,12 +28,17 @@ server.bind(("127.0.0.1", port)); server.listen(1)
 print("READY", flush=True)
 
 for response in responses:
-    conn, _ = server.accept()
-    data = b""
-    while b"\r\n\r\n" not in data:
-        chunk = conn.recv(4096)
-        if not chunk: break
-        data += chunk
+    while True:
+        conn, _ = server.accept()
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = conn.recv(4096)
+            if not chunk: break
+            data += chunk
+        if not data.startswith(b"GET /mod"): break
+        # The hook asks GET /mod first (docs/HOOKLESS.md): Codex has no mod.
+        conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\r\n{"live":false}')
+        conn.close()
     head, _, rest = data.partition(b"\r\n\r\n")
     content_length = 0
     for line in head.split(b"\r\n"):

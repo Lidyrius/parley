@@ -30,6 +30,9 @@ public sealed class TurnPayload
     [JsonPropertyName("slides")] public List<SlideSpec>? Slides { get; set; }
     // v7: <speak to="Max"> — a guest of the shared session is asked (Shares.cs).
     [JsonPropertyName("to")] public string? To { get; set; }
+    // Hookless (docs/HOOKLESS.md): the mod carries the turn — queued, its reply delivered later.
+    [JsonPropertyName("async"), JsonConverter(typeof(LooseBool))] public bool Async { get; set; }
+    [JsonPropertyName("turn_id")] public string? TurnId { get; set; }
 
     [JsonIgnore] public bool WantsListen => Listen ?? true;
     [JsonIgnore] public string SpokenLabel => string.IsNullOrEmpty(Label) ? Project : Label!;
@@ -60,6 +63,11 @@ public sealed class PresencePayload
     [JsonPropertyName("tasks")] public List<BackgroundTask>? Tasks { get; set; }
     // The desktop app's id for the session (local_…), for claude:// deep links.
     [JsonPropertyName("host")] public string? Host { get; set; }
+    // Hookless (docs/HOOKLESS.md): this mod carries turns itself; the turn it waits for; the
+    // delivery it fed in last.
+    [JsonPropertyName("async"), JsonConverter(typeof(LooseBool))] public bool Async { get; set; }
+    [JsonPropertyName("awaiting")] public string? Awaiting { get; set; }
+    [JsonPropertyName("ack")] public string? Ack { get; set; }
 
     public static PresencePayload? Decode(string body)
     {
@@ -140,4 +148,22 @@ public sealed class ResumePayload
         try { return JsonSerializer.Deserialize<ResumePayload>(body); }
         catch { return null; }
     }
+}
+
+// `async` comes as 1 (presence) or true (turn): either, or a string, counts — a mod's other
+// spelling must not cost the whole payload.
+public sealed class LooseBool : JsonConverter<bool>
+{
+    public override bool Read(ref Utf8JsonReader r, Type type, JsonSerializerOptions options)
+    {
+        switch (r.TokenType)
+        {
+            case JsonTokenType.True: return true;
+            case JsonTokenType.Number: return r.TryGetDouble(out var d) && d != 0;
+            case JsonTokenType.String: return r.GetString() is "1" or "true";
+            default: r.Skip(); return false;
+        }
+    }
+
+    public override void Write(Utf8JsonWriter w, bool value, JsonSerializerOptions options) => w.WriteBooleanValue(value);
 }

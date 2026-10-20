@@ -15,6 +15,10 @@ public sealed class MicCapture
     private const double VadGraceSeconds = 0.5;
 
     public Action<float>? OnLevel;   // 0…1 live level for a future waveform UI
+    private TaskCompletionSource<string>? _done;   // the recording under way, for Abandon
+
+    /// Sir typed instead (POST /turn/cancel): the recording under way ends now, with nothing heard.
+    public void Abandon() => _done?.TrySetResult("abandoned");
 
     /// Record until trailing silence (or timeout); returns 16 kHz mono 16-bit WAV bytes.
     /// In an iPhone call the phone's microphone is the input.
@@ -36,7 +40,7 @@ public sealed class MicCapture
         }
         var vad = new Vad();
         var samples = new List<short>(16000 * 30);
-        var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var done = _done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         WasapiCapture? capture = null;
         double totalDuration = 0;
         double resamplePos = 0;
@@ -108,7 +112,7 @@ public sealed class MicCapture
             capture?.Dispose();
         }
         // VAD never heard speech → send nothing; Whisper turns pure silence into "Thank you.".
-        if (reason == "no-speech") samples.Clear();
+        if (reason is "no-speech" or "abandoned") samples.Clear();
         return Wav.Encode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(samples));
     }
 
@@ -122,7 +126,7 @@ public sealed class MicCapture
         var samples = new List<short>(16000 * 30);
         var gate = new object();
         double totalDuration = 0;
-        var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var done = _done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var hold = line.Hold();
         line.SetAudio("listening");
         Log.Write("mic: listening on the phone");
@@ -169,7 +173,7 @@ public sealed class MicCapture
         Log.Write($"mic: phone finished reason={reason} samples={captured.Length}");
         if (reason == "call-ended" && !heard) return null;
         // VAD never heard speech → send nothing; Whisper turns pure silence into "Thank you.".
-        if (reason == "no-speech") captured = Array.Empty<short>();
+        if (reason is "no-speech" or "abandoned") captured = Array.Empty<short>();
         return Wav.Encode(captured);
     }
 

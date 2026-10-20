@@ -18,16 +18,22 @@ start_listener() {
   listener_response="${1:-{\"ok\":true}}"
   : > "$bodyfile"; : > "$readyfile"
   python3 - "$port" "$bodyfile" "$listener_response" > "$readyfile" 2>&1 <<'PY' &
-import socket, sys
+import os, socket, sys
 port, out, response = int(sys.argv[1]), sys.argv[2], sys.argv[3].encode()
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", port)); s.listen(1)
 print("READY", flush=True)
-c, _ = s.accept()
-data = b""
-while b"\r\n\r\n" not in data:
-    data += c.recv(4096)
+while True:
+    c, _ = s.accept()
+    data = b""
+    while b"\r\n\r\n" not in data:
+        data += c.recv(4096)
+    if not data.startswith(b"GET /mod"): break
+    # The hook asks GET /mod first (docs/HOOKLESS.md): no mod carries this session.
+    mod = os.environ.get("MOD_RESPONSE", '{"live":false}').encode()
+    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(mod)).encode() + b"\r\n\r\n" + mod)
+    c.close()
 head, _, rest = data.partition(b"\r\n\r\n")
 clen = 0
 for line in head.split(b"\r\n"):
@@ -167,5 +173,15 @@ printf '%s' "$in1" | PARLEY_PORT=$port bash "$hook"
 wait "$srv" 2>/dev/null || true
 [ "$(jq -r 'has("to")' < "$bodyfile")" = "false" ] || fail "unexpected to key"
 echo "PASS: speak to a guest"
+
+# --- Test 10: a mod carries the session (GET /mod live) -> the hook steps aside, no /turn ---
+MOD_RESPONSE='{"live":true}' start_listener
+printf '%s' "$in1" | PARLEY_PORT=$port bash "$hook"
+rc=$?
+[ "$rc" -eq 0 ] || fail "live-mod hook exited $rc"
+sleep 0.3
+[ ! -s "$bodyfile" ] || fail "live mod: the hook still POSTed /turn: $(cat "$bodyfile")"
+kill "$srv" 2>/dev/null || true
+echo "PASS: live mod -> hook steps aside"
 
 echo "ALL HOOK TESTS PASSED"

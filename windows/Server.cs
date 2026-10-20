@@ -33,11 +33,17 @@ public sealed class Server
     private readonly object _lock = new();
     // What waits at the gate per session key: a newer /turn answers the older ones "" and
     // /close all of them. `_atGate` counts those not yet let in (Sessions.Waiting reads it).
-    private sealed class Waiter { public readonly CancellationTokenSource Drop = new(); public bool Turn; }
+    // `TurnId`: a hookless turn (POST /turn/cancel finds it); `Entered`: let in, being voiced.
+    private sealed class Waiter { public readonly CancellationTokenSource Drop = new(); public bool Turn, Entered; public string? TurnId; }
     private readonly Dictionary<string, List<Waiter>> _waiters = new();
     private readonly ConcurrentDictionary<string, int> _atGate = new();
     // Closed by POST /close: its hook's next /wake answers `end` (until a new /turn revives it).
     private readonly HashSet<string> _closed = new();
+    // Hookless (docs/HOOKLESS.md): the open turn_id per session — from its /turn until its reply
+    // is delivered (or nothing is), through a wait. Presence `awaiting` anything else → unknown_turn.
+    private readonly Dictionary<string, string> _turns = new();
+    // Sir typed while a hookless turn is voiced: its recording ends now (TurnPipeline.Abandon).
+    public Action? AbandonTurn;
     public event Action<List<ParkedInfo>>? OnParkedChanged;
 
     public readonly record struct ParkedInfo(string Id, string Label, string Project);
@@ -113,7 +119,14 @@ public sealed class Server
             var path = req.Url?.AbsolutePath ?? "";
             if (req.HttpMethod == "GET" && path == "/health")
             {
-                await Respond(ctx, 200, "{\"ok\":true}");
+                await Respond(ctx, 200, "{\"ok\":true,\"async\":1}");
+                return;
+            }
+            // /mod — stop-hook.sh asks first: a hookless mod carries this session's turns → it steps aside.
+            if (req.HttpMethod == "GET" && path == "/mod")
+            {
+                var live = Sessions.ModLive(req.QueryString["session_id"] ?? "");
+                await Respond(ctx, 200, live ? "{\"live\":true}" : "{\"live\":false}");
                 return;
             }
             if (req.HttpMethod == "GET" && path == "/status")
@@ -155,53 +168,44 @@ public sealed class Server
                     return;
                 }
                 var id = SessionKey(turn);
-                FireReminders(r => r.After == id);   // its turn ended: "wenn Shirts fertig ist"
-                Sessions.Queued(id, turn.Label ?? "", turn.Project, turn.Cwd);
-                Delivery.ClaimName(id, turn.Cwd);
-                if (Sessions.Name(id) is { } own) turn.Label = own;   // its own name: announced, rung, shown
-                // v7: <speak to="Max"> and Max is a guest of this session — the question goes to him
-                // (Shares.cs), not through Sir's voice; it comes back here if he doesn't answer.
-                if (turn.To is { Length: > 0 } to && turn.WantsListen && AskGuest is { } ask && Sessions.SharedGuest(id, to) is { } guest)
+                // Hookless (docs/HOOKLESS.md): the mod carries the turn — queued now, answered at
+                // once; its reply becomes a delivery (Settle). Without `async` the hook long-polls.
+                if (turn.Async && turn.TurnId is { Length: > 0 } tid && id.Length > 0)
                 {
-                    Sessions.SetAsking(id, guest.Name);
-                    GuestOutcome outcome;
-                    try { outcome = await ask(guest.Id, turn); }
-                    finally { Sessions.SetAsking(id, null); }
-                    if (outcome.Answer is { } answer)
+                    lock (_lock) _turns[id] = tid;
+                    await Respond(ctx, 200, "{\"queued\":true}");
+                    try { Settle(id, tid, await Voice(turn, id, tid)); }
+                    catch (Exception e)
                     {
-                        Sessions.Finished(id, answer, false, 0);
-                        await Respond(ctx, 200, TurnJson(answer, false, 0, ""));
-                        return;
+                        Log.Write($"turn failed ({turn.SpokenLabel}): {e.Message}");
+                        lock (_lock) if (Open(id, tid)) _turns.Remove(id);
                     }
-                    turn = outcome.ForSir ?? turn;   // unanswered: Sir's voice, like any update
-                }
-                using var hold = PhoneCall.Hold();   // released after the reply — never leaks on an error
-                Interlocked.Increment(ref _queued);
-                if (_turnGate.Busy)   // another turn is active → this one waits
-                    Notifier.Notify("Parley", $"Projekt {turn.SpokenLabel} wartet auf Antwort");
-                var w = Enlist(id, turn: true);   // older ones of this session are answered "" now
-                var entered = await Enter(id, w);   // FIFO; hook connection stays open
-                Interlocked.Decrement(ref _queued);
-                if (!entered)   // a newer /turn of this session, or /close: no one listens for it
-                {
-                    Delist(id, w);
-                    Log.Write($"turn dropped ({turn.SpokenLabel}: a newer turn, or closed)");
-                    await Respond(ctx, 200, TurnJson("", false, 0, ""));
                     return;
                 }
-                (string transcript, bool park, int wait, string resume) r = ("", false, 0, "");
-                try
+                var reply = await Voice(turn, id, null);
+                await Respond(ctx, 200, TurnJson(reply.transcript, reply.park, reply.wait, reply.resume));
+                return;
+            }
+
+            // /turn/cancel — Sir typed before the voice reply came: the hookless turn leaves the
+            // queue; one being voiced loses its recording. Nothing of it is delivered.
+            if (req.HttpMethod == "POST" && path == "/turn/cancel")
+            {
+                var c = TurnPayload.Decode(body);
+                var (id, tid) = (c?.SessionId ?? "", c?.TurnId ?? "");
+                Waiter? w = null;
+                var known = false;
+                lock (_lock)
                 {
-                    Sessions.Activate(id, turn.Speak);
-                    r = await _runTurn(turn);
+                    known = Open(id, tid);
+                    if (known) _turns.Remove(id);
+                    if (tid.Length > 0 && _waiters.TryGetValue(id, out var list)) w = list.FirstOrDefault(x => x.TurnId == tid);
                 }
-                finally
-                {
-                    Delist(id, w);
-                    Sessions.Finished(id, r.transcript, r.park, r.wait, r.resume);
-                    _turnGate.Release();
-                }
-                await Respond(ctx, 200, TurnJson(r.transcript, r.park, r.wait, r.resume));
+                if (w is { Entered: true }) AbandonTurn?.Invoke();
+                else w?.Drop.Cancel();
+                if (known) Sessions.EndWait(id);   // in its wait: over, and its timer delivers nothing
+                Log.Write($"turn cancelled ({id}: {tid}{(w is { Entered: true } ? ", recording abandoned" : "")})");
+                await Respond(ctx, 200, "{\"ok\":true}");
                 return;
             }
 
@@ -255,24 +259,28 @@ public sealed class Server
                 var project = string.IsNullOrEmpty(presence.Project)
                     ? Path.GetFileName((presence.Cwd ?? "").TrimEnd('/', '\\'))
                     : presence.Project;
-                string? instruction;
-                lock (_lock)   // the mod took it: the parked hook doesn't (and the other way round)
-                {
-                    instruction = Sessions.Presence(presence.SessionId, presence.Label ?? "", project,
-                        presence.State ?? "idle", presence.Usage, presence.Tasks, presence.Host, presence.Cwd);
-                    if (instruction is not null && _parked.TryGetValue(presence.SessionId, out var hook)) hook.Pending = null;
-                }
+                Sessions.Presence(presence.SessionId, presence.Label ?? "", project, presence.State ?? "idle",
+                    presence.Usage, presence.Tasks, presence.Host, presence.Cwd, presence.Async, presence.Ack);
                 // A session started for an instruction (POST /dispatch, a wake routed to the
                 // Zentrale) gets it on the first presence from its folder.
                 Delivery.ClaimName(presence.SessionId, presence.Cwd);
-                if (instruction is null && Delivery.TakePending(presence.Cwd, presence.SessionId) is { } waiting)
+                if (Delivery.TakePending(presence.Cwd, presence.SessionId) is { } waiting)
                 {
-                    instruction = waiting;
-                    Sessions.MarkInjected(presence.SessionId);
+                    Sessions.SetPending(presence.SessionId, waiting);
                     Log.Write($"dispatch: delivered the waiting instruction to {project}");
                 }
+                (string Text, string Id)? delivery;
+                var unknown = false;
+                lock (_lock)   // the mod took it: the parked hook doesn't (and the other way round)
+                {
+                    delivery = Sessions.NextDelivery(presence.SessionId, presence.Async);
+                    if (delivery is not null && _parked.TryGetValue(presence.SessionId, out var hook)) hook.Pending = null;
+                    // Hookless: the turn it waits for is gone (a restart, or it ended without a reply).
+                    unknown = presence.Awaiting is { Length: > 0 } awaiting && !Open(presence.SessionId, awaiting);
+                }
                 NotifyParked();
-                await Respond(ctx, 200, instruction is null ? "{}" : JsonSerializer.Serialize(new { instruction }));
+                await Respond(ctx, 200, delivery is { } d ? JsonSerializer.Serialize(new { instruction = d.Text, delivery_id = d.Id })
+                    : unknown ? "{\"unknown_turn\":true}" : "{}");
                 return;
             }
 
@@ -471,6 +479,101 @@ public sealed class Server
         }
     }
 
+    // ---- turns (POST /turn) ------------------------------------------------------------
+
+    // One /turn through the gate and the pipeline (or to the guest it asks): its reply, "" when
+    // dropped. `turnId`: a hookless turn (docs/HOOKLESS.md) — cancelled meanwhile, it keeps nothing.
+    private async Task<(string transcript, bool park, int wait, string resume)> Voice(TurnPayload turn, string id, string? turnId)
+    {
+        FireReminders(r => r.After == id);   // its turn ended: "wenn Shirts fertig ist"
+        Sessions.Queued(id, turn.Label ?? "", turn.Project, turn.Cwd);
+        Delivery.ClaimName(id, turn.Cwd);
+        if (Sessions.Name(id) is { } own) turn.Label = own;   // its own name: announced, rung, shown
+        // v7: <speak to="Max"> and Max is a guest of this session — the question goes to him
+        // (Shares.cs), not through Sir's voice; it comes back here if he doesn't answer.
+        if (turn.To is { Length: > 0 } to && turn.WantsListen && AskGuest is { } ask && Sessions.SharedGuest(id, to) is { } guest)
+        {
+            Sessions.SetAsking(id, guest.Name);
+            GuestOutcome outcome;
+            try { outcome = await ask(guest.Id, turn); }
+            finally { Sessions.SetAsking(id, null); }
+            if (outcome.Answer is { } answer)
+            {
+                Sessions.Finished(id, answer, false, 0);
+                return (answer, false, 0, "");
+            }
+            turn = outcome.ForSir ?? turn;   // unanswered: Sir's voice, like any update
+        }
+        using var hold = PhoneCall.Hold();   // released after the reply — never leaks on an error
+        Interlocked.Increment(ref _queued);
+        if (_turnGate.Busy)   // another turn is active → this one waits
+            Notifier.Notify("Parley", $"Projekt {turn.SpokenLabel} wartet auf Antwort");
+        var w = Enlist(id, turn: true, turnId);   // older ones of this session are answered "" now
+        var entered = await Enter(id, w);   // FIFO; hook connection stays open
+        Interlocked.Decrement(ref _queued);
+        if (!entered)   // a newer /turn of this session, or /close: no one listens for it
+        {
+            Delist(id, w);
+            Sessions.Unqueued(id);
+            Log.Write($"turn dropped ({turn.SpokenLabel}: a newer turn, cancelled, or closed)");
+            return ("", false, 0, "");
+        }
+        lock (_lock) w.Entered = true;
+        (string transcript, bool park, int wait, string resume) r = ("", false, 0, "");
+        try
+        {
+            Sessions.Activate(id, turn.Speak);
+            r = await _runTurn(turn);
+        }
+        finally
+        {
+            Delist(id, w);
+            if (turnId is not null && !Open(id, turnId)) r = ("", false, 0, "");   // cancelled: nothing of it stays
+            Sessions.Finished(id, r.transcript, r.park, r.wait, r.resume, hostWait: turnId is not null);
+            _turnGate.Release();
+        }
+        return r;
+    }
+
+    // Hookless: is `turnId` still this session's open turn (not cancelled, closed, or overtaken)?
+    private bool Open(string id, string turnId)
+    {
+        lock (_lock) return _turns.TryGetValue(id, out var t) && t == turnId;
+    }
+
+    // A hookless turn's reply: a transcript is delivered, a wait runs on the host's timer, park
+    // and silence deliver nothing (the turn closes — `awaiting` it answers unknown_turn).
+    private void Settle(string id, string turnId, (string transcript, bool park, int wait, string resume) r)
+    {
+        lock (_lock)
+        {
+            if (!Open(id, turnId)) return;   // cancelled, a newer turn, closed: nothing of it goes out
+            if (r.wait > 0)
+            {
+                _ = Task.Run(() => HostWait(id, turnId, r.wait));
+                return;
+            }
+            _turns.Remove(id);
+            if (r.transcript.Length > 0) DeliverLocked(id, r.transcript);
+        }
+        NotifyParked();
+    }
+
+    // "Warte X Minuten" without a hook to sleep: at its end waitResume is delivered — unless
+    // Fortsetzen ended it first (EndWait delivered its own text), or a new turn / cancel / close.
+    private async Task HostWait(string id, string turnId, int seconds)
+    {
+        var until = DateTime.UtcNow.AddSeconds(seconds);
+        while (DateTime.UtcNow < until && Sessions.HostWaiting(id) && Open(id, turnId)) await Task.Delay(1000);
+        lock (_lock)
+        {
+            if (!Open(id, turnId)) return;
+            _turns.Remove(id);
+            if (Sessions.TakeWaitResume(id) is { } resume) DeliverLocked(id, resume);
+        }
+        NotifyParked();
+    }
+
     // ---- shared sessions (Shares.cs) -----------------------------------------------------
 
     // v7: the share hub takes a guest's question (share id, turn) → his answer, or the turn for Sir.
@@ -628,6 +731,7 @@ public sealed class Server
     {
         var ids = new List<string>();
         var project = "";
+        var ended = "";
         try
         {
             using var doc = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
@@ -636,8 +740,10 @@ public sealed class Server
                 ids.AddRange(a.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!));
             if (r.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.String) ids.Add(i.GetString()!);
             if (r.TryGetProperty("project", out var p) && p.ValueKind == JsonValueKind.String) project = p.GetString()!.Trim();
+            if (r.TryGetProperty("session_id", out var s) && s.ValueKind == JsonValueKind.String) ended = s.GetString()!;
         }
         catch (Exception) { return (400, "{\"ok\":false,\"error\":\"bad close payload\"}"); }
+        if (ended.Length > 0 && ids.Count == 0 && project.Length == 0) return Ended(ended);
         if (project.Length > 0) ids.AddRange(Sessions.RunningNamed(project));
         if (ids.Count == 0)
             return project.Length == 0
@@ -660,6 +766,7 @@ public sealed class Server
             lock (_lock)
             {
                 _closed.Add(id);
+                _turns.Remove(id);
                 _parked.TryRemove(id, out _);
                 drop = _waiters.TryGetValue(id, out var list) ? list.ToList() : new();
             }
@@ -669,6 +776,27 @@ public sealed class Server
         }
         if (closed.Count > 0) NotifyParked();
         return (closed.Count > 0 ? 200 : codes[0], JsonSerializer.Serialize(new { ok = failed.Count == 0, closed, failed }));
+    }
+
+    // The mod's session.end ({"session_id"}, docs/HOOKLESS.md): the session is over by itself —
+    // its queue, open turn and deliveries go (a turn being voiced records no more); nothing is
+    // ended, the row ages out like any quiet session.
+    private (int, string) Ended(string id)
+    {
+        List<Waiter> drop;
+        lock (_lock)
+        {
+            _closed.Add(id);
+            _turns.Remove(id);
+            _parked.TryRemove(id, out _);
+            drop = _waiters.TryGetValue(id, out var list) ? list.ToList() : new();
+            Sessions.DropDeliveries(id);
+        }
+        foreach (var d in drop) d.Drop.Cancel();
+        if (drop.Any(d => d.Entered && d.TurnId is not null)) AbandonTurn?.Invoke();
+        Log.Write($"close: {id} ended (its queue and deliveries dropped)");
+        NotifyParked();
+        return (200, "{\"ok\":true}");
     }
 
     // ---- resuming sessions (tray, voice command, POST /resume) ------------------------
@@ -685,20 +813,24 @@ public sealed class Server
     // (≤3 s) and injects it as the next turn; an idle session's mod gets it as the reply to
     // its next /presence (≤2 s) and submits it as a prompt. Parked (its hook may be slow to
     // poll): both get it — whichever takes it first clears the other (/wake, /presence).
+    // Every delivery goes this way: the mod has it until it acks (docs/HOOKLESS.md).
     private void Deliver(string id, string instruction)
     {
-        lock (_lock)
-        {
-            Prune();
-            if (_parked.TryGetValue(id, out var p) && (p.Pending is not null || Sessions.IsParked(id)))
-            {
-                p.Pending = instruction;
-                Sessions.SetPending(id, instruction);
-                Sessions.WakeQueued(id);
-            }
-            else Sessions.SetPending(id, instruction);
-        }
+        lock (_lock) DeliverLocked(id, instruction);
         NotifyParked();
+    }
+
+    // Caller holds _lock.
+    private void DeliverLocked(string id, string instruction)
+    {
+        Prune();
+        if (_parked.TryGetValue(id, out var p) && (p.Pending is not null || Sessions.IsParked(id)))
+        {
+            p.Pending = instruction;
+            Sessions.SetPending(id, instruction);
+            Sessions.WakeQueued(id);
+        }
+        else Sessions.SetPending(id, instruction);
     }
 
     // POST /resume and the relay's `resume` frame (docs/IPHONE.md): the voice dialog for a
@@ -894,9 +1026,9 @@ public sealed class Server
 
     // Line up at the gate for session `id`. A /turn drops the older /turns of that session still
     // waiting (their hooks are gone or moved on), and its parked entry; it revives a closed one.
-    private Waiter Enlist(string id, bool turn)
+    private Waiter Enlist(string id, bool turn, string? turnId = null)
     {
-        var w = new Waiter { Turn = turn };
+        var w = new Waiter { Turn = turn, TurnId = turnId };
         var drop = new List<Waiter>();
         lock (_lock)
         {

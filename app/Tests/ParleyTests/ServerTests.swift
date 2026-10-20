@@ -86,7 +86,7 @@ final class ServerHandleTests: XCTestCase {
         let s = ControlServer()
         let (status, body) = s.handle(HTTPRequest(method: "GET", path: "/health", body: Data()))
         XCTAssertEqual(status, 200)
-        XCTAssertEqual(body, #"{"ok":true}"#)
+        XCTAssertEqual(body, #"{"ok":true,"async":1}"#)
     }
 
     func testStatusReportsPhaseAndLevels() throws {

@@ -27,6 +27,15 @@ public sealed class TurnPipeline
     private List<string> _pendingResume = new();
     private volatile int _resumeGen;   // bumped per turn; cancels a pending debounced resume
     private Task? _ackTask;
+    private volatile bool _abandoned;   // this turn's answer was typed instead (POST /turn/cancel)
+
+    // Hookless (docs/HOOKLESS.md): Sir typed before the voice reply came — the turn being voiced
+    // records nothing more (the server delivers nothing of it).
+    public void Abandon()
+    {
+        _abandoned = true;
+        _mic.Abandon();
+    }
 
     public TurnPipeline(Func<int> queuedTurns, PillOverlay? pill,
         Func<List<Server.ParkedInfo>>? resumableList = null, Action<string, string>? resume = null,
@@ -51,7 +60,7 @@ public sealed class TurnPipeline
             if (turn.Event == Server.ReminderEvent) return await RunReminder(turn);
             return await RunTurn(turn);
         }
-        finally { LiveStatus.Set("idle"); }
+        finally { LiveStatus.Set("idle"); _abandoned = false; }
     }
 
     // POST /resume (the mod's button): a short voice dialog instead of a hook turn — the
@@ -506,6 +515,8 @@ public sealed class TurnPipeline
     /// `preroll`: a barge-in at the PC's mic; a phone barge-in brings the phone's own.
     private async Task<(byte[] wav, string text)> ListenOnce(Config config, bool barged = false, IReadOnlyList<byte[]>? preroll = null)
     {
+        _sttFailed = false;
+        if (_abandoned) return (Array.Empty<byte>(), "");
         if (!barged)   // after a barge-in Sir is already talking: no beep
         {
             await AudioOut.PlayBeep();
@@ -523,7 +534,7 @@ public sealed class TurnPipeline
         LiveStatus.Set("transcribing");
 
         var minBytes = 44 + 16000 * 2 / 5;   // header + ~0.2s
-        var (text, failed) = wav.Length >= minBytes ? await Groq.TryTranscribe(wav, config) : ("", false);
+        var (text, failed) = wav.Length >= minBytes && !_abandoned ? await Groq.TryTranscribe(wav, config) : ("", false);
         _sttFailed = failed;
         Log.Write($"transcribe done chars={text.Length}{(failed ? " (failed)" : "")}");
         return (wav, text);

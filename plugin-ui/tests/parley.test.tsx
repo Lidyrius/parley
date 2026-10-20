@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { bgLabel, ease, facts, parseSpeak, ringSvg, scrollPane, timer, todayParts, wave, waveSvg } from '../hooks/register'
+import type { On } from 'claude-code'
+
+import { bgLabel, ease, facts, parseSpeak, ringSvg, scrollPane, timer, todayParts, turnParts, wave, waveSvg } from '../hooks/register'
 
 const BAND = {
   plugin: 'parley-ui',
@@ -363,4 +365,123 @@ test('a Stop without <speak>, or an interrupted turn, ends "working" — presenc
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: true, turnId: 't3', reason: 'aborted' } as never)
   await clock.advance(2100)
   expect(bodies.at(-1)).toContain('"state":"idle"')
+})
+
+// ── Ohne Stop-Hook (docs/HOOKLESS.md) ──────────────────────────────────────────────────────
+
+test('turnParts sends what stop-hook.sh sends: replies above the tag, slides out of the text', async () => {
+  const msg = 'Format: `<reply on="x">nur Prosa</reply>` ist ein Beispiel.\n\n<reply on="Zustimmung">Sehr wohl, ich setze das um.</reply>\n<reply on="Ablehnung" listen>Was schwebt Ihnen vor, Sir?</reply>\n<speak>Soll ich das so bauen?</speak>'
+  expect(turnParts(msg, parseSpeak(msg)!)).toEqual({ speak: 'Soll ich das so bauen?', slides: [], replies: [
+    { on: 'Zustimmung', say: 'Sehr wohl, ich setze das um.', listen: false }, { on: 'Ablehnung', say: 'Was schwebt Ihnen vor, Sir?', listen: true }] })
+  const sl = '<speak>Der Export ist drin, Sir. <slide image="last" title="Export"/> So sieht er aus. <slide chart="bar" labels="Grün,Rot" values="24,2" title="Tests"/>Fast alles grün.</speak>'
+  expect(turnParts(sl, parseSpeak(sl)!)).toEqual({ speak: 'Der Export ist drin, Sir. So sieht er aus. Fast alles grün.', replies: [], slides: [
+    { word: 5, image: 'last', title: 'Export' }, { word: 9, chart: 'bar', labels: 'Grün,Rot', values: '24,2', title: 'Tests' }] })
+  expect(parseSpeak('<speak>a</speak>\n<speak-end>Offen ohne close')).toEqual({ text: 'Offen ohne close', listen: false }) // as the hook
+})
+
+// A stand-in app: records every call; /presence answers from `answers`, in order.
+function fakeApp(on: On, answers: string[] = [], health = '{"ok":true,"async":1}') {
+  const calls: { method: string; path: string; body: string }[] = []
+  on('http.fetch', async ($, e) => {
+    const path = e.url.replace(/^.*:8787/, '')
+    calls.push({ method: e.init?.method ?? 'GET', path, body: e.init?.body ?? '' })
+    const text = path === '/health' ? health : path === '/turn' ? '{"queued":true}' : path === '/sessions' ? '{"sessions":[]}'
+      : path === '/status' ? JSON.stringify({ phase: 'idle', session: 'x', levels: [] })
+      : path === '/presence' ? (answers.shift() ?? '{}') : '{}'
+    return { value: { status: 200, ok: true, headers: {}, text } }
+  })
+  on('session.usage', async () => ({ value: { startedAt: 0, context: { window: 200000 }, rateLimits: [] } }) as never)
+  on('command.register', async () => ({ value: undefined }) as never)
+  on('session.id', async () => ({ value: 's1' }))
+  on('session.start', async ($, e) => ({ cwd: e.cwd }) as never)
+  on('ui.render', async ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
+  return calls
+}
+const ASK = { stop_hook_active: false, session_id: 's1', cwd: '/tmp/parley-demo',
+  last_assistant_message: '<reply on="Ja">Gut, Sir.</reply>\n<speak>Soll ich den Prototyp bauen?</speak>' }
+const bodies = (calls: { path: string; body: string }[], path: string) => calls.filter(c => c.path === path).map(c => c.body)
+
+test('async: Stop posts the turn and resolves at once, without the hook beneath', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = fakeApp(on)
+  let hook = false
+  on('classic.Stop', async () => { hook = true; return { block: 'vom Hook' } })
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'terminal', isInteractive: true } as never)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+  const res = await $.classic.Stop(ASK)
+  expect(hook).toBe(false)
+  expect(res.block).toBeUndefined()
+  const turn = JSON.parse(bodies(calls, '/turn')[0] ?? '{}')
+  expect(turn.async).toBe(true)
+  expect(String(turn.turn_id).startsWith('s1:')).toBe(true)
+  expect([turn.event, turn.session_id, turn.cwd, turn.project, turn.speak, turn.listen])
+    .toEqual(['turn', 's1', '/tmp/parley-demo', 'parley-demo', 'Soll ich den Prototyp bauen?', true])
+  expect(turn.replies).toEqual([{ on: 'Ja', say: 'Gut, Sir.', listen: false }])
+  expect(await ui.find({ type: 'Text', text: /wartet/ })).toBeDefined() // queued
+
+  await clock.advance(600)
+  const p = bodies(calls, '/presence').at(-1) ?? ''
+  expect(p).toContain('"async":1')
+  expect(p).toContain(`"awaiting":"${turn.turn_id}"`)
+  expect(calls.some(c => c.path === '/status')).toBe(true) // the phase poll runs without the hook
+  await ui.unmount()
+})
+
+test('async: a delivery is submitted once across two answers with its id, then acked', async ($, on) => {
+  const clock = mock.clock(on)
+  const d = '{"instruction":"Ja, bau ihn.","delivery_id":"d1","unknown_turn":true}'
+  const calls = fakeApp(on, [d, d])
+  const prompts: string[] = []
+  on('prompt.submit', async ($, e) => { prompts.push(e.text); return { text: e.text } })
+  on('classic.Stop', async () => ({ block: 'vom Hook' }))
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'terminal', isInteractive: true } as never)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.classic.Stop(ASK)
+
+  await clock.advance(600)
+  await clock.advance(600)
+  await clock.advance(600)
+  expect(prompts).toEqual(['Ja, bau ihn.'])
+  const sent = bodies(calls, '/presence')
+  expect(sent.length).toBeGreaterThan(2) // every 0.5 s while the delivery is open
+  expect(sent.at(-1)).toContain('"ack":"d1"')
+  expect(sent.at(-1)).not.toContain('"awaiting"')
+  expect(await ui.find({ type: 'Text', text: /eingespeist/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('async: Sir types while the turn waits → /turn/cancel', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = fakeApp(on)
+  on('prompt.submit', async ($, e) => ({ text: e.text }))
+  on('classic.Stop', async () => ({}))
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'terminal', isInteractive: true } as never)
+  await $.classic.Stop(ASK)
+  const turn = JSON.parse(bodies(calls, '/turn')[0] ?? '{}').turn_id
+
+  await $.prompt.submit({ text: 'Ich mach es selbst.', origin: { kind: 'composer' }, wait: false } as never)
+  expect(bodies(calls, '/turn/cancel')).toEqual([JSON.stringify({ session_id: 's1', turn_id: turn })])
+  await clock.advance(2100)
+  expect(bodies(calls, '/presence').at(-1)).not.toContain('"awaiting"')
+})
+
+test('async: an older app (no async) or -p keeps the hook — next(e)', async ($, on) => {
+  mock.clock(on)
+  const calls = fakeApp(on, [], '{"ok":true}')
+  let hooked = 0
+  on('classic.Stop', async () => { hooked++; return { block: 'vom Hook' } })
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: 'terminal', isInteractive: true } as never)
+  expect((await $.classic.Stop(ASK)).block).toBe('vom Hook')
+  expect(hooked).toBe(1)
+  expect(bodies(calls, '/turn')).toEqual([])
+})
+
+test('async: no prompt box (-p, SDK) keeps the hook even with an async app', async ($, on) => {
+  mock.clock(on)
+  const calls = fakeApp(on)
+  on('classic.Stop', async () => ({ block: 'vom Hook' }))
+  await $.session.start({ cwd: '/tmp/parley-demo', surface: null, isInteractive: false } as never)
+  expect((await $.classic.Stop(ASK)).block).toBe('vom Hook')
+  expect(calls.some(c => c.path === '/turn' || c.path === '/health')).toBe(false)
 })

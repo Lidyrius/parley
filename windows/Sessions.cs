@@ -28,13 +28,15 @@ public sealed class SessionRegistry
         public DateTime? WaitUntil;       // "Warte X Minuten": the hook sleeps until then
         public bool AfterWait;            // its turn comes after Sir's "Warte X Minuten": rings at once
         public string? WaitResume;        // what the hook injects when the wait is over (Fortsetzen: now)
+        public bool HostWait;             // hookless (docs/HOOKLESS.md): the host's timer delivers WaitResume
         public DateTime? CallbackAt;      // its call was put off: rings again then (MaxValue = Sir calls back)
         public DateTime? ClosedAt;        // POST /close ended it: a dying mod's last presence is ignored
         public bool Parked;               // answered with park; its hook polls /wake
         public DateTime? WakeAt;          // last /wake poll
         public DateTime? InjectedAt;      // a reply was fed back → the agent is working on it
         public DateTime? ExpectWorkUntil; // …shown as working until the mod confirms (max 15 s)
-        public string? Pending;           // resume instruction for the mod's next /presence
+        public List<Handoff> Pending = new();   // deliveries for the mod's /presence, oldest first
+        public bool Async;                // its mod carries turns itself (presence `async`)
         public DateTime? StartedAt;       // from the mod's usage
         public double? ContextPercent;
         public double? CostUsd;           // cumulative, as last reported
@@ -52,6 +54,12 @@ public sealed class SessionRegistry
     private static readonly TimeSpan HookTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan KeepStopped = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan LandingTtl = TimeSpan.FromSeconds(15);
+
+    // One delivery (docs/HOOKLESS.md): handed out on /presence until the mod acks its id; an
+    // `async` mod gets it again 10 s after it went out unacked, an older mod exactly once.
+    private sealed class Handoff { public string Id = "", Text = ""; public DateTime? SentAt; }
+    private static readonly TimeSpan ResendAfter = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ModLiveTtl = TimeSpan.FromSeconds(5);
 
     private readonly object _gate = new();
     private readonly Dictionary<string, Entry> _entries = new();
@@ -77,20 +85,21 @@ public sealed class SessionRegistry
 
     // ---- signals ---------------------------------------------------------------------
 
-    // The mod's heartbeat. Returns a pending resume instruction — exactly once — for the mod
-    // to submit as a prompt in its session.
-    public string? Presence(string id, string label, string project, string state,
-        PresenceUsage? usage = null, List<BackgroundTask>? tasks = null, string? host = null, string? cwd = null)
+    // The mod's heartbeat. `ack`: the delivery it fed in last — done. NextDelivery hands out the next.
+    public void Presence(string id, string label, string project, string state,
+        PresenceUsage? usage = null, List<BackgroundTask>? tasks = null, string? host = null, string? cwd = null,
+        bool async = false, string? ack = null)
     {
         lock (_gate)
-            if (_entries.TryGetValue(id, out var c) && c.ClosedAt is { } at && _now() - at < PresenceTtl) return null;
-        string? delivered = null;
+            if (_entries.TryGetValue(id, out var c) && c.ClosedAt is { } at && _now() - at < PresenceTtl) return;
         DateTime? startedAt = null;
         Update(id, label, project, (e, t) =>
         {
             if (!string.IsNullOrEmpty(cwd)) e.Cwd = cwd;
             e.PresenceAt = t;
             e.PresenceState = state;
+            e.Async = async;
+            if (!string.IsNullOrEmpty(ack)) e.Pending.RemoveAll(d => d.Id == ack);
             e.Tasks = tasks ?? new List<BackgroundTask>();
             if (!string.IsNullOrEmpty(host)) e.Host = host;
             if (state == "working") e.ExpectWorkUntil = null;
@@ -100,14 +109,48 @@ public sealed class SessionRegistry
                 e.ContextPercent = usage.ContextPercent ?? e.ContextPercent;
                 e.CostUsd = usage.CostUsd ?? e.CostUsd;
             }
-            if (e.Pending is { } p) { delivered = p; e.Pending = null; Inject(e, t); }
             startedAt = e.StartedAt;
         });
         if (usage?.CostUsd is { } cost && !string.IsNullOrEmpty(id))
             _daily.AddCost(id, cost, startedAt);
         if (usage?.RateLimits is { Count: > 0 } limits)
             lock (_gate) _rateLimits = limits;
-        return delivered;
+    }
+
+    // The delivery for this presence's answer, or null: the oldest open one, unless it went out
+    // to an `async` mod less than 10 s ago (it acks it then). An older mod has no ack: once.
+    public (string Text, string Id)? NextDelivery(string id, bool async)
+    {
+        (string, string)? next = null;
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(id, out var c) || c.Pending.Count == 0
+                || c.ClosedAt is { } at && _now() - at < PresenceTtl) return null;
+            Update(id, "", "", (e, t) =>
+            {
+                var d = e.Pending[0];
+                if (async && d.SentAt is { } sent && t - sent < ResendAfter) return;
+                if (d.SentAt is null) Inject(e, t);
+                d.SentAt = t;
+                if (!async) e.Pending.RemoveAt(0);
+                next = (d.Text, d.Id);
+            });
+        }
+        return next;
+    }
+
+    // GET /mod: a mod that carries turns itself, heard from in the last 5 s (stop-hook.sh steps aside).
+    public bool ModLive(string id)
+    {
+        lock (_gate)
+            return _entries.TryGetValue(id, out var e) && e.Async
+                && e.PresenceAt is { } p && _now() - p < ModLiveTtl && !(e.ClosedAt is { } at && _now() - at < PresenceTtl);
+    }
+
+    // The mod's session.end (POST /close {session_id}): what waits for it is gone.
+    public void DropDeliveries(string id)
+    {
+        lock (_gate) if (_entries.TryGetValue(id, out var e)) e.Pending.Clear();
     }
 
     // A /turn arrived; it waits at the gate until it's this session's turn to speak.
@@ -122,7 +165,8 @@ public sealed class SessionRegistry
             e.Parked = false;
             e.InjectedAt = null;
             e.ExpectWorkUntil = null;
-            e.Pending = null;   // the session moved on by itself — drop a stale resume
+            e.HostWait = false;
+            e.Pending.Clear();   // the session moved on by itself — drop a stale resume
         });
 
     // POST /resume: if the session is resumable, mark its dialog queued (its other state is
@@ -166,7 +210,8 @@ public sealed class SessionRegistry
     }
 
     // The turn's reply went back to the hook: wait, park, inject a transcript, or end.
-    public void Finished(string id, string transcript, bool park, int waitSeconds, string resume = "")
+    // `hostWait`: a hookless turn — no hook sleeps through the wait, the server's timer delivers it.
+    public void Finished(string id, string transcript, bool park, int waitSeconds, string resume = "", bool hostWait = false)
     {
         lock (_gate)
         {
@@ -178,6 +223,7 @@ public sealed class SessionRegistry
                 e.AfterWait = false;
                 e.WaitUntil = waitSeconds > 0 ? t.AddSeconds(waitSeconds) : null;
                 e.WaitResume = waitSeconds > 0 ? resume : null;
+                e.HostWait = waitSeconds > 0 && hostWait;
                 e.Parked = park;
                 e.WakeAt = park ? t : null;
                 e.InjectedAt = null;
@@ -204,14 +250,14 @@ public sealed class SessionRegistry
     // A resume instruction was handed to the parked hook (its next /wake poll injects it).
     public void WakeQueued(string id) => Update(id, "", "", (e, t) => { e.Parked = false; Inject(e, t); });
 
-    // A resume instruction for an idle session, delivered on its next /presence. Unknown
-    // sessions are ignored.
+    // An instruction for a session, delivered on its next /presence (in turn after any still
+    // open). Unknown sessions are ignored.
     public void SetPending(string id, string instruction)
     {
         lock (_gate)
         {
             if (!_entries.ContainsKey(id)) return;
-            Update(id, "", "", (e, _) => e.Pending = instruction);
+            Update(id, "", "", (e, _) => e.Pending.Add(new Handoff { Id = Guid.NewGuid().ToString("N"), Text = instruction }));
         }
     }
 
@@ -223,7 +269,7 @@ public sealed class SessionRegistry
             e.HookAt = t;
             e.WakeAt = t;
             e.Parked = !resumed;
-            if (resumed) { e.Pending = null; Inject(e, t); }   // the hook took it: not the mod too
+            if (resumed) { e.Pending.Clear(); Inject(e, t); }   // the hook took it: not the mod too
         });
 
     // An instruction rode back on this session's presence (pending by folder, POST /dispatch or
@@ -264,7 +310,7 @@ public sealed class SessionRegistry
     // A timer ("Warte X Minuten") whose hook polls /wake: Fortsetzen ends it early.
     private bool Resumable(Entry e) =>
         (e.State is "parked" or "background" && (e.PresenceAt is not null || HookParked(e)))
-        || (e.State == "waiting" && e.Parked && e.WaitResume is not null);
+        || (e.State == "waiting" && (e.Parked || e.HostWait) && e.WaitResume is not null);
 
     private bool HookParked(Entry e) => e.Parked && e.WakeAt is { } w && _now() - w < ParkTtl;
 
@@ -275,12 +321,31 @@ public sealed class SessionRegistry
         lock (_gate)
         {
             Refresh();
-            // Only while its hook polls /wake (it picks the text up there); an older hook just sleeps.
-            if (!_entries.TryGetValue(id, out var e) || e.State != "waiting" || !e.Parked || e.WaitResume is not { } resume) return null;
+            // Only while its hook polls /wake (it picks the text up there) or the host's timer holds
+            // the wait (a delivery); an older hook just sleeps.
+            if (!_entries.TryGetValue(id, out var e) || e.State != "waiting" || !(e.Parked || e.HostWait) || e.WaitResume is not { } resume) return null;
             e.WaitUntil = null;
             e.WaitResume = null;
             Refresh();
             return "[Parley] Sir hat die Wartezeit mit „Fortsetzen“ vorzeitig beendet.\n\n" + resume;
+        }
+    }
+
+    // A hookless wait still runs (neither over by Fortsetzen nor by a new turn).
+    public bool HostWaiting(string id)
+    {
+        lock (_gate) return _entries.TryGetValue(id, out var e) && e.HostWait && e.WaitResume is not null;
+    }
+
+    // The host's timer ran out: what the session continues with, taken once (null: ended already).
+    public string? TakeWaitResume(string id)
+    {
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(id, out var e) || !e.HostWait || e.WaitResume is not { } resume) return null;
+            e.HostWait = false;
+            e.WaitResume = null;
+            return resume;
         }
     }
 
@@ -550,7 +615,7 @@ public sealed class SessionRegistry
             e.PresenceAt = t - PresenceTtl;
             e.HookAt = t - HookTtl;
             e.Queued = false; e.Parked = false; e.WaitUntil = null; e.CallbackAt = null;
-            e.Pending = null; e.ExpectWorkUntil = null; e.InjectedAt = null;
+            e.Pending.Clear(); e.ExpectWorkUntil = null; e.InjectedAt = null; e.HostWait = false;
         });
     }
 
@@ -698,7 +763,7 @@ public sealed class SessionRegistry
         {
             if (t - pa >= PresenceTtl) return "stopped";
             // A resume instruction waiting for / just handed to the mod counts as working.
-            var landing = e.Pending is not null || (e.ExpectWorkUntil is { } x && t < x);
+            var landing = e.Pending.Count > 0 || (e.ExpectWorkUntil is { } x && t < x);
             if (e.PresenceState == "working" || landing) return "working";
             return e.PresenceState == "background" ? "background" : "parked";
         }

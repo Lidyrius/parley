@@ -153,6 +153,11 @@ final class ControlServer: @unchecked Sendable {
                 send(400, #"{"ok":false,"error":"bad turn payload"}"#, on: conn)
                 return
             }
+            if let tid = turn.asyncTurnId {   // the mod's: no connection held (docs/HOOKLESS.md)
+                receiveAsync(turn, id: tid)
+                send(200, #"{"queued":true}"#, on: conn)
+                return
+            }
             receiveTurn(turn) { [weak self] reply in
                 self?.send(200, Self.turnJSON(reply), on: conn)
             }
@@ -219,6 +224,102 @@ final class ControlServer: @unchecked Sendable {
             return
         }
         enqueueReply(turn, respond)
+    }
+
+    // MARK: - the mod carries the turn (docs/HOOKLESS.md)
+
+    // Each session's open async turn — known until it is answered, its wait over or its reply
+    // delivered (presence `awaiting` anything else → unknown_turn) —, the timer token of its
+    // wait, and turns whose reply is dropped (/turn/cancel, /close while voiced).
+    private var asyncTurns: [String: String] = [:]
+    private var asyncWaits: [String: Int] = [:]
+    private var nextWait = 0
+    private var discarded: Set<String> = []
+    // Runs `fire` on `queue` after the wait; a stub in tests.
+    var waitTimer: ((TimeInterval, @escaping () -> Void) -> Void)?
+
+    // POST /turn with async (on `queue`): queued like a hook's turn, but nothing waits on the
+    // answer — what comes of it is handed to the session as a delivery (landed).
+    func receiveAsync(_ turn: TurnPayload, id tid: String) {
+        let key = Self.sessionKey(turn)
+        asyncWaits[key] = nil   // a newer turn: an older one's wait is moot
+        asyncTurns[key] = tid
+        receiveTurn(turn) { [weak self] reply in self?.landed(key, tid, reply) }
+    }
+
+    // An async turn's reply: a transcript → a delivery; wait → the host's timer delivers its
+    // resume; park or empty → nothing (an idle session with a fresh presence is parked).
+    private func landed(_ key: String, _ tid: String, _ reply: TurnReply) {
+        let mine = asyncTurns[key] == tid
+        if discarded.remove(tid) != nil {
+            if mine { asyncTurns[key] = nil }
+            return
+        }
+        if reply.waitSeconds > 0 {
+            guard mine else { return }
+            nextWait += 1
+            let token = nextWait
+            asyncWaits[key] = token
+            sessions.hostWait(id: key)
+            let fire = { [weak self] in
+                guard let self, self.asyncWaits[key] == token else { return }
+                self.asyncWaits[key] = nil
+                if self.asyncTurns[key] == tid { self.asyncTurns[key] = nil }
+                self.sessions.waitOver(id: key)
+                Log.write("wait: \(self.sessions.label(of: key) ?? key) — over, the session continues")
+                self.deliver(key, reply.resume)
+            }
+            if let waitTimer { waitTimer(TimeInterval(reply.waitSeconds), fire) }
+            else { queue.asyncAfter(deadline: .now() + .seconds(reply.waitSeconds), execute: fire) }
+            return
+        }
+        if mine { asyncTurns[key] = nil }
+        if !reply.transcript.isEmpty { deliver(key, reply.transcript) }
+    }
+
+    // Fortsetzen during Sir's timer: the text the session continues with; an async wait's timer goes.
+    private func endWait(_ id: String) -> String? {
+        guard let text = sessions.endWait(id) else { return nil }
+        if asyncWaits.removeValue(forKey: id) != nil { asyncTurns[id] = nil }
+        return text
+    }
+
+    // POST /turn/cancel: Sir typed before the voice reply came. Queued → out of the queue; in its
+    // wait → the wait ends unanswered; being voiced (or with a guest) → its reply is dropped.
+    func cancelTurn(_ c: CancelPayload) -> (Int, String) {
+        let key = c.session_id, tid = c.turn_id
+        guard !key.isEmpty, asyncTurns[key] == tid else { return (404, #"{"ok":false,"error":"unknown turn"}"#) }
+        asyncTurns[key] = nil
+        if let item = replyQueue.first(where: { Self.sessionKey($0.turn) == key && $0.turn.turn_id == tid }) {
+            replyQueue.removeAll { $0.id == item.id }
+            item.respond(TurnReply(transcript: "", park: false))
+            syncQueued(key)
+        } else if asyncWaits.removeValue(forKey: key) != nil {
+            sessions.waitOver(id: key)
+        } else {
+            discarded.insert(tid)
+        }
+        Log.write("turn: \(sessions.label(of: key) ?? key) — Sir typed, its voice turn is cancelled")
+        return (200, #"{"ok":true}"#)
+    }
+
+    // POST /close {session_id}: the mod's session.end — its queue, wait and deliveries go.
+    private func endSession(_ key: String) -> (Int, String) {
+        let gone = replyQueue.filter { Self.sessionKey($0.turn) == key }
+        replyQueue.removeAll { Self.sessionKey($0.turn) == key }
+        let waited = asyncWaits.removeValue(forKey: key) != nil
+        if let tid = asyncTurns.removeValue(forKey: key), !waited, !gone.contains(where: { $0.turn.turn_id == tid }) {
+            discarded.insert(tid)   // being voiced: nobody is left to take its reply
+        }
+        for item in gone { item.respond(TurnReply(transcript: "", park: false)) }
+        sessions.waitOver(id: key)
+        sessions.clearPending(id: key)
+        parked[key] = nil
+        closedKeys.insert(key)
+        syncQueued(key)
+        notifyParked()
+        Log.write("close: \(sessions.label(of: key) ?? key) ended — its queue and deliveries are gone")
+        return (200, #"{"ok":true}"#)
     }
 
     // v7: the share hub takes a guest's question (share id, turn, answer).
@@ -573,7 +674,7 @@ final class ControlServer: @unchecked Sendable {
     // timer the session continues with what the wait would have given it.
     func resume(id: String, instruction: String) {
         queue.async {
-            let early = self.sessions.endWait(id)
+            let early = self.endWait(id)
             self.deliver(id, instruction == Self.resumeInstruction ? early ?? instruction : instruction)
         }
     }
@@ -613,7 +714,7 @@ final class ControlServer: @unchecked Sendable {
     private func startResume(_ id: String) -> Bool {
         guard sessions.canResume(id) else { return false }
         resumedAt = now()
-        if let text = sessions.endWait(id) {
+        if let text = endWait(id) {
             Log.write("resume: \(sessions.label(of: id) ?? id) — Sir ends the wait early")
             deliver(id, text)
             return true
@@ -651,6 +752,8 @@ final class ControlServer: @unchecked Sendable {
         case Self.permissionEvent, Self.wakeEvent, Self.watchdogEvent:
             sessions.dialogFinished(id: id)
         default:
+            var reply = reply
+            if turn.asyncTurnId != nil { reply.park = false }   // no hook polls /wake: parked by presence
             sessions.finished(id: id, reply: reply)
         }
         syncQueued(id)
@@ -750,6 +853,8 @@ final class ControlServer: @unchecked Sendable {
         provider(turn) { [weak self] reply in
             guard let self else { return }
             self.queue.async {
+                // Cancelled while voiced (/turn/cancel, /close): as if Sir had said nothing.
+                let reply = turn.turn_id.map(self.discarded.contains) == true ? TurnReply(transcript: "", park: false) : reply
                 self.complete(turn, reply)
                 respond(reply)
                 self.replyActive = false
@@ -775,13 +880,26 @@ final class ControlServer: @unchecked Sendable {
     func handle(_ req: HTTPRequest) -> (Int, String) {
         switch (req.method, req.path) {
         case ("GET", "/health"):
-            return (200, #"{"ok":true}"#)
+            return (200, #"{"ok":true,"async":1}"#)   // async: the mod may post turns without waiting
+        case ("GET", let p) where p == "/mod" || p.hasPrefix("/mod?"):
+            // stop-hook.sh asks first: an async mod carries this session's turns → it steps aside.
+            let id = URLComponents(string: p)?.queryItems?.first { $0.name == "session_id" }?.value ?? ""
+            return (200, sessions.modLive(id) ? #"{"live":true}"# : #"{"live":false}"#)
+        case ("POST", "/turn/cancel"):
+            guard let c = Contract.decodeCancel(req.body) else {
+                return (400, #"{"ok":false,"error":"bad cancel payload"}"#)
+            }
+            return cancelTurn(c)
         case ("GET", "/status"):
             return (200, LiveStatus.json())
         case ("POST", "/turn"):
             // Sync fallback (tests / no live connection): validate + notify only.
             guard let turn = Contract.decodeTurn(req.body) else {
                 return (400, #"{"ok":false,"error":"bad turn payload"}"#)
+            }
+            if let tid = turn.asyncTurnId {
+                receiveAsync(turn, id: tid)
+                return (200, #"{"queued":true}"#)
             }
             onTurn?(turn)
             return (200, #"{"ok":true}"#)
@@ -795,28 +913,31 @@ final class ControlServer: @unchecked Sendable {
             return (200, wakePoll(req.body))
         case ("POST", "/presence"):
             // The mod's heartbeat from every Claude Code session (~2 s). A pending resume
-            // instruction rides back exactly once; the mod submits it as a prompt.
+            // instruction rides back: to an older mod exactly once, to an async one (async:1) with
+            // its delivery_id until it acks it (docs/HOOKLESS.md); the mod submits it as a prompt.
             guard let p = Contract.decodePresence(req.body), !p.session_id.isEmpty else {
                 return (400, #"{"ok":false,"error":"bad presence payload"}"#)
             }
             let project = p.project?.isEmpty == false ? p.project! : ((p.cwd ?? "") as NSString).lastPathComponent
-            var instruction = sessions.presence(id: p.session_id, label: p.label ?? "", project: project,
-                                                state: p.state ?? "idle", usage: p.usage, tasks: p.tasks, host: p.host,
-                                                cwd: p.cwd ?? "")
-            if instruction != nil { parked[p.session_id]?.pending = nil }   // the mod took it first: not the hook too
+            let isAsync = p.async == 1
+            var delivery = sessions.presence(id: p.session_id, label: p.label ?? "", project: project,
+                                             state: p.state ?? "idle", usage: p.usage, tasks: p.tasks, host: p.host,
+                                             cwd: p.cwd ?? "", async: isAsync, ack: p.ack)
+            if delivery != nil { parked[p.session_id]?.pending = nil }   // the mod took it first: not the hook too
             // An instruction waits for this folder: an idle session takes it now (a working one
             // gets it as the reply to its turn, or once it is idle).
             claimName(p.session_id, cwd: p.cwd)
-            if instruction == nil, (p.state ?? "idle") == "idle", let text = takePending(p.cwd, id: p.session_id) {
-                sessions.handedOver(id: p.session_id)
+            if delivery == nil, sessions.entries[p.session_id]?.pending == nil, (p.state ?? "idle") == "idle",
+               let text = takePending(p.cwd, id: p.session_id) {
                 Log.write("dispatch: handing the waiting instruction to \(p.label ?? project) (presence)")
-                instruction = text
+                delivery = sessions.handOver(id: p.session_id, text)
             }
             notifyParked()
-            guard let instruction,
-                  let data = try? JSONEncoder().encode(["instruction": instruction]),
-                  let json = String(data: data, encoding: .utf8) else { return (200, "{}") }
-            return (200, json)
+            struct Wire: Encodable { var instruction: String?; var delivery_id: String?; var unknown_turn: Bool? }
+            var w = Wire(instruction: delivery?.text, delivery_id: isAsync ? delivery?.id : nil)
+            if let a = p.awaiting, !a.isEmpty, asyncTurns[p.session_id] != a { w.unknown_turn = true }   // e.g. Parley restarted
+            guard w.instruction != nil || w.unknown_turn != nil else { return (200, "{}") }
+            return (200, Self.encode(w))
         case ("GET", "/sessions"):
             return (200, sessions.json())
         case (_, let p) where p == "/snapshots" || p.hasPrefix("/snapshots/"):
@@ -894,6 +1015,9 @@ final class ControlServer: @unchecked Sendable {
             guard let c = Contract.decodeClose(req.body) else {
                 return (400, #"{"ok":false,"error":"bad close payload"}"#)
             }
+            if let sid = c.session_id, !sid.isEmpty, c.id == nil, c.ids == nil, c.project == nil {
+                return endSession(sid)
+            }
             return close(c)
         case ("POST", "/resume"):
             // The mod's resume button: answer at once, then run the short voice dialog for
@@ -933,6 +1057,7 @@ extension ControlServer {
             if let why = closer(id, s.cwd) { fail(id, 409, why); continue }
             sessions.closed(id: id)
             parked[id] = nil
+            if asyncWaits.removeValue(forKey: id) != nil { asyncTurns[id] = nil }
             closedKeys.insert(id)   // a hook still polling /wake gets `end`
             let gone = replyQueue.filter { Self.sessionKey($0.turn) == id }
             replyQueue.removeAll { Self.sessionKey($0.turn) == id }

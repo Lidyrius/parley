@@ -36,6 +36,10 @@ declare module 'claude-code' {
       seen: number
       /** This session's turn is running (reported to the app as presence). */
       isWorking: boolean
+      /** The async turn posted to the app whose reply is still to come (docs/HOOKLESS.md); null → none. */
+      awaiting: string | null
+      /** The app's delivery ids already submitted as prompts, newest last (each once). */
+      delivered: string[]
     }
   }
 }

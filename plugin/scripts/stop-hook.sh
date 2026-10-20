@@ -110,6 +110,14 @@ slides="$(printf '%s\n' "$parsed" | head -n $((3 + nr + ns)) | tail -n +$((4 + n
 speak="$(printf '%s' "$parsed" | tail -n +$((4 + nr + ns)))"
 
 [ -z "$speak" ] && finish
+
+# Ohne Stop-Hook (docs/HOOKLESS.md): the parley-ui mod carries this session's turns itself →
+# step aside. Any failure (older app, app down, no mod) → on as before.
+sid="$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null || true)"
+if [ -n "$sid" ] && curl -fsS --max-time 1 "http://${HOST}:${PORT}/mod?session_id=${sid}" 2>/dev/null \
+    | jq -e '.live == true' >/dev/null 2>&1; then
+  finish
+fi
 [ "$listen" = "false" ] || listen=true
 
 # The session's own folder. `.cwd` follows every `cd` the session makes — a session that

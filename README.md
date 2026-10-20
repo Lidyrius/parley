@@ -57,6 +57,12 @@ The hook long-polls the app and injects the reply through the host's stop decisi
 it's completely terminal-agnostic. In Codex, activate the skill explicitly with
 `$parley-voice`; Claude Code keeps `/parley:voice`.
 
+**Ohne Stop-Hook** (Claude Code with the `parley-ui` mod): the mod posts the turn itself and
+ends it at once — the session takes input again while Parley queues, speaks and listens, and
+your reply arrives as the next prompt. Typing yourself first cancels the voice turn. The
+Stop hook then steps aside; Codex, sessions without the mod, `claude -p` and older apps keep
+the blocking hook. Contract: [`docs/HOOKLESS.md`](docs/HOOKLESS.md).
+
 ## Features
 
 - 🗣️ **Spoken summaries** — the agent ends each turn with a short spoken line, in your

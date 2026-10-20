@@ -47,6 +47,7 @@ internal sealed class TrayApp : ApplicationContext
         _server = new Server(turn => _pipeline.Run(turn), () => StatsStore.StartSession());
         _server.Sessions.NamesFile = Path.Combine(Config.Dir, "session-names.json");
         serverRef = _server;
+        _server.AbandonTurn = _pipeline.Abandon;   // POST /turn/cancel (docs/HOOKLESS.md)
         // A session's label appeared → pre-render its "Update zu" + resume lines in the
         // background, so the first announcement / resume click is instant.
         _server.Sessions.OnLabel = label => Clips.Prerender(label, Config.Load());

@@ -14,9 +14,14 @@ struct TurnPayload: Codable, Equatable {
     var replies: [Reply]? // predicted answers (<reply on="…">), each with its spoken reaction
     var slides: [SlideSpec]?   // <slide …/> markers for a phone call (docs/CALL-SLIDES.md)
     var to: String? = nil      // v7: <speak to="Max"> — a guest of the shared session is asked
+    // docs/HOOKLESS.md: the mod posts the turn and returns at once ({"queued":true}); what
+    // comes of it reaches the session as a delivery on its /presence.
+    var async: Bool? = nil
+    var turn_id: String? = nil
 
     var spokenLabel: String { (label?.isEmpty == false ? label : nil) ?? project }
     var wantsListen: Bool { listen ?? true }
+    var asyncTurnId: String? { async == true && turn_id?.isEmpty == false ? turn_id : nil }
 }
 
 // A predicted answer to a listen turn: `on` describes it, `say` is spoken the moment the
@@ -66,6 +71,11 @@ struct PresencePayload: Codable, Equatable {
     var usage: PresenceUsage?
     var tasks: [BackgroundTask]?  // in-flight background tasks (subagents, shell jobs, monitors)
     var host: String?             // the desktop app's id for the session (local_…), for claude:// deep links
+    // docs/HOOKLESS.md: `async` 1 = this mod carries its turns itself; `awaiting` its open
+    // turn_id; `ack` the delivery_id it last submitted.
+    var async: Int?
+    var awaiting: String?
+    var ack: String?
 }
 
 // One background task as the mod reports it; echoed in GET /sessions rows.
@@ -120,10 +130,19 @@ struct DispatchPayload: Codable, Equatable {
 
 // POST /close — end running sessions: one id, several, or every running one of a project
 // (its spoken label or folder name).
+// {"session_id"} alone is the mod's session.end (docs/HOOKLESS.md): its queue and deliveries
+// go, the process is not touched.
 struct ClosePayload: Codable, Equatable {
     var id: String?
     var ids: [String]?
     var project: String?
+    var session_id: String?
+}
+
+// POST /turn/cancel — Sir typed before the voice reply came (docs/HOOKLESS.md).
+struct CancelPayload: Codable, Equatable {
+    var session_id: String
+    var turn_id: String
 }
 
 struct ReadyPayload: Codable, Equatable {
@@ -152,6 +171,9 @@ enum Contract {
     }
     static func decodeDispatch(_ body: Data) -> DispatchPayload? {
         try? JSONDecoder().decode(DispatchPayload.self, from: body)
+    }
+    static func decodeCancel(_ body: Data) -> CancelPayload? {
+        try? JSONDecoder().decode(CancelPayload.self, from: body)
     }
     static func decodeClose(_ body: Data) -> ClosePayload? {
         try? JSONDecoder().decode(ClosePayload.self, from: body)

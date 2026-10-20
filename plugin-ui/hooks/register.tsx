@@ -17,13 +17,16 @@ const tasks = atom({ plugin: 'parley-ui', key: 'tasks' } as const, [] as Task[])
 const sessSkip = atom({ plugin: 'parley-ui', key: 'sessSkip' } as const, 0)
 const histSkip = atom({ plugin: 'parley-ui', key: 'histSkip' } as const, 0)
 const isWorking = atom({ plugin: 'parley-ui', key: 'isWorking' } as const, false)
+const awaiting = atom({ plugin: 'parley-ui', key: 'awaiting' } as const, null as string | null)
+const delivered = atom({ plugin: 'parley-ui', key: 'delivered' } as const, [] as string[])
 
 const PANE = 'parley'
 const BARS = '▁▂▃▄▅▆▇█'
 const APP = 'http://127.0.0.1:8787' // ponytail: default port; read PARLEY_PORT when someone moves it
 const LIVE: readonly Phase[] = ['speaking', 'listening', 'transcribing']
 
-// Same rule as plugin/scripts/stop-hook.sh: the LAST opening tag wins, its close optional.
+// Same rule as plugin/scripts/stop-hook.sh: the LAST opening tag wins, its close optional (for
+// <speak-end> too, as the hook takes it: a turn the mod leaves to the hook must be one it voices).
 export function parseSpeak(msg: string): { text: string; listen: boolean; to?: string } | null {
   const end = msg.lastIndexOf('<speak-end>')
   // v7: <speak to="Max"> asks a guest of a shared session, like stop-hook.sh.
@@ -35,10 +38,38 @@ export function parseSpeak(msg: string): { text: string; listen: boolean; to?: s
   const open = listen ? last![0] : '<speak-end>'
   const rest = msg.slice((listen ? speak : end) + open.length)
   const close = rest.indexOf(listen ? '</speak>' : '</speak-end>')
-  if (!listen && close < 0) return null
   const text = (close < 0 ? rest : rest.slice(0, close)).trim()
   const to = listen ? last?.[1] : undefined
   return text ? { text, listen, ...(to ? { to } : {}) } : null
+}
+
+type Turn = { speak: string; replies: { on: string; say: string; listen: boolean }[]; slides: Record<string, string | number>[] }
+
+// The rest of what stop-hook.sh sends with /turn, by its rules: the <reply on="…" [listen]>
+// lines directly above a final <speak> (at most 4), and the <slide …/> markers (at most 6) taken
+// out of the spoken text, each with the index of the word it precedes.
+export function turnParts(msg: string, spoken: { text: string; listen: boolean }): Turn {
+  const flat = (v: string) => v.replace(/[\t\n]+/g, ' ').trim()
+  const replies: Turn['replies'] = []
+  let pre = spoken.listen ? msg.slice(0, [...msg.matchAll(/<speak(?:\s+to="[^"<>]{0,40}")?>/g)].at(-1)?.index ?? 0) : ''
+  for (let m; replies.length < 4 && (m = /^([\s\S]*)<reply\b([^>]*)>((?:(?!<\/?reply\b)[\s\S])*)<\/reply>\s*$/.exec(pre));) {
+    const [, head = '', attrs = '', inner = ''] = m
+    pre = head
+    const on = /on="([^"]*)"/.exec(attrs)?.[1]
+    const say = flat(inner)
+    if (on !== undefined && say) replies.unshift({ on: flat(on), say, listen: /\blisten\b/.test(attrs.replace(/on="[^"]*"/, '')) })
+  }
+  // The raw text up to its close, as the hook cuts it (parseSpeak trims it already: same words).
+  const slides: Turn['slides'] = []
+  let clean = '', rest = spoken.text
+  for (let m; slides.length < 6 && (m = /<slide\b([^>]*?)\/?>/.exec(rest));) {
+    clean += rest.slice(0, m.index)
+    rest = rest.slice(m.index + m[0].length)
+    const kv = [...(m[1] ?? '').matchAll(/(\w+)="([^"]*)"/g)].map(([, k = '', v = '']) => [k, v.replace(/[\t\n]+/g, ' ')] as const)
+    if (kv.length) slides.push({ word: clean.split(/\s+/).filter(Boolean).length, ...Object.fromEntries(kv) })
+  }
+  const speak = (clean + rest).replace(/<slide\b[^>]*>/g, '').replace(/[ \t]{2,}/g, ' ').trim()
+  return { speak, replies, slides }
 }
 
 // The app overlay's motion (RecordingHUD.swift): not a scrolling sample history but one
@@ -94,10 +125,12 @@ const isWaiting = (p: Phase) => p === 'queued' || LIVE.includes(p)
 type Status = { phase: string; session: string; levels: number[] }
 const COLOR = { speaking: '#D97757', listening: '#E5484D' } // Claude orange; red as the overlay
 
-async function poll($: EngineInterface, session: string): Promise<boolean> {
+// `mine`: a say over each status first (false = leave the phase alone).
+async function poll($: EngineInterface, session: string, mine?: (st: Status) => boolean): Promise<boolean> {
   const res = await $.http.fetch(`${APP}/status`).catch(() => null)
   if (!res?.ok) return false
   const st = JSON.parse(res.text) as Status
+  if (mine && !mine(st)) return true
   if (st.session !== session) {
     // Another project holds the voice right now; ours waits in the app's queue.
     if (st.phase !== 'idle') await update($, phase, p => (isWaiting(p) ? 'queued' : p))
@@ -240,10 +273,60 @@ async function readLabel($: EngineInterface, cwd: string): Promise<string> {
 }
 const basename = (cwd: string) => cwd.split(/[\\/]/).pop() ?? '' // Windows cwd uses backslashes
 
+// ── Ohne Stop-Hook (docs/HOOKLESS.md): the mod posts the turn and returns; its reply comes
+// back on /presence as a delivery. Module state starts over on a hot reload; what must outlive
+// one (the open turn, the ids already submitted) is in $.state.
+
+let interactive = false // a prompt box: under -p / the SDK the process ends after the Stop
+let hostAsync = { ok: false, at: -Infinity } // GET /health says async:1; asked again each minute
+let open = false // the app's last answer carried a delivery: presence every 0.5 s until it's gone
+const taken = new Set<string>() // delivery ids submitted (beside `delivered`, at once: no race)
+
+async function hostCarries($: EngineInterface): Promise<boolean> {
+  if (!interactive) return false
+  const t = await $.clock.now()
+  if (t - hostAsync.at < 60000) return hostAsync.ok
+  const res = await $.http.fetch(`${APP}/health`).catch(() => null)
+  let ok = false
+  try { ok = !!res?.ok && (JSON.parse(res.text) as { async?: number }).async === 1 } catch {}
+  hostAsync = { ok, at: t }
+  return ok
+}
+
+// The app's /status while the posted turn waits for its voice: queued → speaking → listening.
+// Once its voice is done the delivery (or nothing) follows on presence; a wait shows parked.
+let watcher: { cancel(): void } | null = null
+let over: number | null = null // when its voice ended (0 = just now, stamped by the next presence)
+function watch($: EngineInterface, session: string) {
+  watcher?.cancel()
+  let voiced = false, busy = false
+  over = null
+  watcher = $.clock.every(100, () => {
+    if (busy) return
+    busy = true
+    void poll($, session, st => {
+      if (st.session === session && (LIVE as readonly string[]).includes(st.phase)) voiced = true
+      else if (voiced) over ??= 0
+      return over === null
+    }).catch(() => {}).finally(() => { busy = false })
+  })
+}
+async function settle($: EngineInterface, p: Phase) {
+  watcher?.cancel()
+  watcher = null
+  over = null
+  await update($, awaiting, () => null)
+  await update($, level, () => null)
+  await update($, phase, () => p)
+}
+
 async function presence($: EngineInterface, sid: string, cwd: string, label: string) {
   const u = await $.session.usage().catch(() => null)
+  const turn = await read($, awaiting)
+  const ack = (await read($, delivered)).at(-1)
   const body = JSON.stringify({
     session_id: sid, label, project: basename(cwd), cwd,
+    ...((await hostCarries($)) ? { async: 1 } : {}), ...(turn ? { awaiting: turn } : {}), ...(ack ? { ack } : {}),
     host: (await $.env.get('CLAUDE_CODE_HOST_SESSION_ID').catch(() => undefined)) ?? null, // the desktop app's id: tiles open it
     state: (await read($, isWorking)) ? 'working' : (await read($, tasks)).length ? 'background' : 'idle',
     tasks: await read($, tasks),
@@ -254,12 +337,32 @@ async function presence($: EngineInterface, sid: string, cwd: string, label: str
     },
   })
   const res = await $.http.fetch(`${APP}/presence`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => null)
-  // "Fortsetzen" on an idle session: the app ran the voice dialog and hands us the reply.
-  const said = res?.ok ? (JSON.parse(res.text || '{}') as { instruction?: string }).instruction : undefined
-  if (said) {
+  // A delivery: the posted turn's reply, or "Fortsetzen" on an idle session (the app ran the
+  // voice dialog) — submitted once per delivery_id, acked with the next presence.
+  const got = res?.ok ? (JSON.parse(res.text || '{}') as { instruction?: string; delivery_id?: string; unknown_turn?: boolean }) : {}
+  const id = got.delivery_id
+  open = !!id
+  if (got.instruction && !(id && (taken.has(id) || (await read($, delivered)).includes(id)))) {
+    if (id) {
+      taken.add(id)
+      await update($, delivered, list => [...list, id].slice(-20))
+    }
+    if (await read($, awaiting)) await settle($, 'heard')
     await update($, isWorking, () => true)
-    await log($, 'you', said)
-    await $.prompt.submit({ text: said, asUser: true })
+    await log($, 'you', got.instruction)
+    await $.prompt.submit({ text: got.instruction, asUser: true })
+  }
+  // The app has no such turn (answered with nothing, or restarted): no more waiting.
+  if (got.unknown_turn && (await read($, awaiting))) await settle($, 'parked')
+  // Its voice is done and no reply came within a second: parked (or Sir's wait runs).
+  if (over !== null && (await read($, awaiting))) {
+    const t = await $.clock.now()
+    if (!over) over = t
+    else if (t - over >= 1000) {
+      watcher?.cancel()
+      watcher = null
+      await update($, phase, p => (isWaiting(p) ? 'parked' : p))
+    }
   }
 }
 
@@ -277,33 +380,59 @@ async function log($: EngineInterface, who: Line["who"], text: string) {
   await update($, history, list => [...list, { who, text, at }].slice(-100))
 }
 
-export const register: Register = on => {
-  let label = ''
-  let selfId = '' // this session's id: its own tile says "hier" and offers no ↗ to itself
+let label = ''
+let selfId = '' // this session's id: its own tile says "hier" and offers no ↗ to itself
+let home = '' // the folder the session started in
 
+// Only once this session talks through Parley (phase leaves 'off'): report to the app
+// every 2 s (alive, working, usage figures; the reply may hand back a resume
+// instruction) — every 0.5 s while a posted turn or a delivery is open —, and fetch every
+// session's state each second for the overview. A hot reload cancels the timer: the next
+// Stop / prompt / turn arms it again.
+let loop: { cancel(): void } | null = null
+let beat = -Infinity, sentAt = -Infinity, fetchedAt = -Infinity
+async function arm($: EngineInterface) {
+  if (!home) return
+  const t = await $.clock.now()
+  if (loop && t - beat < 3000) return
+  loop?.cancel()
+  beat = t
+  loop = $.clock.every(500, () => {
+    void $.clock.now().then(async t => {
+      beat = t
+      if ((await read($, phase)) === 'off') return
+      const sid = await $.session.id() // not the one at start: a /clear goes on under another
+      selfId = sid
+      if (t - sentAt >= 2000 || open || (await read($, awaiting))) {
+        sentAt = t
+        label ||= (await readLabel($, home)) || basename(home)
+        await presence($, sid, home, label)
+      }
+      if (t - fetchedAt < 1000) return
+      fetchedAt = t
+      const res = await $.http.fetch(`${APP}/sessions`).catch(() => null)
+      const body = res?.ok ? (JSON.parse(res.text) as { sessions: Sess[]; today?: Today }) : null
+      await update($, overview, () => body?.sessions ?? null)
+      await update($, today, () => body?.today ?? null)
+      await update($, seen, () => t)
+    }).catch(() => {})
+  })
+  const turn = await read($, awaiting)
+  if (turn && !watcher) watch($, turn.slice(0, turn.lastIndexOf(':')))
+}
+
+export const register: Register = on => {
+  // A (re)load starts the module's own state over, as the engine does for a hot reload.
+  label = ''; selfId = ''; home = ''; interactive = false; open = false
+  loop = null; watcher = null; over = null; beat = sentAt = fetchedAt = -Infinity
+  hostAsync = { ok: false, at: -Infinity }
+  taken.clear()
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'parley', description: 'Parley: Sessions und Gesprächsverlauf als Pane öffnen' })
-    const sid = await $.session.id()
-    selfId = sid
-    // Only once this session talks through Parley (phase leaves 'off'): report to the app
-    // every 2 s (alive, working, usage figures; the reply may hand back a resume
-    // instruction), and fetch every session's state each second for the overview.
-    let n = 0
-    $.clock.every(1000, () => {
-      void read($, phase).then(async p => {
-        if (p === 'off') return
-        if (n++ % 2 === 0) {
-          label ||= (await readLabel($, e.cwd)) || basename(e.cwd)
-          await presence($, sid, e.cwd, label)
-        }
-        const res = await $.http.fetch(`${APP}/sessions`).catch(() => null)
-        const body = res?.ok ? (JSON.parse(res.text) as { sessions: Sess[]; today?: Today }) : null
-        await update($, overview, () => body?.sessions ?? null)
-        await update($, today, () => body?.today ?? null)
-        const t = await $.clock.now()
-        await update($, seen, () => t)
-      }).catch(() => {})
-    })
+    selfId = await $.session.id()
+    home = e.cwd
+    interactive = e.isInteractive
+    await arm($)
     $.clock.every(140, () => {
       void read($, phase).then(p => {
         if (p === 'speaking' || p === 'listening') void update($, tick, t => t + 1) // terminal wave only
@@ -323,15 +452,44 @@ export const register: Register = on => {
     // Every Stop ends the turn — one without <speak> too, or presence says "working" forever.
     await update($, isWorking, () => false)
     await update($, tasks, () => (e.background_tasks ?? []).map(t => ({ type: t.type, description: t.description })))
+    await arm($)
     const spoken = parseSpeak(e.last_assistant_message ?? '')
     if (!spoken) return next(e)
 
     label ||= (await readLabel($, e.cwd)) || basename(e.cwd)
     await update($, isHidden, () => false) // hidden until the next spoken line
     await update($, line, () => spoken.text)
-    await update($, phase, () => 'speaking')
     await update($, level, () => null)
     await log($, 'parley', spoken.text)
+
+    // Ohne Stop-Hook: post the turn and end it now — the session takes input again, the reply
+    // comes as a prompt (presence). An older app, -p, or a refused post: the hook as before.
+    watcher?.cancel()
+    watcher = null
+    await update($, awaiting, () => null) // an older posted turn is moot: the app drops it too
+    const parts = turnParts(e.last_assistant_message ?? '', spoken)
+    if (parts.speak && (await hostCarries($))) {
+      const sid = e.session_id || (await $.session.id())
+      const cwd = home || e.cwd
+      const turn = `${sid}:${await $.clock.now()}`
+      const body = JSON.stringify({
+        event: 'turn', session_id: sid, cwd, project: basename(cwd),
+        tmux_pane: (await $.env.get('TMUX_PANE').catch(() => undefined)) ?? '',
+        speak: parts.speak, label: await readLabel($, cwd), listen: spoken.listen,
+        ...(parts.replies.length ? { replies: parts.replies } : {}), ...(parts.slides.length ? { slides: parts.slides } : {}),
+        ...(spoken.to ? { to: spoken.to } : {}), async: true, turn_id: turn,
+      })
+      const res = await $.http.fetch(`${APP}/turn`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => null)
+      let queued = false
+      try { queued = !!res?.ok && (JSON.parse(res.text) as { queued?: boolean }).queued === true } catch {}
+      if (queued) {
+        await update($, awaiting, () => turn)
+        await update($, phase, () => 'queued')
+        watch($, sid)
+        return {}
+      }
+    }
+    await update($, phase, () => 'speaking')
 
     // Live phase + levels from the app's GET /status while it voices this turn. An older
     // app without /status: fall back to guessing the switch to listening from word count.
@@ -370,12 +528,36 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     await update($, isWorking, () => true)
+    await arm($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
     await update($, isWorking, () => true)
-    await update($, phase, p => (p === 'heard' || p === 'parked' ? 'idle' : p))
+    // Sir typed (or wrote from his phone) before the voice reply came: that turn is moot.
+    const turn = await read($, awaiting)
+    const kind = e.origin?.kind
+    if (turn && (kind === 'composer' || kind === 'bridge')) {
+      await $.http.fetch(`${APP}/turn/cancel`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: turn.slice(0, turn.lastIndexOf(':')), turn_id: turn }),
+      }).catch(() => null)
+      await settle($, 'idle')
+    }
+    // Our own delivery keeps "eingespeist" up; anything else starts afresh.
+    await update($, phase, p => (p === 'parked' || (p === 'heard' && kind !== 'plugin') ? 'idle' : p))
+    await arm($)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // The session ends (exit, /clear, …): the app drops its queued turn and deliveries.
+  on('session.end', async ($, e, next) => {
+    if ((await read($, phase)) !== 'off') {
+      await update($, awaiting, () => null)
+      await $.http.fetch(`${APP}/close`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: e.sessionId }),
+      }).catch(() => null)
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 

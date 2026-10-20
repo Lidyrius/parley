@@ -32,7 +32,9 @@ final class SessionRegistry {
         var wakeAt: Date?              // last /wake poll
         var injectedAt: Date?          // a reply was fed back → the agent is working on it
         var expectWorkUntil: Date?     // …shown as working until the mod confirms (max 15 s)
-        var pending: String?           // resume instruction for the mod's next /presence
+        var pending: Delivery?         // resume instruction for the mod's next /presence
+        var modAsync = false           // its mod carries turns itself (presence async:1, docs/HOOKLESS.md)
+        var waitByHost = false         // an async turn's wait: the host's timer ends it, no /wake poller
         var startedAt: Date?           // from the mod's usage
         var contextPercent: Double?
         var costUsd: Double?           // cumulative, as last reported
@@ -42,6 +44,16 @@ final class SessionRegistry {
         var state = ""
         var since: Date
     }
+
+    // An instruction for the mod (docs/HOOKLESS.md). An async mod gets it again every
+    // `resendAfter` until it acks the id; an older mod (no async) once.
+    struct Delivery: Equatable {
+        let id: String
+        let text: String
+        var sentAt: Date?
+    }
+    static let resendAfter: TimeInterval = 10
+    static let modLive: TimeInterval = 5   // GET /mod: an async mod's presence this fresh
 
     private(set) var entries: [String: Entry] = [:]
     private(set) var activeId: String?   // the turn being voiced right now
@@ -70,17 +82,18 @@ final class SessionRegistry {
 
     // MARK: - signals
 
-    // The mod's heartbeat. Returns a pending resume instruction — exactly once — for the mod
-    // to submit as a prompt in its session.
+    // The mod's heartbeat. Returns a pending resume instruction for the mod to submit as a
+    // prompt in its session: to an older mod exactly once; to an async one until it acks it.
     @discardableResult
     func presence(id: String, label: String, project: String, state: String,
                   usage: PresenceUsage? = nil, tasks: [BackgroundTask]? = nil, host: String? = nil,
-                  cwd: String = "") -> String? {
+                  cwd: String = "", async: Bool = false, ack: String? = nil) -> Delivery? {
         if let c = entries[id]?.closedAt, now().timeIntervalSince(c) < Self.presenceTTL { return nil }
-        var delivered: String?
+        var delivered: Delivery?
         update(id, label: label, project: project, cwd: cwd) { e, t in
             e.presenceAt = t
             e.presenceState = state
+            e.modAsync = async
             e.tasks = tasks ?? []
             if let h = host, !h.isEmpty { e.host = h }
             if state == "working" { e.expectWorkUntil = nil }
@@ -89,7 +102,8 @@ final class SessionRegistry {
                 e.contextPercent = u.contextPercent ?? e.contextPercent
                 e.costUsd = u.costUsd ?? e.costUsd
             }
-            if let p = e.pending { delivered = p; e.pending = nil; Self.inject(&e, t) }
+            if let a = ack, e.pending?.id == a { e.pending = nil }
+            delivered = Self.handOut(&e, t)
         }
         if let cost = usage?.costUsd, !id.isEmpty {
             daily.addCost(session: id, cumulative: cost, startedAt: entries[id]?.startedAt)
@@ -105,6 +119,7 @@ final class SessionRegistry {
             e.queued = true
             e.afterWait = e.waitUntil != nil
             e.waitUntil = nil
+            e.waitByHost = false
             e.parked = false
             e.injectedAt = nil
             e.expectWorkUntil = nil
@@ -168,12 +183,6 @@ final class SessionRegistry {
         update(id) { e, _ in e.queued = queued }
     }
 
-    // An instruction waiting for the session's folder was handed to it just now (as the
-    // reply to its /presence) → it is working on it.
-    func handedOver(id: String) {
-        update(id) { e, t in Self.inject(&e, t) }
-    }
-
     // A resume instruction was handed to the parked hook (its next /wake poll injects it).
     func wakeQueued(id: String) {
         update(id) { e, t in e.parked = false; Self.inject(&e, t) }
@@ -183,7 +192,7 @@ final class SessionRegistry {
     // sessions are ignored.
     func setPending(id: String, _ instruction: String) {
         guard entries[id] != nil else { return }
-        update(id) { e, _ in e.pending = instruction }
+        update(id) { e, _ in e.pending = Delivery(id: UUID().uuidString, text: instruction) }
     }
 
     // The parked hook took the instruction first: the mod's copy goes.
@@ -200,6 +209,44 @@ final class SessionRegistry {
             e.parked = !resumed
             if resumed { Self.inject(&e, t) }
         }
+    }
+
+    // The pending delivery, if it is due: first time (the session goes to work on it), or an
+    // async mod's resend after `resendAfter` without its ack.
+    private static func handOut(_ e: inout Entry, _ t: Date) -> Delivery? {
+        guard var d = e.pending else { return nil }
+        guard e.modAsync else { e.pending = nil; inject(&e, t); return d }
+        if let s = d.sentAt, t.timeIntervalSince(s) < resendAfter { return nil }
+        if d.sentAt == nil { inject(&e, t) }
+        d.sentAt = t
+        e.pending = d
+        return d
+    }
+
+    // An instruction for the session's folder (POST /dispatch) taken at its presence: handed
+    // out through the same delivery path.
+    func handOver(id: String, _ instruction: String) -> Delivery? {
+        setPending(id: id, instruction)
+        var d: Delivery?
+        update(id) { e, t in d = Self.handOut(&e, t) }
+        return d
+    }
+
+    // The mod carries this session's turns and reported in the last `modLive` (GET /mod).
+    func modLive(_ id: String) -> Bool {
+        guard let e = entries[id], e.modAsync, let p = e.presenceAt else { return false }
+        return now().timeIntervalSince(p) < Self.modLive
+    }
+
+    // An async turn's wait ("Warte X Minuten"): the host ends it, nobody polls /wake.
+    func hostWait(id: String) {
+        update(id) { e, _ in e.waitByHost = true }
+    }
+
+    // That wait is over (its timer, Fortsetzen, /turn/cancel, /close).
+    func waitOver(id: String) {
+        guard entries[id]?.waitByHost == true else { return }
+        update(id) { e, _ in e.waitByHost = false; e.waitUntil = nil; e.waitResume = nil }
     }
 
     private static func inject(_ e: inout Entry, _ t: Date) {
@@ -224,7 +271,7 @@ final class SessionRegistry {
     // A timer ("Warte X Minuten") whose hook polls /wake: Fortsetzen ends it early.
     private func resumable(_ e: Entry) -> Bool {
         (["parked", "background"].contains(e.state) && (e.presenceAt != nil || hookParked(e)))
-            || (e.state == "waiting" && e.parked && e.waitResume != nil)
+            || (e.state == "waiting" && (e.parked || e.waitByHost) && e.waitResume != nil)
     }
 
     private func hookParked(_ e: Entry) -> Bool {
@@ -235,9 +282,10 @@ final class SessionRegistry {
     /// (nil when it isn't waiting).
     func endWait(_ id: String) -> String? {
         refresh()
-        // Only while its hook polls /wake (it picks the text up there); an older hook just sleeps.
-        guard let e = entries[id], e.state == "waiting", e.parked, let resume = e.waitResume else { return nil }
-        update(id) { e, _ in e.waitUntil = nil; e.waitResume = nil }
+        // Only while its hook polls /wake (it picks the text up there) or the host holds the wait
+        // (an async turn: the server cancels its timer); an older hook just sleeps.
+        guard let e = entries[id], e.state == "waiting", e.parked || e.waitByHost, let resume = e.waitResume else { return nil }
+        update(id) { e, _ in e.waitUntil = nil; e.waitResume = nil; e.waitByHost = false }
         return "[Parley] Sir hat die Wartezeit mit „Fortsetzen“ vorzeitig beendet.\n\n" + resume
     }
 
@@ -319,7 +367,7 @@ final class SessionRegistry {
             e.closedAt = t
             e.presenceAt = t.addingTimeInterval(-Self.presenceTTL)
             e.hookAt = t.addingTimeInterval(-Self.hookTTL)
-            e.queued = false; e.parked = false; e.waitUntil = nil; e.callbackAt = nil
+            e.queued = false; e.parked = false; e.waitUntil = nil; e.waitByHost = false; e.callbackAt = nil
             e.pending = nil; e.expectWorkUntil = nil; e.injectedAt = nil
         }
     }
