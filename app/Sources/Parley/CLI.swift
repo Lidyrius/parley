@@ -24,6 +24,11 @@ enum ParleyMain {
             return
         }
 
+        if let i = args.firstIndex(of: "--render-menu"), i + 1 < args.count {
+            MainActor.assumeIsolated { MenuSnapshot.render(to: args[i + 1], dark: args.contains("dark")) }
+            return
+        }
+
         ParleyApp.main()
     }
 }

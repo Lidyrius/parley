@@ -970,9 +970,18 @@ final class AppController: ObservableObject {
 
     // "Hey Parley" during a call: greeting → listen → route the utterance to a running session
     // or the Zentrale → confirm. Nothing said → nothing happens.
+    /// The menu's "Anrufen": the wake dialog on the Mac's speaker and mic.
+    func callFromMac() {
+        localWake = true
+        server.wakeFromPhone()
+    }
+    private var localWake = false
+
     private func runWake() async -> TurnReply {
         let none = TurnReply(transcript: "", park: false)
-        guard phone.callActive else { Log.write("wake: call gone — skipped"); return none }
+        let local = localWake && !phone.away
+        localWake = false
+        guard phone.callActive || local else { Log.write("wake: call gone — skipped"); return none }
         let config = AppConfig.load()
         await ackTask?.value
         ackTask = nil

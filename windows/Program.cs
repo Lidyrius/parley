@@ -25,6 +25,7 @@ internal static class Program
 internal sealed class TrayApp : ApplicationContext
 {
     private readonly NotifyIcon _tray;
+    private readonly TrayPanel _panel;
     private readonly TurnPipeline _pipeline;
     private readonly Server _server;
     private readonly PillOverlay _pill = new();
@@ -178,6 +179,22 @@ internal sealed class TrayApp : ApplicationContext
             Visible = true,
             ContextMenuStrip = menu,
         };
+        _panel = new TrayPanel(new TrayPanel.Hooks
+        {
+            Sessions = () => _server.Sessions.Json(),
+            Call = () => _server.StartLocalWake(),
+            Resume = id => _server.Resume(id, Server.ResumeInstruction),
+            Muted = () => mute.Checked,
+            ToggleMute = () => mute.Checked = !mute.Checked,
+            Relay = () => _relay is null ? null : _relay.Connected,
+            Pair = PairIPhone,
+            Stats = () => new StatsForm().Show(),
+            Settings = () => new SettingsForm().Show(),
+            Setup = () => new OnboardingForm().Show(),
+            Quit = () => quit.PerformClick(),
+        });
+        // Left click: the overview panel (as the macOS menu bar); right click: the full menu.
+        _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) _panel.Toggle(); };
         Notifier.Init(_tray);
         NotificationPill.EnsureCreated();   // create the pill on the UI thread
 

@@ -900,7 +900,19 @@ public sealed class Server
         return true;
     }
 
-    private async Task RunWake(IDisposable hold)
+    // The tray's "Anrufen": the same dialog on the PC's speaker and mic, when nothing else runs.
+    public bool StartLocalWake()
+    {
+        if (PhoneCall.Away || PhoneCall.Active || QueuedTurns > 0 || _turnGate.Busy)
+        {
+            Log.Write("wake ignored (Unterwegs, in a call, or Parley is busy)");
+            return false;
+        }
+        _ = Task.Run(() => RunWake(null));
+        return true;
+    }
+
+    private async Task RunWake(IDisposable? hold)
     {
         using (hold)
         {
