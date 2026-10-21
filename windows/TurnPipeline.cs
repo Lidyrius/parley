@@ -111,7 +111,7 @@ public sealed class TurnPipeline
         }
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
 
-        var greeting = await Clips.GreetClip(config);
+        var greeting = config.Brief ? null : await Clips.GreetClip(config);
         if (greeting is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(greeting, config.SpeakingRate));
         var (_, text) = await ListenOnce(config);
         if (text.Length == 0)
@@ -126,7 +126,7 @@ public sealed class TurnPipeline
             Log.Write($"wake: routing failed ({e.Message})");
             line = "Das konnte ich leider nicht weitergeben, Sir.";
         }
-        if (line.Length > 0) await SpeakLine(line, config);
+        if (line.Length > 0 && !config.Brief) await SpeakLine(line, config);
         Log.Write($"wake: done chars={text.Length}");
         return (text, false, 0, "");
     }

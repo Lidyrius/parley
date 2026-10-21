@@ -183,6 +183,9 @@ public static class RelayFrame
                 case "silent":
                     return root.TryGetProperty("on", out var silent) && (silent.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         ? new PhoneSilent(silent.ValueKind == JsonValueKind.True) : null;
+                case "brief":
+                    return root.TryGetProperty("on", out var bf) && (bf.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                        ? new PhoneBrief(bf.ValueKind == JsonValueKind.True) : null;
                 case "round":
                     return root.TryGetProperty("seconds", out var rs) && rs.TryGetInt32(out var secs) ? new PhoneRound(secs) : null;
                 case "history":
@@ -260,6 +263,7 @@ public sealed record PhonePush(string Token, string Env) : PhoneMessage;   // Vo
 public sealed record PhoneAway(bool On) : PhoneMessage;              // Unterwegs-Modus
 // v3: Stumm, the notification push token, a session's history / image, a typed message.
 public sealed record PhoneSilent(bool On) : PhoneMessage;
+public sealed record PhoneBrief(bool On) : PhoneMessage;     // Ohne Floskeln (the phone's setting)
 public sealed record PhoneRound(int Seconds) : PhoneMessage;   // Fragerunde: how long an update waits (0 = never)
 public sealed record PhoneAlert(string Token, string Env) : PhoneMessage;
 public sealed record PhoneHistory(string Id, string? Before) : PhoneMessage;   // newest page, or the one before an item

@@ -55,6 +55,9 @@ struct SettingsView: View {
                     Toggle(isOn: $bargeIn) {
                         RowLabel("Unterbrechen", "Reden oder „Stopp“ – Parley hört zu", symbol: "hand.raised")
                     }
+                    Toggle(isOn: $model.brief) {
+                        RowLabel("Ohne Floskeln", "Keine Ansagen, keine Bestätigung", symbol: "text.badge.minus")
+                    }
                     // The value stays on the right (a Form picker would drop it under a two-line label).
                     HStack {
                         RowLabel("Fragerunde", "Updates sammeln, solange andere arbeiten", symbol: "rectangle.stack.badge.person.crop")

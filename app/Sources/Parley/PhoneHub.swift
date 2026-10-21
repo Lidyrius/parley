@@ -188,6 +188,11 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             store.set(on ? "1" : "0", .phoneSilent)
             log("phone: Stumm \(on ? "an" : "aus")")
             onChange?()
+        case .brief(let on):
+            guard (store.get(.brief) == "1") != on else { return }
+            store.set(on ? "1" : "", .brief)
+            log("phone: Ohne Floskeln \(on ? "an" : "aus")")
+            onChange?()
         case .round(let seconds):
             let s = min(Self.roundMax, max(0, seconds))
             guard roundSeconds != s else { return }

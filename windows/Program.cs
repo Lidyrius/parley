@@ -31,6 +31,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _relayStatus = new() { Enabled = false, Visible = false };
     private readonly ToolStripMenuItem _callStatus = new("iPhone: Anruf aktiv") { Enabled = false, Visible = false };
     private readonly ToolStripMenuItem _awayStatus = new("Unterwegs-Modus an") { Enabled = false, Visible = false };
+    private ToolStripMenuItem? _briefItem;   // tray "Ohne Floskeln" (the phone can set it too)
     private readonly ToolStripMenuItem _snapshots = new("Snapshots");
     private RelayClient? _relay;
     private readonly ShareHub _shares;   // v7: sessions shared with a guest (Shares.cs)
@@ -128,7 +129,7 @@ internal sealed class TrayApp : ApplicationContext
         var barge = new ToolStripMenuItem("Parley unterbrechen (einfach reinreden)") { CheckOnClick = true, Checked = Config.Load().BargeIn };
         barge.CheckedChanged += (_, _) => Config.Merge(new Dictionary<string, string> { ["bargeIn"] = barge.Checked ? "1" : "0" });
         menu.Items.Add(barge);
-        var brief = new ToolStripMenuItem("Ohne Floskeln (keine Ansagen, keine Bestätigung)") { CheckOnClick = true, Checked = Config.Load().Brief };
+        var brief = _briefItem = new ToolStripMenuItem("Ohne Floskeln (keine Ansagen, keine Bestätigung)") { CheckOnClick = true, Checked = Config.Load().Brief };
         brief.CheckedChanged += (_, _) => Config.Merge(new Dictionary<string, string> { ["brief"] = brief.Checked ? "1" : "" });
         menu.Items.Add(brief);
         Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) =>
@@ -466,6 +467,14 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneAway a: PhoneCall.SetAway(a.On); break;
             case PhoneLater l: PhoneCall.SetLater(l.After); break;
             case PhoneSilent s: PhoneCall.SetSilent(s.On); break;
+            case PhoneBrief b:
+                if (Config.Load().Brief != b.On)
+                {
+                    Config.Merge(new Dictionary<string, string> { ["brief"] = b.On ? "1" : "" });
+                    Log.Write($"phone: Ohne Floskeln {(b.On ? "an" : "aus")}");
+                    _pill.BeginInvoke(() => { if (_briefItem is not null) _briefItem.Checked = b.On; });
+                }
+                break;
             case PhoneRound r:
                 var secs = Math.Clamp(r.Seconds, 0, 600);
                 if (Config.Load().RoundSeconds != secs)

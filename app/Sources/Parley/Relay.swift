@@ -186,6 +186,9 @@ enum RelayFrame {
         case "silent":
             guard let on = f["on"] as? Bool else { return nil }
             return .silent(on)
+        case "brief":
+            guard let on = f["on"] as? Bool else { return nil }
+            return .brief(on)
         case "round":
             guard let s = (f["seconds"] as? NSNumber)?.intValue else { return nil }
             return .round(seconds: s)
@@ -251,6 +254,7 @@ enum PhoneEvent: Equatable, Sendable {
     // v3 (docs/IPHONE.md): Stumm, notification push token, a session's history / image, typing.
     case silent(Bool)                         // Unterwegs + Stumm: a notification instead of a call
     case round(seconds: Int)                  // Fragerunde: how long an update waits for others (0 = never)
+    case brief(Bool)                          // Ohne Floskeln (the phone's setting)
     case alert(token: String, env: String)    // notification push token (hex)
     case history(id: String, before: String?) // send that session's newest history, or the page before an item
     case image(id: String, key: String)       // send one image of it

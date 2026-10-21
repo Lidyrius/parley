@@ -341,6 +341,7 @@ final class AppController: ObservableObject {
         if !phoneCall && phone.callActive { greetCaller() }
         phoneCall = phone.callActive
         phoneAway = phone.away
+        if brief != (Keychain.get(.brief) == "1") { brief.toggle() }   // set on the phone
     }
 
     // Sir called in: Parley greets him at once and listens ("Zu Diensten, Sir. Was darf ich für Sie
@@ -961,8 +962,12 @@ final class AppController: ObservableObject {
         await ackTask?.value
         ackTask = nil
         Log.write("wake: greeting")
-        let (clip, line) = await ProjectClips.shared.greetClip(config: config)
-        await speakAndBeep(line, config: config, prefetched: clip, beep: true)
+        if brief {
+            await speakAndBeep("", config: config, prefetched: Data(), beep: true)   // just the beep
+        } else {
+            let (clip, line) = await ProjectClips.shared.greetClip(config: config)
+            await speakAndBeep(line, config: config, prefetched: clip, beep: true)
+        }
         LiveStatus.set(phase: "listening")
         let wav = await record()
         LiveStatus.set(phase: "transcribing")
@@ -984,7 +989,7 @@ final class AppController: ObservableObject {
             confirmation = Zentrale.takeOver.randomElement()!
         }
         Log.write("wake: \"\(text.prefix(80))\" → \(target.label)")
-        await speakLine(confirmation, config: config)
+        if !brief { await speakLine(confirmation, config: config) }
         return none
     }
 

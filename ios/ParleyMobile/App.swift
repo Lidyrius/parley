@@ -69,6 +69,15 @@ final class AppModel {
     /// Fragerunde (Einstellungen): after a call, how long a new update waits while other sessions
     /// still work, so they come as one call (0 = never; nothing else at work → it rings at once).
     /// Persisted; sent on change and after every (re)connect.
+    /// Ohne Floskeln: no "Ich habe zwei Updates", no "Update zu …", no ack after Sir's answer —
+    /// the call ends right after. Sent on change only: the Mac's menu can set it too.
+    var brief = UserDefaults.standard.bool(forKey: "brief") {
+        didSet {
+            guard brief != oldValue else { return }
+            UserDefaults.standard.set(brief, forKey: "brief")
+            relay.send(Outgoing.brief(brief))
+        }
+    }
     static let roundKey = "roundSeconds"
     static let roundChoices = [0, 30, 60, 90, 120, 180, 300]
     var roundSeconds = UserDefaults.standard.object(forKey: AppModel.roundKey) as? Int ?? 90 {

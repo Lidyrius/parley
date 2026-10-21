@@ -67,6 +67,7 @@ Authorization: Bearer <secret>
 | `peer`     | relay → phones   | `{ "t": "peer", "host": true|false }` on connect and whenever the host comes or goes. |
 | `resume`   | phone → host     | `{ "t": "resume", "id": "<session id>" }` — same as `POST /resume` on the host. |
 | `round`    | phone → host     | `{ "t": "round", "seconds": 90 }` — Einstellungen → Fragerunde: after a call, how long a new update waits while other sessions still work (0 = never, ≤ 600). Sent on change and on connect; the host keeps it. |
+| `brief`    | phone → host     | `{ "t": "brief", "on": true }` — Einstellungen → Ohne Floskeln: no "N Updates", "Update zu …", call-back thanks, wake greeting or ack lines; the call ends right after Sir's answer. Sent on change only (the host's menu sets it too). |
 | `hello`    | phone → host     | `{ "t": "hello", "device": "<name>" }` after connecting (informational). |
 
 Unknown types are ignored by every side (forward compatible). The relay forwards host messages
