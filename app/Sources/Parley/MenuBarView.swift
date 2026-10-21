@@ -101,6 +101,7 @@ struct MenuBarView: View {
                 }
                 Toggle("Unterwegs, wenn der Mac gesperrt ist", isOn: $controller.autoAwayOnLock)
                 Toggle("Parley unterbrechen (einfach reinreden)", isOn: $controller.bargeIn)
+                Toggle("Ohne Floskeln (keine Ansagen, keine Bestätigung)", isOn: $controller.brief)
                 Button("Push-Schlüssel wählen…") { controller.choosePushKey() }
                 if let key = controller.pushKeyId {
                     Text("Push-Schlüssel: \(key)").font(.caption2).foregroundStyle(.secondary)

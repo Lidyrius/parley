@@ -128,6 +128,9 @@ internal sealed class TrayApp : ApplicationContext
         var barge = new ToolStripMenuItem("Parley unterbrechen (einfach reinreden)") { CheckOnClick = true, Checked = Config.Load().BargeIn };
         barge.CheckedChanged += (_, _) => Config.Merge(new Dictionary<string, string> { ["bargeIn"] = barge.Checked ? "1" : "0" });
         menu.Items.Add(barge);
+        var brief = new ToolStripMenuItem("Ohne Floskeln (keine Ansagen, keine Bestätigung)") { CheckOnClick = true, Checked = Config.Load().Brief };
+        brief.CheckedChanged += (_, _) => Config.Merge(new Dictionary<string, string> { ["brief"] = brief.Checked ? "1" : "" });
+        menu.Items.Add(brief);
         Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) =>
         {
             if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionLock) ScreenLocked(true);

@@ -84,7 +84,7 @@ public sealed class TurnPipeline
             return ("", false, 0, "");
         }
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
-        if (calledBack) await ThankForCallingBack(config);
+        if (calledBack && !config.Brief) await ThankForCallingBack(config);
 
         // Cached line, or synthesized live + cached; null → no TTS, just the beep.
         var line = await Clips.ResumeClip(turn.SpokenLabel, config);
@@ -249,7 +249,7 @@ public sealed class TurnPipeline
         var ringing = PhoneCall.Away && !PhoneCall.Silent && !PhoneCall.Active;
         if (ringing) await GatherRound(Server.SessionKey(turn));
         var (_, calledBack) = await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
-        if (ringing && PhoneCall.Active) await AnnounceRound(config);
+        if (ringing && PhoneCall.Active && !config.Brief) await AnnounceRound(config);
         // Unterwegs and not on the phone: the PC stays silent — the line waits as a notification.
         if (PhoneCall.Away && !PhoneCall.Active)
         {
@@ -258,14 +258,14 @@ public sealed class TurnPipeline
             AskInLiveActivity(turn);
             return ("", turn.WantsListen, 0, "");
         }
-        if (calledBack) await ThankForCallingBack(config);
+        if (calledBack && !config.Brief) await ThankForCallingBack(config);
 
         // Wait out the previous turn's background ack so audio never overlaps.
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
 
         // Another session alive (any state but stopped) → cached "Update zu <Name>"
         // announcement (instant audio → pause right away).
-        byte[]? announcement = _othersAlive?.Invoke(Server.SessionKey(turn)) == true
+        byte[]? announcement = !config.Brief && _othersAlive?.Invoke(Server.SessionKey(turn)) == true
             ? Clips.Announcement(turn.SpokenLabel, config)
             : null;
 
@@ -385,7 +385,7 @@ public sealed class TurnPipeline
                 text += $"\n\n[Parley hat nachgefragt: „{r.Say}“]" + (more.Length == 0 ? "" : "\n" + more);
                 intent = more.Length == 0 ? Groq.Intent.Other : await Groq.Classify(more, config);
             }
-            else
+            else if (!config.Brief)
             {
                 line = (r.Say, clip);
                 text += $"\n\n[Parley hat darauf bereits geantwortet: „{r.Say}“ – nicht wiederholen.]";
@@ -545,6 +545,7 @@ public sealed class TurnPipeline
     // hi-fi restored → ack → resume (never video over the acknowledgment).
     private void StartAck(Groq.Intent intent, bool hasText, Config config, (string say, byte[]? clip)? line = null)
     {
+        if (config.Brief) { ScheduleResume(); return; }
         // Taken now, before the turn's own hold ends: the phone never sees `idle` (and listens
         // for the wake word) in the gap before the ack plays.
         var hold = PhoneCall.Hold();

@@ -38,6 +38,11 @@ final class AppController: ObservableObject {
         }
     }
     private var macLocked = false
+    // Ohne Floskeln (menu): only the session's own line and Sir's answer — no "Ich habe zwei
+    // Updates", no "Update zu X", no thanks for calling back, no ack after the answer.
+    @Published var brief = Keychain.get(.brief) == "1" {
+        didSet { Keychain.set(brief ? "1" : "", for: .brief) }
+    }
     // Barge-in at the Mac (menu: "Parley unterbrechen"): talking over Parley stops it, it listens.
     @Published var bargeIn = Keychain.get(.bargeOff) != "1" {
         didSet {
@@ -492,8 +497,8 @@ final class AppController: ObservableObject {
         // Unterwegs and not on the phone: the Mac stays silent — the line waits as a notification.
         if phone.away && !phone.callActive { prefetch?.cancel(); return silentTurn(turn, key: key) }
         if effectivelyMuted && !phone.callActive { prefetch?.cancel(); return mutedTurn() }
-        if calledBack { await thankForCallingBack(config) }
-        if ringing, phone.callActive { await announceRound(config) }
+        if calledBack, !brief { await thankForCallingBack(config) }
+        if ringing, phone.callActive, !brief { await announceRound(config) }
 
         // Wait out the previous turn's background ack clip so this turn's audio never
         // overlaps it (only ever blocks if Claude replied faster than the ack played).
@@ -502,7 +507,7 @@ final class AppController: ObservableObject {
 
         // Another session alive (any state but stopped) → announce which one is speaking,
         // "Update zu <Name>" (cached, plays instantly — so media must pause right away then).
-        let announcement: Data? = server.othersAlive(except: ControlServer.sessionKey(turn))
+        let announcement: Data? = !brief && server.othersAlive(except: ControlServer.sessionKey(turn))
             ? await ProjectClips.shared.clipData(label: turn.spokenLabel, language: config.language, config: config)
             : nil
 
@@ -637,7 +642,7 @@ final class AppController: ObservableObject {
                 Log.write("reply follow-up chars=\(more.count)")
                 text += "\n\n[Parley hat nachgefragt: „\(r.say)“]" + (more.isEmpty ? "" : "\n\(more)")
                 intent = more.isEmpty ? .other : await classify(more, config: config)
-            } else {
+            } else if !brief {
                 line = AckLine(say: r.say, clip: clip)
                 text += "\n\n[Parley hat darauf bereits geantwortet: „\(r.say)“ – nicht wiederholen.]"
             }
@@ -720,7 +725,7 @@ final class AppController: ObservableObject {
         }
         await ackTask?.value
         ackTask = nil
-        if calledBack { await thankForCallingBack(config) }
+        if calledBack, !brief { await thankForCallingBack(config) }
 
         // Cached line (or synthesized live + cached); nil → speakAndBeep synthesizes the text.
         let (clip, line) = await ProjectClips.shared.resumeClip(label: turn.spokenLabel, config: config)
@@ -740,6 +745,7 @@ final class AppController: ObservableObject {
     // The acknowledgment in the BACKGROUND, then the media resume (debounced; only once the
     // whole cue is idle). The next queue item awaits it, so audio never overlaps.
     private func startAck(intent: Intent, hasText: Bool, line: AckLine? = nil, config: AppConfig) {
+        if brief { scheduleResume(); return }
         beginAudioWork()
         ackTask = Task { [weak self] in
             await self?.playAck(intent: intent, hasText: hasText, line: line, config: config)
