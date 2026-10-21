@@ -85,7 +85,7 @@ public static class Shares
         catch (Exception e) { Log.Write($"share: not saved ({e.Message})"); }
     }
 
-    private static void OwnerOnly(string path)
+    internal static void OwnerOnly(string path)
     {
         try
         {

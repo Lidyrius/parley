@@ -209,6 +209,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         StartRelay();
         _shares.Start();
+        GuestHub.Start();   // shares of other people's sessions this PC joined (Guest.cs)
         _activityTimer = new System.Threading.Timer(_ => TickLiveActivity(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
         _watchdogTimer = new System.Threading.Timer(_ => { TickWatchdog(); _server.TickReminders(); _shares.Tick(); }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }

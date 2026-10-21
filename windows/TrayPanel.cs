@@ -100,9 +100,15 @@ public sealed class TrayPanel : Form
 
     private int Measure()
     {
-        var rows = Rows().Take(MaxRows).Sum(RowHeight);
-        return S(16 + 44 + 46 + 120 + 14 + 44) + Math.Max(S(56), rows) + (Rows().Count > MaxRows ? S(24) : 0) + S(14 + 40 + 16);
+        var rows = Rows().Take(MaxRows).Sum(RowHeight) + GuestHub.Shares.Sum(GuestHeight);
+        return S(16 + 44 + 46 + 120 + 14 + 44) + Math.Max(S(56), rows) + (Rows().Count > MaxRows ? S(24) : 0)
+            + (GuestHub.Notice is null ? 0 : S(24)) + S(14 + 40 + 16);
     }
+
+    private int GuestHeight(GuestShare s) =>
+        S(48) + (!s.Active || GuestLine(s) is not null ? S(22) : 0) + (s.Active ? S(38) : 0);
+
+    private static string? GuestLine(GuestShare s) => GuestHub.Row(s.Id) is { } r ? LastLine(r) : null;
 
     private int RowHeight(JsonElement r) =>
         S(48) + (LastLine(r) is not null && !Live(r) ? S(22) : 0) + (RowAction(r) is not null ? S(38) : 0);
@@ -184,17 +190,18 @@ public sealed class TrayPanel : Form
         // Sessions + Anrufen
         var rows = Rows();
         Text(g, "Sessions", head, Ink, pad, y + S(8));
-        Text(g, $"{rows.Count}", head, Dim, pad + (int)g.MeasureString("Sessions", head).Width, y + S(8));
+        var guests = GuestHub.Shares;
+        Text(g, $"{rows.Count + guests.Count}", head, Dim, pad + (int)g.MeasureString("Sessions", head).Width, y + S(8));
         var call = new Rectangle(Width - pad - S(100), y + S(4), S(100), S(32));
         Fill(g, call, PhoneCall.Away ? Color.FromArgb(100, Accent) : Accent, call.Height / 2);
         Text(g, "Anrufen", bodyBold, Color.White, call, center: true);
         if (!PhoneCall.Away) Hit(call, _hooks.Call);
         y += S(44);
 
-        var listH = Math.Max(S(56), rows.Take(MaxRows).Sum(RowHeight));
+        var listH = Math.Max(S(56), rows.Take(MaxRows).Sum(RowHeight) + guests.Sum(GuestHeight));
         var list = new Rectangle(pad, y, w, listH);
         Fill(g, list, Card, S(16));
-        if (rows.Count == 0)
+        if (rows.Count == 0 && guests.Count == 0)
             Text(g, "Keine Session. Starte /parley:voice in Claude Code.", body, Dim, list.X + S(14), list.Y + S(18));
         var ry = y;
         foreach (var (r, i) in rows.Take(MaxRows).Select((r, i) => (r, i)))
@@ -203,17 +210,28 @@ public sealed class TrayPanel : Form
             DrawRow(g, r, new Rectangle(pad, ry, w, h), i > 0, now, head, body, quote, bodyBold);
             ry += h;
         }
+        foreach (var (gs, i) in guests.Select((gs, i) => (gs, i)))
+        {
+            var h = GuestHeight(gs);
+            DrawGuest(g, gs, new Rectangle(pad, ry, w, h), i > 0 || rows.Count > 0, now, head, body, quote, bodyBold);
+            ry += h;
+        }
         y += listH;
         if (rows.Count > MaxRows)
         {
             Text(g, $"+ {rows.Count - MaxRows} weitere", small, Dim, pad + S(4), y + S(4));
             y += S(24);
         }
+        if (GuestHub.Notice is { } note)
+        {
+            Text(g, note, small, Dim, new Rectangle(pad, y + S(6), w, S(18)));
+            y += S(24);
+        }
         y += S(14);
 
         // Footer
         var fx = pad;
-        foreach (var (label, act) in new (string, Action)[] { ("iPhone", _hooks.Pair), ("Statistik", _hooks.Stats), ("Setup", _hooks.Setup) })
+        foreach (var (label, act) in new (string, Action)[] { ("iPhone", _hooks.Pair), ("Statistik", _hooks.Stats), ("Beitreten", GuestHub.AskToJoin), ("Setup", _hooks.Setup) })
         {
             var bw = (int)g.MeasureString(label, body).Width + S(22);
             var r = new Rectangle(fx, y, bw, S(30));
@@ -222,8 +240,8 @@ public sealed class TrayPanel : Form
             Hit(r, act);
             fx += bw + S(6);
         }
-        var quit = new Rectangle(Width - pad - S(70), y, S(70), S(30));
-        Text(g, "Beenden", body, Dim, quit, alignRight: true);
+        var quit = new Rectangle(Width - pad - S(30), y, S(30), S(30));
+        Text(g, "⏻", head, Dim, quit, center: true);
         Hit(quit, _hooks.Quit);
     }
 
@@ -260,6 +278,62 @@ public sealed class TrayPanel : Form
             Fill(g, b, Accent, b.Height / 2);
             Text(g, "Fortsetzen", bold, Color.White, b, center: true);
             Hit(b, act);
+        }
+    }
+
+    // Someone else's session this PC joined (Guest.cs): its row once in, "Anrufen" / "Annehmen" +
+    // "Ablehnen" / "Auflegen", "Verlassen"; while Sir decides, the join's check code.
+    private void DrawGuest(Graphics g, GuestShare s, Rectangle box, bool divider, long now,
+                           Font head, Font body, Font quote, Font bold)
+    {
+        var row = GuestHub.Row(s.Id);
+        var state = !s.Active ? "queued" : row is { } r ? Str(r, "state") ?? "idle" : "idle";
+        if (divider) using (var p = new Pen(Raised)) g.DrawLine(p, box.X + S(52), box.Y, box.Right, box.Y);
+        Ring(g, state, StateColor(state), new Rectangle(box.X + S(14), box.Y + S(12), S(24), S(24)), now);
+
+        var x = box.X + S(52);
+        var y = box.Y + S(12);
+        var name = row is { } rr && Str(rr, "label") is { Length: > 0 } l ? l : s.Label;
+        var leave = new Rectangle(box.Right - S(14) - S(70), y, S(70), S(22));
+        Text(g, "Verlassen", body, Dim, leave, alignRight: true);
+        Hit(leave, () => GuestHub.Leave(s.Id));
+        var nameW = Math.Min((int)g.MeasureString(name, head).Width, leave.X - x - S(110));
+        Text(g, name, head, Ink, new Rectangle(x, y - S(2), nameW, S(24)));
+        Text(g, s.Active ? $"geteilt von {s.Host}" : $"wartet auf {s.Host}", body, Dim,
+             new Rectangle(x + nameW + S(4), y + S(1), leave.X - x - nameW - S(8), S(22)));
+        y += S(28);
+        if (!s.Active)
+        {
+            Text(g, $"Code {s.Code} — schick ihn {s.Host}, damit er dich hereinlässt.", body, Dim, new Rectangle(x, y, box.Right - S(14) - x, S(20)));
+            return;
+        }
+        if (GuestLine(s) is { } line)
+        {
+            Text(g, $"„{line}“", quote, Dim, new Rectangle(x, y, box.Right - S(14) - x, S(20)));
+            y += S(22);
+        }
+        var b = new Rectangle(x, y + S(2), S(104), S(28));
+        if (GuestHub.InCall == s.Id)
+        {
+            Fill(g, b, Color.FromArgb(0xE5, 0x48, 0x4D), b.Height / 2);
+            Text(g, "Auflegen", bold, Color.White, b, center: true);
+            Hit(b, GuestHub.EndCall);
+        }
+        else if (GuestHub.Ringing(s.Id))
+        {
+            Fill(g, b, Idle, b.Height / 2);
+            Text(g, "Annehmen", bold, Color.White, b, center: true);
+            Hit(b, () => GuestHub.Call(s.Id));
+            var no = new Rectangle(b.Right + S(10), b.Y, S(80), b.Height);
+            Text(g, "Ablehnen", body, Dim, no, center: true);
+            Hit(no, () => GuestHub.Decline(s.Id));
+        }
+        else
+        {
+            var usable = GuestHub.InCall is null && !s.Listen;
+            Fill(g, b, usable ? Accent : Color.FromArgb(100, Accent), b.Height / 2);
+            Text(g, "Anrufen", bold, Color.White, b, center: true);
+            if (usable) Hit(b, () => GuestHub.Call(s.Id));
         }
     }
 
