@@ -118,6 +118,8 @@ public sealed class PhoneLine
     private string? _sent;              // the state|speaker the phone has (null = unknown → send)
     private int _downRate = PhoneAudio.SampleRate;   // the call's voice rate: 16 or 24 kHz
     private DateTime? _lastCallEnd;
+    private bool _ending;               // the call's last line went out — the phone hangs up after it
+    private string? _topic;             // the session the call is about right now
     private readonly Queue<byte[]> _recent = new();
     private bool _barge;
     private (bool Set, double? After) _later;   // the ringing phone's "not now"
@@ -159,6 +161,24 @@ public sealed class PhoneLine
         get { lock (_gate) return _downRate; }
     }
 
+    public void MarkEnding(bool on) { lock (_gate) _ending = on; }
+
+    public bool Ending
+    {
+        get { lock (_gate) return _call && _ending; }
+    }
+
+    /// The call turns to `session`; true = it was about another one until now.
+    public bool SwitchTopic(string session)
+    {
+        lock (_gate)
+        {
+            var switched = _call && _topic is not null && _topic != session;
+            _topic = session;
+            return switched;
+        }
+    }
+
     // A text frame to the phone (v3 answers: history, image), whether or not a call is up.
     public async Task Reply(string frame)
     {
@@ -188,7 +208,7 @@ public sealed class PhoneLine
         {
             changed = _call != started;
             if (!started && !_call) _declined = true;
-            if (changed) { _barge = false; _recent.Clear(); }
+            if (changed) { _barge = false; _recent.Clear(); _ending = false; _topic = null; }
             if (!started && _call) _lastCallEnd = DateTime.UtcNow;
             _call = started;
             if (started) _downRate = down;

@@ -69,6 +69,7 @@ public static class AudioOut
         {
             var timed = caption is null ? null : Captions.Timings(caption, pcm, sampleRate);
             if (timed is not null) await PhoneCall.Reply(Captions.Frame(timed, last));   // just before the line's first frame
+            if (caption is not null) PhoneCall.Line.MarkEnding(last && timed is not null);
             if (slides is { Count: > 0 }) await Slides.Send(slides, timed, session);
             var rest = await PhoneCall.PlayAsync(pcm, sampleRate, cancellationToken);
             if (rest is null || rest.Length < 2) return;

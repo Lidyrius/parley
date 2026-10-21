@@ -95,6 +95,20 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     // MARK: - state
 
     var callActive: Bool { lock.withLock { active } }
+
+    // The call's last line went out — the phone hangs up once it has played.
+    private var ending = false
+    // The session the call is about right now (nil: none spoken yet).
+    private var topic: String?
+    func markEnding(_ on: Bool) { lock.withLock { ending = on } }
+    var callEnding: Bool { lock.withLock { active && ending } }
+    /// The call turns to `session`; true = it was about another one until now.
+    func switchTopic(to session: String) -> Bool {
+        lock.withLock {
+            defer { topic = session }
+            return active && topic != nil && topic != session
+        }
+    }
     var downRate: Int { lock.withLock { rate } }
     // Unterwegs: chosen on the phone, or the Mac locked for a minute (with that setting on).
     var away: Bool { chosenAway || lock.withLock { lockedAway } }
@@ -146,6 +160,8 @@ final class PhoneHub: CallLink, @unchecked Sendable {
                 rate = down
                 guard !active else { return (false, desired, nil) }   // a repeated start keeps the call
                 active = true
+                ending = false
+                topic = nil
                 bargeFlag = false
                 recent.removeAll()
                 generation += 1
@@ -162,6 +178,8 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             let changed = lock.withLock { () -> Bool in
                 guard active else { declined = true; return false }
                 active = false
+                ending = false
+                topic = nil
                 generation += 1
                 sentState = nil
                 return true

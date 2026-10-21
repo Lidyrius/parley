@@ -54,6 +54,7 @@ public sealed class TurnPipeline
         PhoneCall.SetSpeaker(turn.SpokenLabel.Length == 0 ? "Parley" : turn.SpokenLabel);   // wake dialog: Parley itself
         try
         {
+            await AwaitHangUp();
             if (turn.Event == Server.ResumeEvent) return await RunResume(turn);
             if (turn.Event == Server.WakeEvent) return await RunWake(turn);
             if (turn.Event is Server.PermissionEvent or Server.WatchdogEvent) return await RunPermission(turn);
@@ -61,6 +62,17 @@ public sealed class TurnPipeline
             return await RunTurn(turn);
         }
         finally { LiveStatus.Set("idle"); _abandoned = false; }
+    }
+
+    // The phone hangs up after a line sent as `last`; a turn that came in meanwhile waits for
+    // that (≤ 4 s) and rings anew — instead of talking into a line that is going down.
+    private static async Task AwaitHangUp()
+    {
+        if (!PhoneCall.Line.Ending) return;
+        var until = DateTime.UtcNow.AddSeconds(4);
+        while (PhoneCall.Active && DateTime.UtcNow < until) await Task.Delay(100);
+        Log.Write(PhoneCall.Active ? "phone: still on after the last line — the next one follows" : "phone: hung up after the last line → rings anew");
+        PhoneCall.Line.MarkEnding(false);
     }
 
     // POST /resume (the mod's button): a short voice dialog instead of a hook turn — the
@@ -85,6 +97,7 @@ public sealed class TurnPipeline
         }
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
         if (calledBack && !config.Brief) await ThankForCallingBack(config);
+        PhoneCall.Line.SwitchTopic(Server.SessionKey(turn));
 
         // Cached line, or synthesized live + cached; null → no TTS, just the beep.
         var line = await Clips.ResumeClip(turn.SpokenLabel, config);
@@ -265,7 +278,10 @@ public sealed class TurnPipeline
 
         // Another session alive (any state but stopped) → cached "Update zu <Name>"
         // announcement (instant audio → pause right away).
-        byte[]? announcement = !config.Brief && _othersAlive?.Invoke(Server.SessionKey(turn)) == true
+        // In a call that was about another session, always (even Ohne Floskeln): else Sir answers
+        // the wrong one.
+        var switched = PhoneCall.Line.SwitchTopic(Server.SessionKey(turn));
+        byte[]? announcement = switched || !config.Brief && _othersAlive?.Invoke(Server.SessionKey(turn)) == true
             ? Clips.Announcement(turn.SpokenLabel, config)
             : null;
 

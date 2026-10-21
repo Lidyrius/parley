@@ -19,6 +19,25 @@ final class PhoneCallGoneTests: XCTestCase {
     }
 }
 
+// A turn after the call's last line waits for the hang-up; a call that turns to another session says so.
+final class PhoneCallTopicTests: XCTestCase {
+    func testEndingAndTopicLiveForOneCall() {
+        let hub = PhoneHub(store: .memory(), log: { _ in })
+        hub.markEnding(true)
+        XCTAssertFalse(hub.callEnding)                          // no call: nothing ends
+        hub.handle(.call(true))
+        XCTAssertFalse(hub.switchTopic(to: "a"))                // the call's first session
+        XCTAssertFalse(hub.switchTopic(to: "a"))
+        XCTAssertTrue(hub.switchTopic(to: "b"))                 // another one → announce
+        hub.markEnding(true)
+        XCTAssertTrue(hub.callEnding)
+        hub.handle(.call(false))
+        hub.handle(.call(true))
+        XCTAssertFalse(hub.callEnding)                          // a new call starts clean
+        XCTAssertFalse(hub.switchTopic(to: "a"))
+    }
+}
+
 final class PhoneFrameTests: XCTestCase {
     func testParsesTheV2FramesAndIgnoresTheRest() {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"start"}"#), .call(true))

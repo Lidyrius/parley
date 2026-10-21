@@ -431,6 +431,7 @@ final class AppController: ObservableObject {
         LiveStatus.begin(session: turn.session_id)
         phone.setSpeaker(turn.spokenLabel.isEmpty ? "Parley" : turn.spokenLabel)   // wake dialog: Parley itself
         defer { LiveStatus.set(phase: "idle") }
+        await awaitHangUp()
         switch turn.event {
         case ControlServer.resumeEvent: return await runResume(turn)
         case ControlServer.wakeEvent: return await runWake()
@@ -508,7 +509,10 @@ final class AppController: ObservableObject {
 
         // Another session alive (any state but stopped) → announce which one is speaking,
         // "Update zu <Name>" (cached, plays instantly — so media must pause right away then).
-        let announcement: Data? = !brief && server.othersAlive(except: ControlServer.sessionKey(turn))
+        // In a call that was about another session, always (even Ohne Floskeln): else Sir answers
+        // the wrong one.
+        let switched = phone.switchTopic(to: ControlServer.sessionKey(turn))
+        let announcement: Data? = switched || !brief && server.othersAlive(except: ControlServer.sessionKey(turn))
             ? await ProjectClips.shared.clipData(label: turn.spokenLabel, language: config.language, config: config)
             : nil
 
@@ -727,6 +731,7 @@ final class AppController: ObservableObject {
         await ackTask?.value
         ackTask = nil
         if calledBack, !brief { await thankForCallingBack(config) }
+        _ = phone.switchTopic(to: ControlServer.sessionKey(turn))
 
         // Cached line (or synthesized live + cached); nil → speakAndBeep synthesizes the text.
         let (clip, line) = await ProjectClips.shared.resumeClip(label: turn.spokenLabel, config: config)
@@ -824,6 +829,16 @@ final class AppController: ObservableObject {
             }
         }
         return outcome == .answered ? .reached(calledBack: calledBack) : .notReached
+    }
+
+    /// The phone hangs up after a line sent as `last`; a turn that came in meanwhile waits for
+    /// that (≤ 4 s) and rings anew — instead of talking into a line that is going down.
+    private func awaitHangUp() async {
+        guard phone.callEnding else { return }
+        let until = Date().addingTimeInterval(4)
+        while phone.callActive, Date() < until { try? await Task.sleep(nanoseconds: 100_000_000) }
+        Log.write(phone.callActive ? "phone: still on after the last line — the next one follows" : "phone: hung up after the last line → rings anew")
+        phone.markEnding(false)
     }
 
     private func thankForCallingBack(_ config: AppConfig) async {
@@ -1189,6 +1204,7 @@ final class AppController: ObservableObject {
                     let t = config.useGoogle
                         ? Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate) : nil
                     if let t { phone.reply(Captions.frame(t, last: last)) }
+                    phone.markEnding(last && t != nil)
                     Log.write("phone: caption \(t.map { "\($0.words.count) words, \(Int($0.end)) s" } ?? "none")")
                     if !slides.isEmpty { sendSlides(slides, timed: t, session: session) }
                 }
