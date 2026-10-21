@@ -47,6 +47,7 @@ enum Keychain {
         case apnsKeyP8      // the .p8 PEM text
         case appIcon        // the app's icon (AppIconChoice raw value); empty = porzellan
         case zentraleDir    // the Zentrale's folder; empty = ~/workspace/privat/parley-zentrale
+        case guests         // shares of OTHER people's sessions this Mac joined (Guest.swift), JSON
         case projectsDir    // where the Zentrale creates projects; empty = ~/workspace/privat
     }
 

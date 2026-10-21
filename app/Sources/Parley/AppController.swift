@@ -89,6 +89,7 @@ final class AppController: ObservableObject {
     static let callBackWait: TimeInterval = 30 * 60   // "Ich rufe zurück": how long the line waits for Sir's call
 
     func start() {
+        GuestHub.shared.start()
         guard !started else { return }   // idempotent: launch + menu .task may both call
         started = true
         mic.prepareInput()   // expensive AUHAL setup now → near-instant mic starts later

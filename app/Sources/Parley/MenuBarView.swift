@@ -5,6 +5,7 @@ import SwiftUI
 // it what only the Mac has: snapshots, shares, options, developer tools.
 struct MenuBarView: View {
     @ObservedObject var controller: AppController
+    @ObservedObject var guests = GuestHub.shared
     var demo: MenuBoard?
     @State private var board = MenuBoard()
     @State private var options = false
@@ -15,6 +16,9 @@ struct MenuBarView: View {
             if let today = board.today { TodayCard(today: today) }
             sessions
             if !controller.snapshots.isEmpty || !controller.shared.isEmpty { extras }
+            if let note = guests.notice {
+                Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if let err = controller.lastError {
                 Text(err).font(.caption2).foregroundStyle(MenuTheme.red).lineLimit(2)
             }
@@ -83,14 +87,14 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Sessions").font(.title3.weight(.semibold))
-                Text("\(board.sessions.count)").font(.title3).foregroundStyle(.secondary)
+                Text("\(board.sessions.count + guests.shares.count)").font(.title3).foregroundStyle(.secondary)
                 Spacer()
                 Button("Anrufen") { controller.callFromMac() }
                     .buttonStyle(AccentButton())
                     .disabled(controller.phoneAway)
                     .help(controller.phoneAway ? "Unterwegs: Parley spricht nur übers iPhone" : "Mit Parley sprechen — Mikrofon des Macs")
             }
-            if board.sessions.isEmpty {
+            if board.sessions.isEmpty && guests.shares.isEmpty {
                 Text("Keine Session. Starte /parley:voice in Claude Code.")
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,6 +106,10 @@ struct MenuBarView: View {
                         ForEach(Array(board.sessions.enumerated()), id: \.element.id) { i, s in
                             if i > 0 { Divider().padding(.leading, 52) }
                             SessionRow(session: s, resume: { controller.resume(s.id) })
+                        }
+                        ForEach(Array(guests.shares.enumerated()), id: \.element.id) { i, g in
+                            if i > 0 || !board.sessions.isEmpty { Divider().padding(.leading, 52) }
+                            GuestRow(share: g, row: guests.rows[g.id], hub: guests)
                         }
                     }
                 }
@@ -169,6 +177,8 @@ struct MenuBarView: View {
         HStack(spacing: 6) {
             FooterButton(title: "iPhone", symbol: "iphone") { controller.pairIPhone() }
             FooterButton(title: "Statistik", symbol: "chart.bar") { StatsPresenter.shared.show() }
+            FooterButton(title: "Beitreten", symbol: "person.badge.plus") { guests.askToJoin() }
+                .help("Einer geteilten Session beitreten (Einladungslink)")
             FooterButton(title: "Setup", symbol: "wand.and.stars") { OnboardingPresenter.shared.show() }
             Menu {
                 Button("Zurücksetzen (Onboarding testen) — Statistiken bleiben") { DevTools.resetKeepingStats() }
@@ -418,6 +428,54 @@ private struct SessionRow: View {
     }
 }
 
+/// Someone else's session this Mac joined: its row (once in), "Anrufen" / "Annehmen" / "Auflegen",
+/// or the join's check code while Sir decides.
+private struct GuestRow: View {
+    let share: GuestShare
+    let row: MenuBoard.Row?
+    @ObservedObject var hub: GuestHub
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            StateRing(state: share.active ? row?.state ?? "idle" : "queued", background: false)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(row?.name ?? share.label).font(.headline).lineLimit(1)
+                    Text(share.active ? "geteilt von \(share.host)" : "wartet auf \(share.host)").font(.callout)
+                        .foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Menu {
+                        Button("Verlassen", role: .destructive) { hub.leave(share.id) }
+                    } label: { Image(systemName: "ellipsis") }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                }
+                if !share.active {
+                    Text("Code \(share.code) — schick ihn \(share.host), damit er dich hereinlässt.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else if let line = row?.stats?.lastLine, !line.isEmpty {
+                    Text("„\(line)“").font(.callout).italic().foregroundStyle(.secondary).lineLimit(1)
+                }
+                if share.active {
+                    HStack(spacing: 8) {
+                        if hub.inCall == share.id {
+                            Button("Auflegen") { hub.endCall() }.buttonStyle(AccentButton(color: MenuTheme.red))
+                        } else if hub.ringing[share.id] != nil {
+                            Button("Annehmen") { hub.call(share.id) }.buttonStyle(AccentButton(color: MenuTheme.idle))
+                            Button("Ablehnen") { hub.decline(share.id) }.buttonStyle(.plain).foregroundStyle(.secondary)
+                        } else {
+                            Button("Anrufen") { hub.call(share.id) }.buttonStyle(AccentButton())
+                                .disabled(hub.inCall != nil || share.listen)
+                                .help(share.listen ? "Nur zuhören — hier kannst du nichts sagen" : "Mit Parley über diese Session sprechen")
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+    }
+}
+
 /// The app's state ring, simplified: a pulse while live, a spinning arc while working or queued,
 /// an orbiting dot in the background, a plain ring otherwise.
 private struct StateRing: View {
@@ -474,13 +532,14 @@ private struct Pill: View {
 }
 
 private struct AccentButton: ButtonStyle {
+    var color = MenuTheme.accent
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout.weight(.semibold))
             .foregroundStyle(.white)
             .padding(.horizontal, 16).padding(.vertical, 6)
-            .background(Capsule().fill(MenuTheme.accent.opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)))
+            .background(Capsule().fill(color.opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)))
     }
 }
 

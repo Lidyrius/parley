@@ -340,3 +340,26 @@ final class SharesTests: XCTestCase {
         XCTAssertEqual(got.called, 1)
     }
 }
+
+// The Mac as a guest (Guest.swift): it reads Sir's invite and opens his sealed move.
+final class GuestShareTests: XCTestCase {
+    func testJoinsFromTheInviteAndOpensTheMove() throws {
+        var s = Shares.make(session: "abc", label: "SEO-Geo-Landing-Page", url: "https://relay.example", now: Date())
+        let link = Shares.link(s, host: "Sydney")
+        let g = try XCTUnwrap(GuestShare.parse(link, name: "Marco [x]"))
+        XCTAssertEqual(g.label, "SEO-Geo-Landing-Page")
+        XCTAssertEqual(g.host, "Sydney")
+        XCTAssertEqual(g.name, "Marco x")
+        XCTAssertEqual(g.room, s.room)
+        XCTAssertEqual(g.code, Shares.code(g.pub))
+
+        Shares.room(&s)   // the fresh room after Sir's yes
+        let move = try XCTUnwrap(Shares.sealMove(s, to: g.pub))
+        let opened = try XCTUnwrap(g.open(move: move.pub, box: move.box, share: s.id))
+        XCTAssertEqual(opened.room, s.room)
+        XCTAssertEqual(opened.secret, s.secret)
+        XCTAssertEqual(opened.key, s.key)
+        XCTAssertNil(g.open(move: move.pub, box: move.box, share: "other"))   // bound to the share
+        XCTAssertNil(GuestShare.parse("https://relay.example/pair#x", name: "M"))
+    }
+}
