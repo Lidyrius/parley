@@ -55,6 +55,11 @@ struct CallView: View {
     @State private var pickedAt = Date.distantPast
     @State private var drag: CGFloat = 0
     @Namespace private var controlSpace
+    /// The subtitles swiped up: the voiced session's history (CallHistory.swift). Writing in its
+    /// message box takes the whole screen — the call floats on top then, with its subtitles.
+    @State private var transcriptOpen = CallHistoryDemo.mode != nil
+    @State private var draft = ""
+    @FocusState private var typing: Bool
 
     var body: some View {
         let call = model.call
@@ -68,6 +73,27 @@ struct CallView: View {
                 .animation(.easeInOut(duration: 0.6), value: look)
 
             VStack(spacing: 0) {
+                if transcriptOpen, let id = voiced?.id {
+                    let name = call.label ?? voiced?.name ?? "Parley"
+                    if typing {
+                        floatingCall(call, look: look, name: name)
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    } else {
+                        topBar(call)
+                        compactIdentity(call, look: look, name: name)
+                            .padding(.top, 12)
+                    }
+                    CallTranscript(items: model.histories[id], pending: model.pending[id] ?? [],
+                                   live: typing ? nil : call.caption?.words.joined(separator: " ")) {
+                        typing = false
+                        withAnimation(.snappy) { transcriptOpen = false }
+                    }
+                    .task { if model.histories[id] == nil { model.loadHistory(id) } }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    messageBox(to: id, name: name)
+                        .padding(.bottom, typing ? 0 : 14)
+                } else {
                 topBar(call)
                 Spacer(minLength: 12)
                 // A slide (docs/CALL-SLIDES.md) takes the ring's place while Parley talks about it;
@@ -107,6 +133,22 @@ struct CallView: View {
                 }
                 .frame(minHeight: 72, alignment: .top)
                 .padding(.top, 18)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 20).onEnded { g in
+                    guard g.translation.height < -40, voiced != nil else { return }
+                    withAnimation(.snappy) { transcriptOpen = true }
+                })
+                if !call.isRinging, voiced != nil {
+                    Button { withAnimation(.snappy) { transcriptOpen = true } } label: {
+                        Label("Verlauf", systemImage: "chevron.up")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Capsule().fill(Theme.card))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 6)
+                }
                 Spacer(minLength: 20)
                 if call.isRinging {
                     // Can't talk now: put it off a little, or call back later yourself.
@@ -118,8 +160,10 @@ struct CallView: View {
                     .padding(.bottom, 22)
                     .transition(.opacity)
                 }
-                controls(call)
+                }
+                if !(transcriptOpen && typing) { controls(call) }
             }
+            .animation(.snappy, value: typing)
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
         }
@@ -127,6 +171,83 @@ struct CallView: View {
         .sensoryFeedback(.impact(weight: .light), trigger: call.speaker)
         .sensoryFeedback(.success, trigger: call.wakeSent) { _, new in new }
         .fullScreenCover(item: $zoomed) { z in ImageViewer(image: z.image) }
+        .task {
+            guard CallHistoryDemo.mode == "typing" else { return }
+            try? await Task.sleep(for: .milliseconds(600))
+            typing = true
+        }
+    }
+
+    /// Writing during a call: the call floats on top — who speaks, the live subtitles, hang up.
+    /// A tap on it ends the writing (back to the history under the call).
+    private func floatingCall(_ call: CallController, look: CallLook, name: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                ParticleOrb(style: Appearance.shared.orbStyle, color: look.color, size: 28, paused: reduceMotion) {
+                    Double(call.level(at: $0))
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    statusLine(call, look: look).font(.caption).monospacedDigit()
+                }
+                Spacer(minLength: 8)
+                Button { call.setMuted(!call.muted) } label: {
+                    Image(systemName: call.muted ? "mic.slash.fill" : "mic.fill")
+                        .font(.subheadline)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(call.muted ? Color.primary : Theme.card))
+                        .foregroundStyle(call.muted ? Theme.background : .primary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stumm")
+                Button { call.hangUp() } label: {
+                    Image(systemName: "phone.down.fill")
+                        .font(.subheadline)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Theme.danger))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Auflegen")
+            }
+            if look.mood == .speaking || look.mood == .listening, let c = call.caption {
+                LiveCaption(call: call, caption: c)
+                    .font(.body)
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(.regularMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(look.color.opacity(0.45)))
+        .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
+        .contentShape(Rectangle())
+        .onTapGesture { typing = false }
+        .accessibilityHint("Schreiben beenden")
+    }
+
+    /// The message box under the history: tapping it takes the whole screen (the call floats on top).
+    private func messageBox(to id: String, name: String) -> some View {
+        let canSend = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (model.relay(for: id).canSend || model.demo)
+        return HStack(alignment: .bottom, spacing: 10) {
+            TextField("Nachricht an \(name)", text: $draft, axis: .vertical)
+                .focused($typing)
+                .lineLimit(1...5)
+                .padding(.vertical, 9)
+            Button {
+                model.say(draft, to: id)
+                draft = ""
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Theme.onAccent)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.claude.opacity(canSend ? 1 : 0.45)))
+            }
+            .disabled(!canSend)
+            .accessibilityLabel("Senden")
+        }
+        .padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Theme.stroke))
     }
 
     private func topBar(_ call: CallController) -> some View {
