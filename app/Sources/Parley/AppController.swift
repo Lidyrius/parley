@@ -144,7 +144,12 @@ final class AppController: ObservableObject {
             if (try? Zentrale.ensure(z, template: Zentrale.templateDir())) == true { Log.write("zentrale: created \(z.zentraleDir)") }
         }
         server.sessions.namesFile = Reminders.file.deletingLastPathComponent().appendingPathComponent("session-names.json")
-        server.onReminded = { r in Notifier.notify(title: "Parley · Wiedervorlage", body: "An \(r.label): \(r.text)") }
+        // (On the main actor: called on the server's queue, the pill crashed the app. A recurring
+        // one is handed over every few minutes — no notification each time.)
+        server.onReminded = { r in
+            guard r.every == nil else { return }
+            Task { @MainActor in Notifier.notify(title: "Parley · Wiedervorlage", body: "An \(r.label): \(r.text)") }
+        }
         server.onPalette = { [weak self] name, frame in
             Log.write("palette: \(name) → the phone")
             Task { @MainActor in
