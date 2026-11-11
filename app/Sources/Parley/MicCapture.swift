@@ -33,7 +33,7 @@ final class MicCapture: @unchecked Sendable {
     // The VAD grace window (the beep must not arm it) and the no-speech timeout live in
     // UtteranceRecorder.
 
-    private let maxListenSeconds = 90.0
+    private let maxListenSeconds = UtteranceRecorder.maxSeconds
 
     /// Do the expensive AUHAL setup ahead of time (app launch / after each recording),
     /// so the next start is near-instant. Cheap no-op if already prepared.

@@ -76,6 +76,10 @@ struct UtteranceRecorder {
     static let sampleRate = 16000.0
     static let graceSeconds = 0.5       // the ready-beep (played while capturing) must not arm the VAD
     static let noSpeechTimeout = 8.0
+    /// A reply may run this long (Sir dictates for minutes); then it ends by itself and what was
+    /// said goes on. Only a watchdog — the end of a reply is its trailing silence.
+    /// (It was 90 s: every longer dictation was cut right there.)
+    static let maxSeconds = 600.0
 
     enum Step: Equatable { case listening, ended(String) }   // "vad-silence" | "no-speech"
 

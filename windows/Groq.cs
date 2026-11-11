@@ -17,10 +17,104 @@ public static class Groq
     /// wav: 16 kHz mono 16-bit WAV bytes. Returns "" on failure (never an error body).
     public static async Task<string> Transcribe(byte[] wav, Config config) => (await TryTranscribe(wav, config)).text;
 
-    // `failed`: no key, an HTTP error or no network — not silence (a turn must not park on it).
+    // A long recording goes to Whisper in pieces (as macOS, Groq.swift): each request stays small
+    // (Groq takes 25 MB — 13 minutes of this WAV — and a big upload over a weak line times out),
+    // and a piece that fails costs that piece, not everything Sir said.
+    private const double PieceSeconds = 120;    // one piece at most (plus PieceTail)
+    private const double SearchSeconds = 20;    // the cut lies in the last stretch of a piece …
+    private const double WindowSeconds = 0.2;   // … at its quietest 0.2 s
+    private const double PieceTail = 2;         // no piece shorter than this is left over
+    private const int Attempts = 3;
+    private static readonly double[] Pauses = { 1, 3 };   // before the 2nd and 3rd try
+
+    /// The samples of a WAV made by Wav.Encode (its 44-byte header skipped).
+    public static short[] Samples(byte[] wav)
+    {
+        var n = Math.Max(0, wav.Length - 44) / 2;
+        var s = new short[n];
+        for (var i = 0; i < n; i++) s[i] = (short)(wav[44 + 2 * i] | (wav[45 + 2 * i] << 8));
+        return s;
+    }
+
+    /// Sample ranges of at most PieceSeconds (+ PieceTail) each, cut where it is quietest — not
+    /// in the middle of a word.
+    public static List<(int From, int To)> Split(short[] s, int rate = 16000)
+    {
+        int maxN = (int)(PieceSeconds * rate), searchN = (int)(SearchSeconds * rate);
+        int win = Math.Max(1, (int)(WindowSeconds * rate)), tailN = (int)(PieceTail * rate);
+        var parts = new List<(int From, int To)>();
+        var start = 0;
+        while (s.Length - start > maxN + tailN)
+        {
+            var best = start + maxN;
+            var quietest = double.MaxValue;
+            for (var w = start + maxN - searchN; w + win <= start + maxN; w += win)
+            {
+                double energy = 0;
+                for (var i = w; i < w + win; i++) energy += (double)s[i] * s[i];
+                if (energy < quietest) { quietest = energy; best = w + win / 2; }
+            }
+            parts.Add((start, best));
+            start = best;
+        }
+        parts.Add((start, s.Length));
+        return parts;
+    }
+
+    public static string Gap(int seconds) =>
+        $"[Parley: Hier fehlen etwa {seconds} Sekunden der Aufnahme — die Transkription ist fehlgeschlagen.]";
+
+    // `failed`: no key, or nothing came through (HTTP error, no network) — not silence (a turn
+    // must not park on it). Piece by piece, each tried again when the line or Groq stumbles; a
+    // piece lost for good leaves a note in its place and the rest goes on.
     public static async Task<(string text, bool failed)> TryTranscribe(byte[] wav, Config config)
     {
         if (!config.SttReady) return ("", true);
+        var samples = Samples(wav);
+        var parts = Split(samples);
+        var texts = new List<string>();
+        var heard = "";
+        int lost = 0, status = 0;
+        foreach (var (lo, hi) in parts)
+        {
+            var piece = parts.Count == 1 ? wav : Wav.Encode(samples.AsSpan(lo, hi - lo));
+            // Whisper keeps names and the thread across the cut when it sees how the last piece ended.
+            var prompt = heard.Length > 200 ? heard[^200..] : heard;
+            if (prompt.Length > 0 && char.IsLowSurrogate(prompt[0])) prompt = prompt[1..];
+            string? text = null;
+            for (var attempt = 0; attempt < Attempts; attempt++)
+            {
+                if (attempt > 0) await Task.Delay(TimeSpan.FromSeconds(Pauses[Math.Min(attempt - 1, Pauses.Length - 1)]));
+                var (code, body) = await Send(piece, prompt, config);
+                if (code == 200) { text = body.Trim(); break; }
+                status = code;
+                if (!(code < 0 || code >= 500 || code == 429 || code == 408)) break;   // refused: trying again won't help
+            }
+            if (text is null)
+            {
+                lost++;
+                texts.Add(Gap((int)Math.Round((hi - lo) / 16000.0)));
+                continue;
+            }
+            var clean = CleanTranscript(text);
+            if (clean.Length == 0 && text.Length > 0) Log.Write($"stt: dropped Whisper hallucination \"{text}\"");
+            if (clean.Length > 0) { texts.Add(clean); heard = clean; }
+        }
+        if (parts.Count > 1) Log.Write($"stt: {samples.Length / 16000} s in {parts.Count} pieces, {lost} failed");
+        if (lost == 0) return (string.Join(" ", texts), false);
+
+        var nothing = lost == parts.Count;
+        Log.Write($"stt: {lost} of {parts.Count} piece(s) failed ({status}) — recording kept: {KeepFailed(wav) ?? "not saved"}");
+        // Groq blocks VPN / datacenter IPs with a 403 "check your network settings".
+        var why = status == 403 ? "Groq blockt dieses Netzwerk — VPN aus?"
+            : status < 0 ? "Groq nicht erreichbar (Netzwerk/VPN?)." : $"Transkription fehlgeschlagen (HTTP {status}).";
+        Notifier.Notify("Parley — Fehler", nothing ? why : "Ein Teil der Aufnahme fehlt. " + why);
+        return nothing ? ("", true) : (string.Join(" ", texts), false);   // what came through goes on
+    }
+
+    // One request: (HTTP status, body); -1 = no connection or timed out.
+    private static async Task<(int code, string body)> Send(byte[] wav, string prompt, Config config)
+    {
         try
         {
             using var form = new MultipartFormDataContent();
@@ -29,34 +123,41 @@ public static class Groq
             form.Add(file, "file", "reply.wav");
             form.Add(new StringContent("whisper-large-v3-turbo"), "model");
             form.Add(new StringContent("text"), "response_format");
+            if (prompt.Length > 0) form.Add(new StringContent(prompt), "prompt");   // how the piece before ended
             using var req = new HttpRequestMessage(HttpMethod.Post,
                 "https://api.groq.com/openai/v1/audio/transcriptions");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.GroqKey);
             req.Content = form;
             // Fail fast instead of hanging the hook — VPN/blocked networks otherwise stall.
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             using var resp = await Http.SendAsync(req, cts.Token);
             var body = await resp.Content.ReadAsStringAsync();
-            if (!resp.IsSuccessStatusCode)
-            {
-                var code = (int)resp.StatusCode;
-                Log.Write($"stt http {code}: {body[..Math.Min(200, body.Length)]}");
-                // Groq blocks VPN / datacenter IPs with a 403 "check your network settings".
-                Notifier.Notify("Parley — Fehler",
-                    code == 403 ? "Groq blockt dieses Netzwerk — VPN aus?" : $"Transkription fehlgeschlagen (HTTP {code}).");
-                return ("", true);
-            }
-            var text = body.Trim();
-            var clean = CleanTranscript(text);
-            if (clean.Length == 0 && text.Length > 0) Log.Write($"stt: dropped Whisper hallucination \"{text}\"");
-            return (clean, false);
+            var code = (int)resp.StatusCode;
+            if (code != 200) Log.Write($"stt http {code}: {body[..Math.Min(200, body.Length)]}");
+            return (code, body);
         }
         catch (Exception e)
         {
             Log.Write($"stt error: {e.Message}");
-            Notifier.Notify("Parley — Fehler", "Groq nicht erreichbar (Netzwerk/VPN?).");
-            return ("", true);
+            return (-1, "");
         }
+    }
+
+    // A recording Whisper did not (fully) take is kept, so nothing Sir said is gone for good:
+    // <app data>\failed-recordings, the newest ten. Returns the file's name.
+    private static string? KeepFailed(byte[] wav)
+    {
+        try
+        {
+            var dir = Path.Combine(Config.Dir, "failed-recordings");
+            Directory.CreateDirectory(dir);
+            var name = DateTime.Now.ToString("yyyy-MM-dd-HHmmss", System.Globalization.CultureInfo.InvariantCulture) + ".wav";
+            File.WriteAllBytes(Path.Combine(dir, name), wav);
+            foreach (var old in Directory.GetFiles(dir, "*.wav").OrderByDescending(f => Path.GetFileName(f), StringComparer.Ordinal).Skip(10))
+                File.Delete(old);
+            return name;
+        }
+        catch { return null; }
     }
 
     // Whisper invents these on silence / background noise (YouTube-subtitle training data).

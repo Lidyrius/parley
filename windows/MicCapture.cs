@@ -5,13 +5,15 @@ namespace Parley;
 
 // Mic capture + silence VAD. WASAPI shared-mode capture from the default input device,
 // converted to 16 kHz mono s16 (channel-average + linear resample — fine for speech).
-// Same behavior contract as macOS: 8 s no-speech timeout, 90 s cap, 0.9 s trailing
+// Same behavior contract as macOS: 8 s no-speech timeout, a 10-min watchdog, 0.9 s trailing
 // silence, 0.5 s grace so the ready-beep can't arm the VAD.
 public sealed class MicCapture
 {
     private const double TargetRate = 16000.0;
     private const double NoSpeechTimeout = 8.0;
-    private const double MaxListenSeconds = 90.0;
+    // A reply may run this long (Sir dictates for minutes); then it ends by itself and what was
+    // said goes on. Only a watchdog — it was 90 s, and every longer dictation was cut right there.
+    private const double MaxListenSeconds = 600.0;
     private const double VadGraceSeconds = 0.5;
 
     public Action<float>? OnLevel;   // 0…1 live level for a future waveform UI

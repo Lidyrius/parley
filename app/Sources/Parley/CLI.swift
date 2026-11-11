@@ -29,6 +29,25 @@ enum ParleyMain {
             return
         }
 
+        // `Parley --transcribe reply.wav`: a recording (16 kHz mono 16-bit WAV, 44-byte header)
+        // through the app's own transcription — a long one in pieces (SMOKE_TEST.md, "A long reply").
+        if let i = args.firstIndex(of: "--transcribe"), i + 1 < args.count {
+            guard let wav = try? Data(contentsOf: URL(fileURLWithPath: args[i + 1])) else { print("no such file"); return }
+            let key = AppConfig.load().groqKey
+            let done = DispatchSemaphore(value: 0)
+            Task.detached {
+                let out = await Transcriber.run(wav: wav, apiKey: key) { req in
+                    guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return nil }
+                    return ((resp as? HTTPURLResponse)?.statusCode ?? -1, data)
+                }
+                print("seconds: \((wav.count - 44) / 32000), pieces: \(out.parts), failed: \(out.failed), characters: \(out.text?.count ?? -1)")
+                print(out.text ?? "(nothing came through)")
+                done.signal()
+            }
+            done.wait()
+            return
+        }
+
         ParleyApp.main()
     }
 }

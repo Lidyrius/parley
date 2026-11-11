@@ -1546,31 +1546,23 @@ final class AppController: ObservableObject {
             NSLog("Parley: recording too short (\(wav.count) bytes) — no reply, no speech or no mic input")
             return ""
         }
-        var req = Groq.transcriptionRequest(wav: wav, apiKey: config.groqKey, boundary: "parleyBoundary")
-        req.timeoutInterval = 20   // fail fast instead of hanging the hook for the 60s default
-        do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
-            guard code == 200 else {
-                let body = String(data: data, encoding: .utf8) ?? ""
-                NSLog("Parley: STT HTTP \(code): \(body)")
-                lastError = "STT HTTP \(code)"
-                // Groq blocks VPN / datacenter IPs with a 403 "check your network settings".
-                let hint = code == 403 ? "Groq blockt dieses Netzwerk — VPN aus?" : "Transkription fehlgeschlagen (HTTP \(code))."
-                Notifier.notify(title: "Parley — Fehler", body: hint)
-                return nil   // never feed an error body back as the reply
-            }
-            let text = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let clean = Groq.cleanTranscript(text)
-            if clean.isEmpty && !text.isEmpty { Log.write("stt: dropped Whisper hallucination \"\(text)\"") }
-            return clean
-        } catch {
-            NSLog("Parley: STT error: \(error.localizedDescription)")
-            lastError = "STT: \(error.localizedDescription)"
-            Notifier.notify(title: "Parley — Fehler", body: "Groq nicht erreichbar (Netzwerk/VPN?).")
-            return nil
+        // Piece by piece, each tried again (Groq.swift): a long dictation gets through, and a
+        // piece lost for good costs that piece only.
+        let out = await Transcriber.run(wav: wav, apiKey: config.groqKey) { req in
+            guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return nil }
+            return ((resp as? HTTPURLResponse)?.statusCode ?? -1, data)
         }
+        if out.parts > 1 { Log.write("stt: \((wav.count - 44) / 32000) s in \(out.parts) pieces, \(out.failed) failed") }
+        guard out.failed > 0 else { return out.text }
+        let kept = FailedRecordings.keep(wav)
+        Log.write("stt: \(out.failed) of \(out.parts) piece(s) failed (\(out.status)) — recording kept: \(kept?.lastPathComponent ?? "not saved")")
+        NSLog("Parley: STT failed (\(out.status))")
+        lastError = out.status < 0 ? "STT: keine Verbindung" : "STT HTTP \(out.status)"
+        // Groq blocks VPN / datacenter IPs with a 403 "check your network settings".
+        let why = out.status == 403 ? "Groq blockt dieses Netzwerk — VPN aus?"
+            : out.status < 0 ? "Groq nicht erreichbar (Netzwerk/VPN?)." : "Transkription fehlgeschlagen (HTTP \(out.status))."
+        Notifier.notify(title: "Parley — Fehler", body: out.text == nil ? why : "Ein Teil der Aufnahme fehlt. " + why)
+        return out.text   // what came through goes on; nil = nothing did
     }
 
     // MARK: - iPhone relay (docs/IPHONE.md)

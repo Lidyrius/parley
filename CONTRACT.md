@@ -37,8 +37,12 @@ The hook then, if transcript non-empty, emits on stdout:
 which continues the host session with the spoken reply as the next turn. Empty
 transcript → hook exits 0 → session ends normally.
 
-App-side caps bound the block: ~8 s no-speech timeout, ~20 s max recording, then Groq
-STT. The hook allows up to 120 s (`timeout: 130` in hooks.json).
+App-side caps bound the block: ~8 s no-speech timeout; a reply ends with its trailing silence
+and may run for up to 10 minutes (a watchdog — it was 90 s, which cut every longer dictation).
+A long recording goes to Groq STT in pieces of at most two minutes, cut where it is quietest,
+each tried up to three times; a piece lost for good leaves "[Parley: Hier fehlen etwa N
+Sekunden der Aufnahme …]" in its place and the rest goes on, and the recording is kept in
+`failed-recordings/` in the app-data folder.
 
 ## `POST /ready`
 Fired on skill activation to wake + greet. App plays a random pre-cached Jarvis clip.

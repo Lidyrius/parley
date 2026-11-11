@@ -407,7 +407,7 @@ final class PhoneListener: @unchecked Sendable {
         case callEnded(Data, spoke: Bool)      // the call ended while listening
     }
 
-    static let maxSeconds = 90.0
+    static let maxSeconds = UtteranceRecorder.maxSeconds
 
     private let link: any CallLink
     private let generation: Int

@@ -51,6 +51,15 @@ Do them by hand once before relying on Parley.
 - [ ] Have two Claude Code sessions (two panes) both in voice mode finish turns close together
 - [ ] Parley speaks them **one at a time** (FIFO); each reply lands in its own pane (routed by `$TMUX_PANE`)
 
+## A long reply
+
+- [ ] Answer a `<speak>` with a dictation of **three minutes or more** without long pauses (Mac
+      mic, and once in a call from the iPhone): Parley keeps listening past 90 s; the whole text
+      arrives in the session. The log shows `stt: 190 s in 2 pieces, 0 failed`.
+- [ ] Wi-Fi off right after such a dictation: a notification "Groq nicht erreichbar", the
+      recording lies in `~/Library/Application Support/Parley/failed-recordings/` (Windows:
+      `%APPDATA%\Parley\failed-recordings`).
+
 ## Überwachungsmodus (supervisor)
 
 Needs the Zentrale running (`/parley:voice` in its folder) and one other voice session ("Shirts").
