@@ -40,6 +40,7 @@ public sealed class Config
     public bool AutoAwayOnLock { get; init; }   // the PC locked for a minute counts as Unterwegs
     public bool BargeIn { get; init; } = true;  // talking over Parley stops it and it listens
     public bool Brief { get; init; }   // ohne Floskeln: no "N Updates", "Update zu X", thanks or ack line
+    public bool PlainCalls { get; init; }   // calls as before v8: streamed, no clips, no numbered mic ("Funkloch" off)
     public string AppIcon { get; init; } = "graphit";   // tray → App-Symbol (AppIcon.Choices id)
 
     public bool UseGoogle => GoogleKey.Length > 0;
@@ -116,6 +117,7 @@ public sealed class Config
                 AutoAwayOnLock = S("autoAwayOnLock") == "1",
                 BargeIn = S("bargeIn") != "0",
                 Brief = S("brief") == "1",
+                PlainCalls = S("plainCalls") == "1",
                 AppIcon = S("appIcon", "graphit"),
             };
         }

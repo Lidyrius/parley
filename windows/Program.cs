@@ -56,6 +56,7 @@ internal sealed class TrayApp : ApplicationContext
         _server.Sessions.OnLabel = label => Clips.Prerender(label, Config.Load());
         // iPhone (docs/IPHONE.md, v2): Unterwegs-Modus rings before a turn; a wake utterance is
         // routed to a session or the Zentrale. The phone's settings survive restarts.
+        RelayFrame.OffersClips = !Config.Load().PlainCalls;   // tray → "Funkloch-Schutz"
         _pipeline.Ring = label => Ringer.Ring(label);
         _pipeline.OthersWorking = id => serverRef?.Sessions.OthersWorking(id) ?? false;
         _pipeline.AfterWait = id => serverRef?.Sessions.AfterWait(id) ?? false;
@@ -140,6 +141,16 @@ internal sealed class TrayApp : ApplicationContext
         var barge = new ToolStripMenuItem("Parley unterbrechen (einfach reinreden)") { CheckOnClick = true, Checked = Config.Load().BargeIn };
         barge.CheckedChanged += (_, _) => Config.Merge(new Dictionary<string, string> { ["bargeIn"] = barge.Checked ? "1" : "0" });
         menu.Items.Add(barge);
+        // Funkloch-Schutz (protocol v8): a line is loaded whole before it plays, the phone's mic is
+        // kept through a dead zone. Off: calls as before — the way back should a phone misbehave.
+        var deadZone = new ToolStripMenuItem("Funkloch-Schutz (Zeile ganz laden, Mikrofon puffern)") { CheckOnClick = true, Checked = !Config.Load().PlainCalls };
+        deadZone.CheckedChanged += (_, _) =>
+        {
+            Config.Merge(new Dictionary<string, string> { ["plainCalls"] = deadZone.Checked ? "" : "1" });
+            RelayFrame.OffersClips = deadZone.Checked;
+            Log.Write($"calls: Funkloch-Schutz {(deadZone.Checked ? "an" : "aus")} (from the next call on)");
+        };
+        menu.Items.Add(deadZone);
         var brief = _briefItem = new ToolStripMenuItem("Ohne Floskeln (keine Ansagen, keine Bestätigung)") { CheckOnClick = true, Checked = Config.Load().Brief };
         brief.CheckedChanged += (_, _) => Config.Merge(new Dictionary<string, string> { ["brief"] = brief.Checked ? "1" : "" });
         menu.Items.Add(brief);

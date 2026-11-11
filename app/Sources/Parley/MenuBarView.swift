@@ -222,6 +222,8 @@ struct MenuBarView: View {
                         board.supervisor = on
                     }))
                 Toggle("Unterwegs, wenn der Mac gesperrt ist", isOn: $controller.autoAwayOnLock)
+                Toggle("Funkloch-Schutz (Zeile ganz laden, Mikrofon puffern)", isOn: $controller.deadZoneCalls)
+                    .help("Aus: Anrufe laufen wie früher gestreamt — falls ein iPhone damit Probleme hat")
                 Toggle("Unterbrechen (einfach reinreden)", isOn: $controller.bargeIn)
                 Toggle("Ohne Floskeln (keine Ansagen, keine Bestätigung)", isOn: $controller.brief)
                 if !controller.muted && FocusStatus.doNotDisturbActive() {

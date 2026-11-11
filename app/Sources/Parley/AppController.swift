@@ -44,6 +44,15 @@ final class AppController: ObservableObject {
         didSet { Keychain.set(brief ? "1" : "", for: .brief) }
     }
     // Barge-in at the Mac (menu: "Parley unterbrechen"): talking over Parley stops it, it listens.
+    /// Funkloch-Schutz (protocol v8): a line is loaded whole before it plays, the phone's mic is
+    /// kept through a dead zone. Off: calls as before — the way back should a phone misbehave.
+    @Published var deadZoneCalls = Keychain.get(.plainCalls) != "1" {
+        didSet {
+            Keychain.set(deadZoneCalls ? "" : "1", for: .plainCalls)
+            RelayFrame.offersClips = deadZoneCalls
+            Log.write("calls: Funkloch-Schutz \(deadZoneCalls ? "an" : "aus") (from the next call on)")
+        }
+    }
     @Published var bargeIn = Keychain.get(.bargeOff) != "1" {
         didSet {
             Keychain.set(bargeIn ? "" : "1", for: .bargeOff)
@@ -138,6 +147,7 @@ final class AppController: ObservableObject {
         phone.onWake = { server.wakeFromPhone() }
         server.remindersFile = Reminders.file
         server.snapshotsFile = Snapshots.file
+        RelayFrame.offersClips = deadZoneCalls
         server.supervisorFile = Supervisor.file
         server.missedFile = Missed.file
         server.ensureZentrale = {

@@ -137,11 +137,14 @@ public static class RelayFrame
         if (!body.StartsWith('{') || !body.EndsWith('}')) return null;
         var rest = body[1..].Trim();
         // `call`: the call protocol this host speaks (8: clips and a numbered mic, "Funkloch").
-        var head = "{\"t\":\"sessions\",\"at\":" + Num(atMs) + ",\"call\":" + Num(CallVersion);
+        var head = "{\"t\":\"sessions\",\"at\":" + Num(atMs) + (OffersClips ? ",\"call\":" + Num(CallVersion) : "");
         return head + (rest == "}" ? "" : ",") + rest;
     }
 
     public const int CallVersion = 8;
+    // The way back (tray → "Funkloch-Schutz" off): the host says nothing of v8 and takes a phone's
+    // "v":8 as a plain call — calls run streamed, as before. Set at launch and when the option changes.
+    public static volatile bool OffersClips = true;
 
     // v8: a clip's frames follow (from frame `start` on) …
     public static string Clip(int id, int start) => "{\"t\":\"clip\",\"id\":" + Num(id) + ",\"from\":" + Num(start) + "}";
@@ -180,7 +183,7 @@ public static class RelayFrame
                             root.TryGetProperty("down", out var down) && down.ValueKind == JsonValueKind.Number
                                 && down.TryGetInt32(out var rate) && rate == PhoneAudio.HiFiRate ? PhoneAudio.HiFiRate : PhoneAudio.SampleRate,
                             root.TryGetProperty("v", out var ver) && ver.ValueKind == JsonValueKind.Number
-                                && ver.TryGetInt32(out var speaks) && speaks >= CallVersion),
+                                && ver.TryGetInt32(out var speaks) && speaks >= CallVersion && OffersClips),
                         "end" => new PhoneCallState(false),
                         "idle" => new PhoneCallIdle(),
                         _ => null,

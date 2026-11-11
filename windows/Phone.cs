@@ -595,7 +595,7 @@ public sealed class PhoneLine
     // (v8) gets the whole line as a clip — with the beep when Parley listens after it (`beep`) —
     // and an older one hears it streamed as before; its beep stays the caller's own PlayAsync.
     // Rest: as PlayAsync. Beeped: the beep went with the line, the caller plays none.
-    public async Task<(byte[]? Rest, bool Beeped)> SpeakAsync(byte[] pcm, int sampleRate, bool beep = false, CancellationToken ct = default)
+    public async Task<(byte[]? Unplayed, bool Beeped)> SpeakAsync(byte[] pcm, int sampleRate, bool beep = false, CancellationToken ct = default)
     {
         if (!TakesClips) return (await PlayAsync(pcm, sampleRate, ct), false);
         var rest = await PlayClipAsync(pcm, sampleRate, beep, ct);
@@ -911,7 +911,7 @@ public static class PhoneCall
 
     public static void SetSpeaker(string label) => Line.SetSpeaker(label);
 
-    public static Task<(byte[]? Rest, bool Beeped)> SpeakAsync(byte[] pcm, int sampleRate, bool beep = false, CancellationToken ct = default) =>
+    public static Task<(byte[]? Unplayed, bool Beeped)> SpeakAsync(byte[] pcm, int sampleRate, bool beep = false, CancellationToken ct = default) =>
         Line.SpeakAsync(pcm, sampleRate, beep, ct);
 
     public static Task<bool> BeepClip() => Line.BeepClip();

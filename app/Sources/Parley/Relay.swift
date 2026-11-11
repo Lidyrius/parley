@@ -122,11 +122,15 @@ enum RelayFrame {
         guard body.hasPrefix("{"), body.hasSuffix("}") else { return nil }
         let rest = body.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
         // `call`: the call protocol this host speaks (8: clips and a numbered mic, "Funkloch").
-        let head = #"{"t":"sessions","at":\#(Int64((at.timeIntervalSince1970 * 1000).rounded())),"call":\#(callVersion)"#
+        let head = #"{"t":"sessions","at":\#(Int64((at.timeIntervalSince1970 * 1000).rounded()))\#(offersClips ? #","call":\#(callVersion)"# : "")"#
         return head + (rest == "}" ? "" : ",") + rest
     }
 
     static let callVersion = 8
+    // The way back (Optionen → "Funkloch-Schutz" off): the host says nothing of v8 and takes a
+    // phone's `"v":8` as a plain call — calls run streamed, as before. Set once at launch and
+    // when the option changes.
+    nonisolated(unsafe) static var offersClips = true
 
     // v8: a clip's frames follow (from frame `from` on) …
     static func clip(id: Int, from: Int) -> String { #"{"t":"clip","id":\#(id),"from":\#(from)}"# }
@@ -150,7 +154,7 @@ enum RelayFrame {
         case "call":
             switch f["state"] as? String {
             case "start": return .call(true, down: f["down"] as? Int == PhoneAudioFormat.hiFiRate ? PhoneAudioFormat.hiFiRate : PhoneAudioFormat.sampleRate,
-                                       clips: (f["v"] as? Int ?? 0) >= callVersion)
+                                       clips: offersClips && (f["v"] as? Int ?? 0) >= callVersion)
             case "end": return .call(false)
             case "idle": return .callIdle
             default: return nil

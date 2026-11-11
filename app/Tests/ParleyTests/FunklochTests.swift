@@ -158,6 +158,14 @@ final class FunklochTests: XCTestCase {
         XCTAssertEqual(RelayFrame.micGot(9), #"{"t":"mic","got":9}"#)
     }
 
+    // Optionen → "Funkloch-Schutz" off: the host says nothing of v8 and takes every call as a plain one.
+    func testTheWayBackToPlainCalls() {
+        RelayFrame.offersClips = false
+        defer { RelayFrame.offersClips = true }
+        XCTAssertEqual(RelayFrame.sessions("{}", at: Date(timeIntervalSince1970: 1)), #"{"t":"sessions","at":1000}"#)
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"start","down":24000,"v":8}"#), .call(true, down: 24000, clips: false))
+    }
+
     // MARK: - the hub: a numbered mic, and a call that waits
 
     private func numbered(_ seq: UInt32, _ fill: UInt8 = 1) -> Data {
