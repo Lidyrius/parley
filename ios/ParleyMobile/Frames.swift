@@ -38,6 +38,7 @@ struct Session: Identifiable, Equatable, Sendable {
     var stats: Stats?
     var shared: [ShareTag] = []     // v7: the guests it is shared with (Sir's side)
     var asking: String?             // v7: a question waits for this guest
+    var zentrale = false            // the Zentrale's row (Überwachungsmodus: the one main card)
 }
 
 /// v7: a question for this phone's owner as a guest (`ask` frame).
@@ -100,10 +101,13 @@ struct ReminderRow: Identifiable, Equatable, Sendable {
     var to = ""                     // a session's name, or "Sir"
     var at: Double?
     var after: String?
+    var every: Double?              // minutes: it comes again and again
 }
 
 /// A `sessions` frame: the host's `/sessions` JSON plus `at`, the host clock when it was sent.
 struct Snapshot: Equatable, Sendable {
+    /// Überwachungsmodus on the host: only the Zentrale talks to Sir, the others report to it.
+    var supervisor = false
     var sessions: [Session] = []
     var today: Today?
     var reminders: [ReminderRow] = []
@@ -486,7 +490,7 @@ extension Stats: Decodable {
 }
 
 extension Session: Decodable {
-    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared, asking }
+    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared, asking, zentrale }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)  // the one field a tile cannot do without
@@ -503,6 +507,7 @@ extension Session: Decodable {
         stats = c.lenient(.stats)
         shared = (c.lenient(.shared) as Lossy<ShareTag>?)?.items ?? []
         asking = c.lenient(.asking)
+        zentrale = c.lenient(.zentrale) ?? false
     }
 }
 
@@ -543,7 +548,7 @@ extension Today: Decodable {
 }
 
 extension ReminderRow: Decodable {
-    private enum K: String, CodingKey { case id, text, to, at, after }
+    private enum K: String, CodingKey { case id, text, to, at, after, every }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)
@@ -551,13 +556,15 @@ extension ReminderRow: Decodable {
         to = c.lenient(.to) ?? ""
         at = c.lenient(.at)
         after = c.lenient(.after)
+        every = c.lenient(.every)
     }
 }
 
 extension Snapshot: Decodable {
-    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at }
+    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
+        supervisor = c.lenient(.supervisor) ?? false
         sessions = (c.lenient(.sessions) as Lossy<Session>?)?.items ?? []
         today = c.lenient(.today)
         reminders = (c.lenient(.reminders) as Lossy<ReminderRow>?)?.items ?? []

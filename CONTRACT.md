@@ -20,7 +20,9 @@ Request:
   "cwd": "/Users/sydney/workspace/privat/parley",
   "project": "parley",
   "tmux_pane": "%3",              // "" outside tmux — no longer used for routing
-  "speak": "Tests grün. Soll ich das Log-Level senken, Sir?"
+  "speak": "Tests grün. Soll ich das Log-Level senken, Sir?",
+  "context": "…"                  // optional: the prose before the final tag (no <reply> lines),
+                                  // its last 1500 characters — the Überwachungsmodus report carries it
 }
 ```
 Response (after the user stops talking / silence / timeout):
@@ -57,7 +59,8 @@ announcement "Update zu …", and the `label` of its queued turn). Names survive
 ```json
 { "cwd": "/abs/path", "instruction": "…", "start": true,
   "resume": "<past session id>",            // optional: continue that session (cwd defaults to its own)
-  "name": "Literally Apps SEO" }            // optional: that one session's own name
+  "name": "Literally Apps SEO",             // optional: that one session's own name
+  "from": "Zentrale" }                      // optional: who asks — the session reads "[Auftrag von Zentrale] …"
 ```
 → `{"ok":true,"delivered":"session"|"pending","started":bool}`.
 - Without `name`: the folder's running session gets the instruction; none → one is started and
@@ -78,6 +81,43 @@ Zentrale as an instruction with the tab's last lines.
 - `GET /starting` → `{"starting":[{"cwd","seconds","screen","readable"}]}` — the starts on the way.
 - `POST /starting/answer` `{"cwd","text"}` → types the one-line `text` and Enter into that start's
   tab: `200 {"ok":true}` · `404` no start on the way there · `409` tab gone · `501` Windows.
+
+### Überwachungsmodus: `GET /supervisor`, `POST /supervisor` (local, the Zentrale)
+Only the Zentrale talks to Sir. While it is on, a `POST /turn` of any other session is **not
+voiced**: the host answers it empty at once (`{"transcript":"","park":true}` — the hook parks and
+polls `/wake`; a mod-carried turn just ends, its session is parked by its presence) and hands the
+Zentrale a report as an instruction:
+```
+[Bericht von <label> · Frage an Sir | fertig | arbeitet im Hintergrund weiter] <the spoken line>
+Erwartete Antworten: <reply on> · <reply on>            (a <speak> with predicted answers)
+Kontext (Auszug aus ihrer letzten Nachricht):           (when the turn carried `context`)
+…
+(<speak>: Frage oder Rückfrage — die Session wartet geparkt auf Antwort. Session <id>, Ordner <cwd>.)
+```
+`<speak>` = a question (the session waits for an answer), `<speak-end>` = done. Reports wait in
+the host until the Zentrale can take them (reachable, nothing else waiting for it, not talking to
+Sir right now), several at once joined by a blank line; none is dropped — a Zentrale that is not
+running is started. `after` reminders fire as always. The Zentrale answers a session with
+`POST /dispatch` (`resume: <its id>` or `cwd`, plus `from: "Zentrale"`); while the mode is on the
+dispatched instruction also says that the answer goes to the Zentrale. "Hey Parley" goes straight
+to the Zentrale.
+```json
+POST /supervisor  { "on": true, "exempt": ["Shirts"] }   // either or both; exempt: names or ids that keep talking to Sir
+→ { "ok": true, "on": true, "exempt": ["Shirts"], "zentrale": "<its session id, when it runs>", "waiting": 0 }
+```
+`GET /supervisor` answers the same. Kept in `supervisor.json` beside `reminders.json` (survives
+restarts and updates). `GET /sessions` carries `"supervisor": true` while it is on (omitted
+otherwise) and `"zentrale": true` on the Zentrale's row: the apps then show the Zentrale as the
+one card and the other sessions (name, state, last line) folded away below it; the Live Activity
+shows the Zentrale alone.
+
+### `POST /remind` — `every`
+`{"to":"Zentrale","text":"Prüfe Mails, Teams und die Sessions","every":5}` — a Wiedervorlage that
+comes again every N minutes (≥ 1) until `POST /remind/cancel`; first after one interval, or at
+`at` / `in` when given (never with `after`). It stays in `reminders.json` across restarts; rounds
+missed while the host was off or asleep are skipped, not caught up, and a round is skipped while
+its session works or talks to Sir. The session reads "Wiedervorlage (alle 5 Minuten): …". Rows of
+`GET /remind` and `/sessions` carry `every`.
 
 ### `POST /rename`
 ```json

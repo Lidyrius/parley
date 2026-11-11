@@ -33,6 +33,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _callStatus = new("iPhone: Anruf aktiv") { Enabled = false, Visible = false };
     private readonly ToolStripMenuItem _awayStatus = new("Unterwegs-Modus an") { Enabled = false, Visible = false };
     private ToolStripMenuItem? _briefItem;   // tray "Ohne Floskeln" (the phone can set it too)
+    private ToolStripMenuItem? _supervisorItem;   // tray "Überwachungsmodus" (the Zentrale can set it too)
     private readonly ToolStripMenuItem _snapshots = new("Snapshots");
     private RelayClient? _relay;
     private readonly ShareHub _shares;   // v7: sessions shared with a guest (Shares.cs)
@@ -67,7 +68,7 @@ internal sealed class TrayApp : ApplicationContext
             _pendingPalette = (name, frame);
             _ = PhoneCall.Reply(frame);
         };
-        _pipeline.Route = (text, config) => _server.Delivery.Route(text, config);
+        _pipeline.Route = (text, config) => _server.Delivery.Route(text, config, _server.SupervisorOn());
         PhoneCall.LoadSettings(Config.Load());
         // v7: shared sessions — Sir's phone hears who asks to join; a guest's question
         // (<speak to="Max">) goes to him, and unanswered comes back to Sir's voice.
@@ -87,7 +88,11 @@ internal sealed class TrayApp : ApplicationContext
 
         var menu = new ContextMenuStrip();
         // Resumable (parked) sessions are inserted at the top on open.
-        menu.Opening += (_, _) => { RefreshParkedMenu(menu); RefreshSnapshotsMenu(); RefreshSharesMenu(menu); RefreshRelayStatus(); };
+        menu.Opening += (_, _) =>
+        {
+            RefreshParkedMenu(menu); RefreshSnapshotsMenu(); RefreshSharesMenu(menu); RefreshRelayStatus();
+            if (_supervisorItem is not null) _supervisorItem.Checked = _server.SupervisorOn();   // POST /supervisor may have set it
+        };
         // Snapshots (Snapshots.cs), below the parked ones: rebuilt on open.
         menu.Items.Add(_snapshots);
         menu.Items.Add(new ToolStripSeparator());
@@ -119,6 +124,10 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.Add(_relayStatus);
         menu.Items.Add(_callStatus);
         menu.Items.Add(_awayStatus);
+        // Überwachungsmodus (Supervisor.cs): only the Zentrale talks to Sir, the others report to it.
+        var supervisor = _supervisorItem = new ToolStripMenuItem("Überwachungsmodus (nur die Zentrale spricht)") { CheckOnClick = true, Checked = _server.SupervisorOn() };
+        supervisor.CheckedChanged += (_, _) => _server.SetSupervisor(supervisor.Checked);
+        menu.Items.Add(supervisor);
         // The PC locked for a minute counts as Unterwegs (off by default: nothing rings at night unasked).
         var lockAway = new ToolStripMenuItem("Unterwegs, wenn der PC gesperrt ist") { CheckOnClick = true, Checked = Config.Load().AutoAwayOnLock };
         lockAway.CheckedChanged += (_, _) =>

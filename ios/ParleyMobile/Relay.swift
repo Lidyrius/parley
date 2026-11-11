@@ -93,7 +93,7 @@ final class Relay {
         isDemo = true
         link = .connected
         hostOnline = true
-        if case .sessions(var s)? = Frame.decode(Demo.frame(now: now)) {
+        if case .sessions(var s)? = Frame.decode(Demo.frame(now: now, supervisor: ProcessInfo.processInfo.arguments.contains("-demoSupervisor"))) {
             if let only { s = Snapshot(sessions: s.sessions.filter { $0.id == only }) } else { WidgetFeed.publish(s) }
             snapshot = s
         }

@@ -73,12 +73,18 @@ enum LiveActivity {
 
     /// GET /sessions (the registry's JSON, times in epoch ms) → the activity's content. Stopped
     /// sessions are left out; the line is the most urgent session's last spoken one.
-    static func content(fromSessions json: String, ask: Ask? = nil, rows maxRows: Int = maxRows) -> Content {
+    /// Überwachungsmodus (`supervisor` in the JSON): the Zentrale alone — it is the one that talks
+    /// to Sir; `alive` still counts every session. `all`: every session anyway (the widgets' list).
+    static func content(fromSessions json: String, ask: Ask? = nil, rows maxRows: Int = maxRows, all: Bool = false) -> Content {
         guard let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
               let list = obj["sessions"] as? [[String: Any]] else { return Content() }
+        let only = !all && obj["supervisor"] as? Bool == true
         var rows: [(row: Row, line: String?)] = []
+        var alive = 0
         for s in list {
             guard let id = s["id"] as? String, let state = s["state"] as? String, state != "stopped" else { continue }
+            alive += 1
+            if only, s["zentrale"] as? Bool != true { continue }
             func sec(_ key: String) -> Double? { (s[key] as? NSNumber).map { $0.doubleValue / 1000 } }
             let label = (s["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (s["project"] as? String) ?? String(id.prefix(8))
             let row = Row(id: id, label: String(label.prefix(32)), state: state, since: sec("since") ?? 0,
@@ -87,7 +93,7 @@ enum LiveActivity {
         }
         rows.sort { rank($0.row) != rank($1.row) ? rank($0.row) < rank($1.row) : $0.row.since > $1.row.since }
         let spoken = rows.first { !($0.line ?? "").isEmpty }
-        return Content(sessions: rows.prefix(maxRows).map(\.row), alive: rows.count,
+        return Content(sessions: rows.prefix(maxRows).map(\.row), alive: alive,
                        line: spoken?.line.map { String($0.prefix(120)) }, from: spoken?.row.label, ask: ask)
     }
 
@@ -110,7 +116,7 @@ enum LiveActivity {
     }
 
     static func widget(fromSessions json: String) -> Widget {
-        let c = content(fromSessions: json, rows: 8)
+        let c = content(fromSessions: json, rows: 8, all: true)
         var w = Widget(sessions: c.sessions, line: c.line, from: c.from)
         if let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
            let today = obj["today"] as? [String: Any] {

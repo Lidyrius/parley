@@ -33,3 +33,11 @@ Go through it once; the log is `%APPDATA%\Parley\debug.log` (look for the quoted
       Check that Parley's own voice on loudspeakers does NOT trigger it.
 - [ ] **Zentrale:** "schließ Session X" closes that terminal / desktop session; "mach mir eine
       Farbpalette …" lands on the phone under Eigene.
+- [ ] **Überwachungsmodus:** switch it on (tray / panel, or `curl -X POST :8787/supervisor -d "{\"on\":true}"`);
+      the panel shows the Zentrale as the one card and "Weitere Sessions N" folded below. Another
+      session's `<speak>` is NOT spoken; the Zentrale gets "[Bericht von … · Frage an Sir] …" and
+      tells Sir. A `/dispatch` with `"from":"Zentrale"` arrives as "[Auftrag von Zentrale] …".
+      Restart Parley → the mode is still on (`supervisor.json`). Off → every session speaks again.
+- [ ] **Wiederkehrende Wiedervorlage:** `POST /remind {"to":"Zentrale","text":"Prüfe Mails","every":1}`
+      → the Zentrale is woken each minute (not while it works), still listed after a restart,
+      gone after `POST /remind/cancel`.

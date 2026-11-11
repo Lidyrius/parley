@@ -51,6 +51,26 @@ Do them by hand once before relying on Parley.
 - [ ] Have two Claude Code sessions (two panes) both in voice mode finish turns close together
 - [ ] Parley speaks them **one at a time** (FIFO); each reply lands in its own pane (routed by `$TMUX_PANE`)
 
+## Überwachungsmodus (supervisor)
+
+Needs the Zentrale running (`/parley:voice` in its folder) and one other voice session ("Shirts").
+
+- [ ] Menu bar → Optionen → **Überwachungsmodus** on (or `curl -sS -X POST :8787/supervisor -d '{"on":true}'`);
+      `curl -sS :8787/supervisor` → `"on":true` and the Zentrale's id
+- [ ] The menu shows **Überwachung**: the Zentrale as the one card, "Weitere Sessions N" folded below;
+      the iPhone overview the same; the Live Activity lists the Zentrale alone
+- [ ] Let Shirts finish a turn with `<speak>…</speak>`: Parley stays **silent**, Shirts shows "geparkt"
+      with its line; within a few seconds the Zentrale gets "[Bericht von Shirts · Frage an Sir] …"
+      (with the excerpt and the session id) and tells Sir
+- [ ] Answer through the Zentrale: it dispatches with `from: "Zentrale"`; Shirts reads
+      "[Auftrag von Zentrale] …" and goes on; its next line is a report again
+- [ ] Two sessions finish close together while the Zentrale talks: both reports arrive after
+      Sir's answer, none lost
+- [ ] `curl -sS -X POST :8787/remind -d '{"to":"Zentrale","text":"Prüfe Mails","every":1}'` → the
+      Zentrale is woken each minute (not while it works); still listed after a Parley restart;
+      `POST /remind/cancel` ends it
+- [ ] Quit and reopen Parley: the mode is still on. Switch it off: every session talks to Sir again
+
 ## No-pane fallback
 
 - [ ] Run a voice session **outside** tmux (empty `$TMUX_PANE`)

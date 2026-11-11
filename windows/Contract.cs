@@ -33,6 +33,9 @@ public sealed class TurnPayload
     // Hookless (docs/HOOKLESS.md): the mod carries the turn — queued, its reply delivered later.
     [JsonPropertyName("async"), JsonConverter(typeof(LooseBool))] public bool Async { get; set; }
     [JsonPropertyName("turn_id")] public string? TurnId { get; set; }
+    // Überwachungsmodus (Supervisor.cs): an excerpt of the last assistant message beside the
+    // spoken line — the Zentrale's report carries it.
+    [JsonPropertyName("context")] public string? Context { get; set; }
 
     [JsonIgnore] public bool WantsListen => Listen ?? true;
     [JsonIgnore] public string SpokenLabel => string.IsNullOrEmpty(Label) ? Project : Label!;
@@ -130,6 +133,8 @@ public sealed class DispatchPayload
     // That one session's own name ("Literally Apps SEO"); without `resume` a new session beside
     // one already running in the folder.
     [JsonPropertyName("name")] public string? Name { get; set; }
+    // Who asks ("Zentrale"): the session reads "[Auftrag von Zentrale] …".
+    [JsonPropertyName("from")] public string? From { get; set; }
 
     public static DispatchPayload? Decode(string body)
     {

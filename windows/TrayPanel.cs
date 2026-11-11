@@ -38,6 +38,7 @@ public sealed class TrayPanel : Form
     private readonly List<(Rectangle r, Action a)> _hits = new();
     private JsonElement _board;
     private DateTime _loaded;
+    private bool _others;   // Überwachungsmodus: the other sessions, unfolded
 
     public TrayPanel(Hooks hooks)
     {
@@ -98,12 +99,31 @@ public sealed class TrayPanel : Form
         _board.ValueKind == JsonValueKind.Object && _board.TryGetProperty("sessions", out var s) && s.ValueKind == JsonValueKind.Array
             ? s.EnumerateArray().ToList() : new();
 
+    // Überwachungsmodus (/sessions says `supervisor`): the Zentrale's row (`zentrale`) is the one
+    // card — it alone talks to Sir —, the others fold away below it.
+    private bool Supervised() =>
+        _board.ValueKind == JsonValueKind.Object && _board.TryGetProperty("supervisor", out var s) && s.ValueKind == JsonValueKind.True;
+
+    private static bool IsZentrale(JsonElement r) => r.TryGetProperty("zentrale", out var z) && z.ValueKind == JsonValueKind.True;
+
     private int Measure()
     {
-        var rows = Rows().Take(MaxRows).Sum(RowHeight) + GuestHub.Shares.Sum(GuestHeight);
-        return S(16 + 44 + 46 + 120 + 14 + 44) + Math.Max(S(56), rows) + (Rows().Count > MaxRows ? S(24) : 0)
-            + (GuestHub.Notice is null ? 0 : S(24)) + S(14 + 40 + 16);
+        var rows = Rows();
+        int sessions;
+        if (Supervised())
+        {
+            var zi = rows.FindIndex(IsZentrale);
+            var rest = rows.Where(r => !IsZentrale(r)).ToList();
+            sessions = (zi >= 0 ? RowHeight(rows[zi]) : S(64)) + S(40);
+            if (rest.Count > 0 || GuestHub.Shares.Count > 0) sessions += S(32) + (_others ? ListHeight(rest) : 0);
+        }
+        else sessions = ListHeight(rows);
+        return S(16 + 44 + 46 + 120 + 14 + 44) + sessions + (GuestHub.Notice is null ? 0 : S(24)) + S(14 + 40 + 16);
     }
+
+    // A card of rows (at most MaxRows, "+ N weitere" below it) and the guests' sessions.
+    private int ListHeight(List<JsonElement> rows) =>
+        Math.Max(S(56), rows.Take(MaxRows).Sum(RowHeight) + GuestHub.Shares.Sum(GuestHeight)) + (rows.Count > MaxRows ? S(24) : 0);
 
     private int GuestHeight(GuestShare s) =>
         S(48) + (!s.Active || GuestLine(s) is not null ? S(22) : 0) + (s.Active ? S(38) : 0);
@@ -189,39 +209,91 @@ public sealed class TrayPanel : Form
 
         // Sessions + Anrufen
         var rows = Rows();
-        Text(g, "Sessions", head, Ink, pad, y + S(8));
+        var supervised = Supervised();
+        var heading = supervised ? "Überwachung" : "Sessions";
+        Text(g, heading, head, Ink, pad, y + S(8));
         var guests = GuestHub.Shares;
-        Text(g, $"{rows.Count + guests.Count}", head, Dim, pad + (int)g.MeasureString("Sessions", head).Width, y + S(8));
+        Text(g, $"{rows.Count + guests.Count}", head, Dim, pad + (int)g.MeasureString(heading, head).Width, y + S(8));
         var call = new Rectangle(Width - pad - S(100), y + S(4), S(100), S(32));
         Fill(g, call, PhoneCall.Away ? Color.FromArgb(100, Accent) : Accent, call.Height / 2);
         Text(g, "Anrufen", bodyBold, Color.White, call, center: true);
         if (!PhoneCall.Away) Hit(call, _hooks.Call);
         y += S(44);
 
-        var listH = Math.Max(S(56), rows.Take(MaxRows).Sum(RowHeight) + guests.Sum(GuestHeight));
-        var list = new Rectangle(pad, y, w, listH);
-        Fill(g, list, Card, S(16));
-        if (rows.Count == 0 && guests.Count == 0)
-            Text(g, "Keine Session. Starte /parley:voice in Claude Code.", body, Dim, list.X + S(14), list.Y + S(18));
-        var ry = y;
-        foreach (var (r, i) in rows.Take(MaxRows).Select((r, i) => (r, i)))
+        // A card of rows (at most MaxRows, "+ N weitere" below it) and the guests' sessions → the y below it.
+        int DrawList(List<JsonElement> shown, int at)
         {
-            var h = RowHeight(r);
-            DrawRow(g, r, new Rectangle(pad, ry, w, h), i > 0, now, head, body, quote, bodyBold);
-            ry += h;
+            var listH = Math.Max(S(56), shown.Take(MaxRows).Sum(RowHeight) + guests.Sum(GuestHeight));
+            var list = new Rectangle(pad, at, w, listH);
+            Fill(g, list, Card, S(16));
+            if (shown.Count == 0 && guests.Count == 0)
+                Text(g, "Keine Session. Starte /parley:voice in Claude Code.", body, Dim, list.X + S(14), list.Y + S(18));
+            var ry = at;
+            foreach (var (r, i) in shown.Take(MaxRows).Select((r, i) => (r, i)))
+            {
+                var h = RowHeight(r);
+                DrawRow(g, r, new Rectangle(pad, ry, w, h), i > 0, now, head, body, quote, bodyBold);
+                ry += h;
+            }
+            foreach (var (gs, i) in guests.Select((gs, i) => (gs, i)))
+            {
+                var h = GuestHeight(gs);
+                DrawGuest(g, gs, new Rectangle(pad, ry, w, h), i > 0 || shown.Count > 0, now, head, body, quote, bodyBold);
+                ry += h;
+            }
+            at += listH;
+            if (shown.Count > MaxRows)
+            {
+                Text(g, $"+ {shown.Count - MaxRows} weitere", small, Dim, pad + S(4), at + S(4));
+                at += S(24);
+            }
+            return at;
         }
-        foreach (var (gs, i) in guests.Select((gs, i) => (gs, i)))
+
+        if (supervised)
         {
-            var h = GuestHeight(gs);
-            DrawGuest(g, gs, new Rectangle(pad, ry, w, h), i > 0 || rows.Count > 0, now, head, body, quote, bodyBold);
-            ry += h;
+            // Überwachungsmodus: the Zentrale as the one card, the others (name, state, last line)
+            // folded away below it — a click on "Weitere Sessions" unfolds them.
+            var zi = rows.FindIndex(IsZentrale);
+            var rest = rows.Where(r => !IsZentrale(r)).ToList();
+            var one = new Rectangle(pad, y, w, zi >= 0 ? RowHeight(rows[zi]) : S(64));
+            Fill(g, one, Card, S(16));
+            if (zi >= 0)
+            {
+                using var clip = WinUI.Round(one, S(16));
+                g.SetClip(clip);   // a live row's tint keeps the card's corners
+                DrawRow(g, rows[zi], one, false, now, head, body, quote, bodyBold);
+                g.ResetClip();
+            }
+            else
+                Text(g, "Die Zentrale läuft gerade nicht — Parley startet sie mit dem nächsten Bericht.", body, Dim,
+                     new Rectangle(one.X + S(14), one.Y + S(13), one.Width - S(28), S(38)), wrap: true);
+            y += one.Height;
+            Text(g, "Nur die Zentrale spricht mit dir. Die anderen berichten an sie.", small, Dim,
+                 new Rectangle(pad + S(4), y + S(6), w - S(8), S(32)), wrap: true);
+            y += S(40);
+            if (rest.Count > 0 || guests.Count > 0)
+            {
+                var fold = new Rectangle(pad, y, w, S(32));
+                var mid = fold.Y + fold.Height / 2;
+                using (var arrow = new SolidBrush(Dim))
+                    g.FillPolygon(arrow, _others
+                        ? new[] { new Point(pad + S(4), mid - S(3)), new Point(pad + S(14), mid - S(3)), new Point(pad + S(9), mid + S(3)) }
+                        : new[] { new Point(pad + S(6), mid - S(5)), new Point(pad + S(6), mid + S(5)), new Point(pad + S(12), mid) });
+                var tx = pad + S(22);
+                Text(g, "Weitere Sessions", bodyBold, Ink, tx, fold.Y + S(7));
+                tx += (int)g.MeasureString("Weitere Sessions", bodyBold).Width;
+                var count = $"{rest.Count + guests.Count}";
+                Text(g, count, body, Dim, tx, fold.Y + S(7));
+                tx += (int)g.MeasureString(count, body).Width + S(4);
+                var busy = rest.Count(r => Str(r, "state") is "working" or "background");
+                if (busy > 0) Text(g, $"· {busy} arbeiten", small, Working, tx, fold.Y + S(9));
+                Hit(fold, () => _others = !_others);
+                y += S(32);
+                if (_others) y = DrawList(rest, y);
+            }
         }
-        y += listH;
-        if (rows.Count > MaxRows)
-        {
-            Text(g, $"+ {rows.Count - MaxRows} weitere", small, Dim, pad + S(4), y + S(4));
-            y += S(24);
-        }
+        else y = DrawList(rows, y);
         if (GuestHub.Notice is { } note)
         {
             Text(g, note, small, Dim, new Rectangle(pad, y + S(6), w, S(18)));
@@ -468,8 +540,10 @@ public sealed class TrayPanel : Form
     private static void Text(Graphics g, string s, Font f, Color c, int x, int y) =>
         TextRenderer.DrawText(g, s, f, new Point(x, y), c, TextFormatFlags.NoPadding);
 
-    private static void Text(Graphics g, string s, Font f, Color c, Rectangle r, bool center = false, bool alignRight = false) =>
-        TextRenderer.DrawText(g, s, f, r, c, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine
+    // `wrap`: over several lines, as far as `r` reaches (else one line, cut with an ellipsis).
+    private static void Text(Graphics g, string s, Font f, Color c, Rectangle r, bool center = false, bool alignRight = false, bool wrap = false) =>
+        TextRenderer.DrawText(g, s, f, r, c, TextFormatFlags.NoPadding
+            | (wrap ? TextFormatFlags.WordBreak : TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine)
             | (center ? TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter : alignRight ? TextFormatFlags.Right : 0));
 
     private void Hit(Rectangle r, Action a) => _hits.Add((r, a));

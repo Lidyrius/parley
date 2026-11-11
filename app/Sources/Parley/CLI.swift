@@ -25,7 +25,7 @@ enum ParleyMain {
         }
 
         if let i = args.firstIndex(of: "--render-menu"), i + 1 < args.count {
-            MainActor.assumeIsolated { MenuSnapshot.render(to: args[i + 1], dark: args.contains("dark")) }
+            MainActor.assumeIsolated { MenuSnapshot.render(to: args[i + 1], dark: args.contains("dark"), supervisor: args.contains("supervisor")) }
             return
         }
 

@@ -74,6 +74,15 @@ export function turnParts(msg: string, spoken: { text: string; listen: boolean }
 
 // The app overlay's motion (RecordingHUD.swift): not a scrolling sample history but one
 // travelling wave whose height follows the eased volume, tapered to the ends. Period 2π.
+// Überwachungsmodus: an excerpt beside the spoken line — the prose before the final tag, without
+// <reply> lines, its last 1500 characters (whole ones). The app's report to the Zentrale carries it.
+export function contextOf(msg: string): string {
+  const speak = [...msg.matchAll(/<speak(?:\s+to="[^"<>]{0,40}")?>/g)].at(-1)?.index ?? -1
+  const cut = Math.max(speak, msg.lastIndexOf('<speak-end>'))
+  const prose = (cut < 0 ? msg : msg.slice(0, cut)).replace(/<reply\b[^>]*>[\s\S]*?<\/reply>/g, '').trim()
+  return Array.from(prose).slice(-1500).join('')
+}
+
 export function bar(i: number, n: number, p: number): number {
   const env = Math.sin((i / (n - 1)) * Math.PI)
   return env * Math.max(0, 0.55 + 0.3 * Math.sin(p + i * 0.55) + 0.15 * Math.sin(2 * p + i * 0.22))
@@ -476,12 +485,14 @@ export const register: Register = on => {
       const sid = e.session_id || (await $.session.id())
       const cwd = home || e.cwd
       const turn = `${sid}:${await $.clock.now()}`
+      const context = contextOf(e.last_assistant_message ?? '')
       const body = JSON.stringify({
         event: 'turn', session_id: sid, cwd, project: basename(cwd),
         tmux_pane: (await $.env.get('TMUX_PANE').catch(() => undefined)) ?? '',
         speak: parts.speak, label: await readLabel($, cwd), listen: spoken.listen,
         ...(parts.replies.length ? { replies: parts.replies } : {}), ...(parts.slides.length ? { slides: parts.slides } : {}),
         ...(spoken.to ? { to: spoken.to } : {}), async: true, turn_id: turn,
+        ...(context ? { context } : {}),
       })
       const res = await $.http.fetch(`${APP}/turn`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => null)
       let queued = false

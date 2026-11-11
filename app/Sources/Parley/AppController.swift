@@ -138,6 +138,11 @@ final class AppController: ObservableObject {
         phone.onWake = { server.wakeFromPhone() }
         server.remindersFile = Reminders.file
         server.snapshotsFile = Snapshots.file
+        server.supervisorFile = Supervisor.file
+        server.ensureZentrale = {
+            let z = ZentraleSettings.load()
+            if (try? Zentrale.ensure(z, template: Zentrale.templateDir())) == true { Log.write("zentrale: created \(z.zentraleDir)") }
+        }
         server.sessions.namesFile = Reminders.file.deletingLastPathComponent().appendingPathComponent("session-names.json")
         server.onReminded = { r in Notifier.notify(title: "Parley · Wiedervorlage", body: "An \(r.label): \(r.text)") }
         server.onPalette = { [weak self] name, frame in
@@ -999,7 +1004,9 @@ final class AppController: ObservableObject {
         let text = await transcribe(wav, config: config)
         guard !text.isEmpty else { Log.write("wake: nothing said"); return none }
 
-        let target = await WakeRouter.route(text, sessions: server.routeTargets(), apiKey: config.groqKey) { req in
+        // Überwachungsmodus: Sir talks to the Zentrale only — it passes things on itself.
+        let target = server.supervisorOn() ? RouteTarget.zentrale
+            : await WakeRouter.route(text, sessions: server.routeTargets(), apiKey: config.groqKey) { req in
             guard let (data, resp) = try? await URLSession.shared.data(for: req),
                   (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
             return data

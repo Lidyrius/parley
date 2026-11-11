@@ -18,6 +18,9 @@ struct TurnPayload: Codable, Equatable {
     // comes of it reaches the session as a delivery on its /presence.
     var async: Bool? = nil
     var turn_id: String? = nil
+    // Überwachungsmodus (Supervisor.swift): an excerpt of the last assistant message beside the
+    // spoken line — the Zentrale's report carries it.
+    var context: String? = nil
 
     var spokenLabel: String { (label?.isEmpty == false ? label : nil) ?? project }
     var wantsListen: Bool { listen ?? true }
@@ -126,6 +129,7 @@ struct DispatchPayload: Codable, Equatable {
     var resume: String?       // a past session's id: started as `claude --resume <id>`
     var name: String?         // that one session's own name ("Literally Apps SEO"); without
                               // `resume` a new session beside one already running in the folder
+    var from: String?         // who asks ("Zentrale"): the session reads "[Auftrag von Zentrale] …"
 }
 
 // POST /close — end running sessions: one id, several, or every running one of a project

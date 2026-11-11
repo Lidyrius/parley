@@ -71,6 +71,10 @@ the blocking hook. Contract: [`docs/HOOKLESS.md`](docs/HOOKLESS.md).
 - ✋ **Barge-in** — just talk over Parley ("Stopp", or anything) and it stops and listens.
 - 🗓️ **Wiedervorlage** — "remind Shirts tomorrow at nine to run the tests", "when Shirts is
   done, deploy", or a reminder for yourself; handed over at the time, even to a closed session.
+  Recurring too ("every five minutes, check the mail").
+- 🧭 **Überwachungsmodus** — one voice instead of many: only the Zentrale talks to you; every
+  other session reports to it, and it delegates, keeps a status file per project and bundles
+  the questions. The apps show the Zentrale as the one card, the rest folded away.
 - 🌊 **Live waveform pill** — a floating, always-on-top capsule shows it's listening and
   a volume-pulsing orb, so you know you're heard.
 - ⏯️ **Smart media pause** — pauses YouTube/Spotify while speaking, resumes after —

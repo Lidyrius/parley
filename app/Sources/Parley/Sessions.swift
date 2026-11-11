@@ -144,6 +144,15 @@ final class SessionRegistry {
         }
     }
 
+    // Überwachungsmodus: its turn went to the Zentrale as a report — the line is its last one,
+    // but it never held the voice.
+    func reported(id: String, speak: String) {
+        update(id) { e, t in
+            e.hookAt = t
+            e.lastLine = speak
+        }
+    }
+
     // The turn's reply went back to the hook: wait, park, inject a transcript, or end.
     func finished(id: String, reply: TurnReply) {
         if activeId == id { activeId = nil }
@@ -451,6 +460,10 @@ final class SessionRegistry {
     // The people a session is shared with (Shares.swift keeps it current): shown on its row.
     var shared: [String: [ShareTag]] = [:]
     var asking: [String: String] = [:]          // a question waits for this guest (by session)
+    // Überwachungsmodus (Supervisor.swift; the server keeps both current): on → `supervisor` in
+    // /sessions; the Zentrale's row is marked `zentrale` either way.
+    var supervisor = false
+    var zentraleCwd = ""
     struct ShareTag: Encodable, Equatable { let id, name, role: String }
 
     /// The overview's order: 0 needs Sir (voice, an update queued, a call put off), 1 working,
@@ -476,6 +489,7 @@ final class SessionRegistry {
                 callback: only == nil ? e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) } : nil, voice: e.id == activeId,   // Sir's put-off call is not the guest's
                 resumable: only == nil && resumable(e), tasks: e.tasks, host: only == nil ? DesktopSessions.resolve(cli: e.id, reported: e.host) : nil,
                 shared: shared[e.id] ?? [], asking: asking[e.id],
+                zentrale: only == nil && Supervisor.isZentrale(label: e.label, cwd: e.cwd, zentrale: zentraleCwd),
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
         }
@@ -483,12 +497,13 @@ final class SessionRegistry {
         let today = Today(costUsd: (day.costUsd * 10_000).rounded() / 10_000, turns: day.turns,
                           spokenSeconds: Int(day.spokenSeconds.rounded()), rateLimits: rateLimits)
         let data = try? JSONEncoder().encode(only == nil
-            ? Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots)
-            : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: []))
+            ? Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots, supervisor: supervisor ? true : nil)
+            : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: [], supervisor: nil))
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"sessions":[]}"#
     }
 
-    private struct Wire: Encodable { let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row] }
+    // `supervisor`: only when the Überwachungsmodus is on (omitted otherwise).
+    private struct Wire: Encodable { let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row]; let supervisor: Bool? }
     private struct Today: Encodable { let costUsd: Double; let turns: Int; let spokenSeconds: Int; let rateLimits: [RateLimit] }
 
     private struct Row: Encodable {
@@ -501,8 +516,9 @@ final class SessionRegistry {
         let host: String?
         let shared: [ShareTag]
         let asking: String?
+        let zentrale: Bool             // the Zentrale's row (omitted otherwise)
         let stats: RowStats
-        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, asking, stats }
+        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, asking, zentrale, stats }
         func encode(to encoder: Encoder) throws {   // explicit: `until` must be null, not omitted
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(label, forKey: .label)
@@ -513,6 +529,7 @@ final class SessionRegistry {
             try c.encode(tasks, forKey: .tasks); try c.encode(host, forKey: .host)
             if !shared.isEmpty { try c.encode(shared, forKey: .shared) }
             try c.encodeIfPresent(asking, forKey: .asking)
+            if zentrale { try c.encode(true, forKey: .zentrale) }
             try c.encode(stats, forKey: .stats)
         }
     }

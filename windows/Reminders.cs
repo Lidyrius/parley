@@ -12,6 +12,8 @@ namespace Parley;
 //                                ("in": minutes instead of "at")
 // - for a session, once another is done   {"to":"Zentrale","text":"Deploye","after":"Shirts"}
 // - for Sir himself              {"text":"das Telefonat mit Max","in":30}   (no "to", or "to":"sir")
+// - again and again              {"to":"Zentrale","text":"Prüfe Mails und Sessions","every":5}
+//                                (minutes; first after one interval, or at "at" / "in"; until cancelled)
 //
 // Kept in reminders.json (survives restarts and updates), checked every 30 s.
 public sealed class Reminder
@@ -24,14 +26,24 @@ public sealed class Reminder
     public DateTime? At { get; set; }            // due then (UTC) …
     public string? After { get; set; }           // … or once this session stopped working
     public string? AfterLabel { get; set; }
+    public double? Every { get; set; }           // minutes: due again and again from `At` on, until cancelled
     public DateTime Created { get; set; }
 
     [JsonIgnore] public bool ForSir => Session is null && Cwd is null;
+
+    // The same one, due at `at` (a recurring one's next round).
+    public Reminder DueAt(DateTime at)
+    {
+        var r = (Reminder)MemberwiseClone();
+        r.At = at;
+        return r;
+    }
 }
 
 public sealed class ReminderStore
 {
     public const double MaxDays = 60;
+    public const double MinEvery = 1;
     private static readonly HashSet<string> Busy = new() { "working", "background" };
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
 
@@ -52,7 +64,7 @@ public sealed class ReminderStore
     public (Reminder? Reminder, string? Error) Add(string body, DateTime now, Resolve resolve)
     {
         string? text = null, to = null, cwd = null, at = null, after = null;
-        double? minutes = null;
+        double? minutes = null, every = null;
         try
         {
             using var doc = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
@@ -61,19 +73,28 @@ public sealed class ReminderStore
             string? S(string k) => r.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
             (text, to, cwd, at, after) = (S("text"), S("to"), S("cwd"), S("at"), S("after"));
             if (r.TryGetProperty("in", out var m) && m.ValueKind == JsonValueKind.Number) minutes = m.GetDouble();
+            if (r.TryGetProperty("every", out var ev) && ev.ValueKind == JsonValueKind.Number) every = ev.GetDouble();
         }
         catch (JsonException) { return (null, "body must be a JSON object"); }
 
         text = (text ?? "").Trim();
         if (text.Length == 0) return (null, "text is missing");
-        if (new[] { at is not null, minutes is not null, after is not null }.Count(b => b) != 1)
-            return (null, "give exactly one of at, in, after");
+        var whens = new[] { at is not null, minutes is not null, after is not null }.Count(b => b);
+        if (!(whens == 1 || (whens == 0 && every is not null)))
+            return (null, "give exactly one of at, in, after (or every alone)");
         var rem = new Reminder
         {
             Id = "r" + Guid.NewGuid().ToString("N")[..8],
             Text = text.Length > 2000 ? text[..2000] : text,
             Created = now,
         };
+        if (every is { } step)
+        {
+            if (after is not null) return (null, "every goes with at or in, not with after");
+            if (!(step >= MinEvery && step <= MaxDays * 1440)) return (null, $"every must be minutes, at least {(int)MinEvery}");
+            rem.Every = step;
+            if (whens == 0) rem.At = now.AddMinutes(step);
+        }
         if (at is not null)
         {
             if (!DateTimeOffset.TryParse(at, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) || !HasZone(at))
@@ -130,14 +151,35 @@ public sealed class ReminderStore
         return s.State == "stopped" || (!Busy.Contains(s.State) && s.Since > r.Created);
     }
 
-    /// Takes the matching reminders out (once).
-    public List<Reminder> Take(Func<Reminder, bool> due)
+    /// A recurring one's next time after `now`: on its own grid, missed rounds (the PC slept,
+    /// Parley was off) are skipped, not caught up.
+    public static DateTime? Next(Reminder r, DateTime now)
+    {
+        if (r.Every is not { } every || every <= 0 || r.At is not { } at) return null;
+        var step = every * 60;
+        return at.AddSeconds((Math.Floor(Math.Max(0, (now - at).TotalSeconds) / step) + 1) * step);
+    }
+
+    /// A recurring one skips a round while its session talks to Sir or works: the next comes anyway.
+    public static readonly HashSet<string> SkipRound = new() { "working", "speaking", "listening", "transcribing", "queued" };
+
+    public static string Minutes(double every) =>
+        every == 1 ? "jede Minute" : $"alle {every.ToString(CultureInfo.InvariantCulture)} Minuten";
+
+    /// Takes the matching reminders out (once). `now` (they fire): a recurring one stays, due
+    /// again at its next time; without it (a cancel) all of them go.
+    public List<Reminder> Take(Func<Reminder, bool> due, DateTime? now = null)
     {
         lock (_list)
         {
             var fire = _list.Where(due).ToList();
             if (fire.Count == 0) return fire;
-            _list.RemoveAll(fire.Contains);
+            for (var i = _list.Count - 1; i >= 0; i--)
+            {
+                if (!fire.Contains(_list[i])) continue;
+                if (now is { } t && Next(_list[i], t) is { } next) _list[i] = _list[i].DueAt(next);
+                else _list.RemoveAt(i);
+            }
             Save();
             return fire;
         }
@@ -148,6 +190,7 @@ public sealed class ReminderStore
     /// What the session gets.
     public static string Instruction(Reminder r)
     {
+        if (r.Every is { } every) return $"Wiedervorlage ({Minutes(every)}): {r.Text}";
         var de = new CultureInfo("de-DE");
         var when = r.Created.ToLocalTime().ToString("dddd HH:mm", de);
         var why = r.AfterLabel is { } a ? $" — {a} ist fertig" : "";
@@ -163,15 +206,20 @@ public sealed class ReminderStore
 
     public static List<object> Rows(IEnumerable<Reminder> list) => list
         .OrderBy(r => r.At ?? DateTime.MaxValue).ThenBy(r => r.Created)
-        .Select(r => (object)new
-        {
-            id = r.Id,
-            text = r.Text,
-            to = r.Label,
-            at = r.At is { } at ? (long?)Math.Round((at - DateTime.UnixEpoch).TotalMilliseconds) : null,
-            after = r.AfterLabel,
-        })
+        .Select(r => (object)new Row(
+            r.Id, r.Text, r.Label,
+            r.At is { } at ? (long?)Math.Round((at - DateTime.UnixEpoch).TotalMilliseconds) : null,
+            r.AfterLabel, r.Every))
         .ToList();
+
+    // `every` (minutes): only on a recurring one (omitted otherwise).
+    private sealed record Row(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("to")] string To,
+        [property: JsonPropertyName("at")] long? At,
+        [property: JsonPropertyName("after")] string? After,
+        [property: JsonPropertyName("every"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Every);
 
     private void Save()
     {

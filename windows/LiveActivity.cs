@@ -109,18 +109,24 @@ public static class LiveActivity
 
     // GET /sessions (times in epoch ms) → the activity's content. Stopped sessions are left out;
     // the line is the most urgent session's last spoken one.
-    public static Content FromSessions(string json, Ask? ask = null, int maxRows = MaxRows)
+    // Überwachungsmodus (`supervisor` in the JSON): the Zentrale alone — it is the one that talks
+    // to Sir; `alive` still counts every session. `all`: every session anyway (the widgets' list).
+    public static Content FromSessions(string json, Ask? ask = null, int maxRows = MaxRows, bool all = false)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("sessions", out var list) || list.ValueKind != JsonValueKind.Array) return Content.Empty;
+            var only = !all && doc.RootElement.TryGetProperty("supervisor", out var sup) && sup.ValueKind == JsonValueKind.True;
             var rows = new List<(Row Row, string? Line)>();
+            var alive = 0;
             foreach (var s in list.EnumerateArray())
             {
                 string? Str(string k) => s.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
                 double? Sec(string k) => s.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() / 1000 : null;
                 if (Str("id") is not { Length: > 0 } id || Str("state") is not { } state || state == "stopped") continue;
+                alive++;
+                if (only && !(s.TryGetProperty("zentrale", out var z) && z.ValueKind == JsonValueKind.True)) continue;
                 var label = Str("label") is { Length: > 0 } l ? l : Str("project") ?? id[..Math.Min(8, id.Length)];
                 var line = s.TryGetProperty("stats", out var st) && st.ValueKind == JsonValueKind.Object
                            && st.TryGetProperty("lastLine", out var ll) && ll.ValueKind == JsonValueKind.String ? ll.GetString() : null;
@@ -129,7 +135,7 @@ public static class LiveActivity
             rows.Sort((a, b) => Rank(a.Row) != Rank(b.Row) ? Rank(a.Row).CompareTo(Rank(b.Row)) : b.Row.Since.CompareTo(a.Row.Since));
             var spoken = rows.FirstOrDefault(r => !string.IsNullOrEmpty(r.Line));
             var text = spoken.Line is { } t ? (t.Length > 120 ? t[..120] : t) : null;
-            return new Content(rows.Take(maxRows).Select(r => r.Row).ToList(), rows.Count, text, text is null ? null : spoken.Row.Label, ask);
+            return new Content(rows.Take(maxRows).Select(r => r.Row).ToList(), alive, text, text is null ? null : spoken.Row.Label, ask);
         }
         catch (JsonException) { return Content.Empty; }
     }
@@ -156,7 +162,7 @@ public static class LiveActivity
 
     public static Widget WidgetFrom(string json)
     {
-        var c = FromSessions(json, maxRows: 8);
+        var c = FromSessions(json, maxRows: 8, all: true);
         double? cost = null, limit = null, week = null;
         int? updates = null;
         try

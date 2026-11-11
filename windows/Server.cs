@@ -10,7 +10,7 @@ namespace Parley;
 // POST /turn and blocks until the voice reply is transcribed. Turns are serialized —
 // one is spoken/recorded at a time; concurrent hooks queue FIFO (their connections
 // stay open). GET /health, /status, /sessions and POST /ready, /wake, /presence, /resume,
-// /dispatch, /permission, /snapshots… as on macOS. Everything that voices or listens holds PhoneCall from
+// /dispatch, /permission, /snapshots…, /supervisor as on macOS. Everything that voices or listens holds PhoneCall from
 // the moment it queues, so an iPhone in a call knows Parley is busy (docs/IPHONE.md, v2).
 public sealed class Server
 {
@@ -34,7 +34,9 @@ public sealed class Server
     // What waits at the gate per session key: a newer /turn answers the older ones "" and
     // /close all of them. `_atGate` counts those not yet let in (Sessions.Waiting reads it).
     // `TurnId`: a hookless turn (POST /turn/cancel finds it); `Entered`: let in, being voiced.
-    private sealed class Waiter { public readonly CancellationTokenSource Drop = new(); public bool Turn, Entered; public string? TurnId; }
+    // `Payload`: a /turn's own; `Reported`: the Überwachungsmodus came on while it waited — it
+    // went to the Zentrale as a report, not to Sir (Supervisor.cs).
+    private sealed class Waiter { public readonly CancellationTokenSource Drop = new(); public bool Turn, Entered, Reported; public string? TurnId; public TurnPayload? Payload; }
     private readonly Dictionary<string, List<Waiter>> _waiters = new();
     private readonly ConcurrentDictionary<string, int> _atGate = new();
     // Closed by POST /close: its hook's next /wake answers `end` (until a new /turn revives it).
@@ -70,6 +72,14 @@ public sealed class Server
     public Action<Reminder>? OnReminded;
     // Snapshots (Snapshots.cs), kept in snapshots.json beside them.
     public SnapshotStore Snapshots { get; } = new(Path.Combine(Config.Dir, "snapshots.json"));
+    // Überwachungsmodus (Supervisor.cs): the switch, kept in supervisor.json beside them (swapped
+    // whole, never changed in place), the reports waiting for the Zentrale, and the batch handed
+    // to it last (until it took it) — those two change under _lock.
+    // ponytail: the inbox is in memory — reports not handed over yet (seconds, usually) are gone
+    // with a restart; keep them beside reminders.json if that ever bites.
+    private volatile Supervisor _supervisor = Supervisor.Load(Supervisor.FilePath);
+    private readonly List<string> _reports = new();
+    private string? _reportsOut;
 
     // POST /permission is answered within this — the hook waits ≤ 120 s; a few seconds spare.
     public static readonly TimeSpan PermissionHold = TimeSpan.FromSeconds(115);
@@ -88,6 +98,7 @@ public sealed class Server
         Sessions.Waiting = id => _atGate.TryGetValue(id, out var n) && n > 0;
         Sessions.ReminderRows = () => Reminders.Rows();
         Sessions.SnapshotRows = () => Snapshots.Rows();
+        SyncSupervisor();
         // 127.0.0.1 covers native Git Bash and WSL2 mirrored networking. (WSL NAT mode
         // would need an urlacl + firewall rule — documented, not default.)
         _listener.Prefixes.Add("http://127.0.0.1:8787/");
@@ -142,6 +153,12 @@ public sealed class Server
             if (req.HttpMethod == "GET" && path == "/remind")
             {
                 await Respond(ctx, 200, JsonSerializer.Serialize(new { reminders = Reminders.Rows() }));
+                return;
+            }
+            if (req.HttpMethod == "GET" && path == "/supervisor")
+            {
+                SyncSupervisor();
+                await Respond(ctx, 200, SupervisorJson());
                 return;
             }
 
@@ -233,6 +250,7 @@ public sealed class Server
                             p.Label = turn.SpokenLabel;
                             p.Project = turn.Project;
                             p.LastSeen = DateTime.UtcNow;
+                            FlushReportsLocked();   // the Zentrale's parked hook takes its reports with this poll
                             pending = p.Pending ?? "";
                             p.Pending = null;
                             Sessions.WakePoll(key, turn.Label ?? "", turn.Project, pending.Length > 0, turn.Cwd);
@@ -279,6 +297,7 @@ public sealed class Server
                     unknown = presence.Awaiting is { Length: > 0 } awaiting && !Open(presence.SessionId, awaiting);
                 }
                 NotifyParked();
+                FlushReports();   // the Zentrale may take its reports now (they go out with its next presence)
                 await Respond(ctx, 200, delivery is { } d ? JsonSerializer.Serialize(new { instruction = d.Text, delivery_id = d.Id })
                     : unknown ? "{\"unknown_turn\":true}" : "{}");
                 return;
@@ -335,7 +354,8 @@ public sealed class Server
                     await Respond(ctx, 400, "{\"ok\":false,\"error\":\"cwd must be an existing absolute folder\"}");
                     return;
                 }
-                var result = Delivery.Dispatch(cwd, (d.Instruction ?? "").Trim(), d.Start ?? true, d.Resume, d.Name);
+                var instruction = Addressed((d.Instruction ?? "").Trim(), d.From, cwd, d.Resume, d.Name);
+                var result = Delivery.Dispatch(cwd, instruction, d.Start ?? true, d.Resume, d.Name);
                 if (result == DispatchResult.Failed)
                 {
                     await Respond(ctx, 500, "{\"ok\":false,\"error\":\"could not start a session\"}");
@@ -388,7 +408,7 @@ public sealed class Server
                     await Respond(ctx, 400, JsonSerializer.Serialize(new { ok = false, error }));
                     return;
                 }
-                Log.Write($"remind: for {rem.Label}, {(rem.At is { } at ? $"at {at:o}" : $"after {rem.AfterLabel}")}");
+                Log.Write($"remind: for {rem.Label}, {(rem.At is { } at ? $"at {at:o}" : $"after {rem.AfterLabel}")}{(rem.Every is { } every ? $", every {every} min" : "")}");
                 FireReminders(r => r.Id == rem.Id && ReminderStore.IsDue(r, DateTime.UtcNow, Sessions.StateSince));
                 await Respond(ctx, 200, JsonSerializer.Serialize(new { ok = true, reminder = ReminderStore.Rows(new[] { rem })[0] }));
                 return;
@@ -413,6 +433,34 @@ public sealed class Server
                 }
                 Log.Write($"remind: cancelled {string.Join(", ", gone.Select(g => g.Label))}");
                 await Respond(ctx, 200, JsonSerializer.Serialize(new { cancelled = ReminderStore.Rows(gone) }));
+                return;
+            }
+
+            // /supervisor — the Überwachungsmodus on / off (the Zentrale sets it itself), and who is
+            // exempt: {"on":bool,"exempt":[…]}, either or both. Same answers as macOS.
+            if (req.HttpMethod == "POST" && path == "/supervisor")
+            {
+                bool? on = null;
+                List<string>? exempt = null;
+                try
+                {
+                    using var doc = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
+                    var r = doc.RootElement;
+                    if (r.ValueKind == JsonValueKind.Object)
+                    {
+                        if (r.TryGetProperty("on", out var o) && o.ValueKind is JsonValueKind.True or JsonValueKind.False) on = o.GetBoolean();
+                        if (r.TryGetProperty("exempt", out var x) && x.ValueKind == JsonValueKind.Array)
+                            exempt = x.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!).ToList();
+                    }
+                }
+                catch (JsonException) { }
+                if (on is null && exempt is null)
+                {
+                    await Respond(ctx, 400, "{\"ok\":false,\"error\":\"give on (true / false) and / or exempt (session names or ids)\"}");
+                    return;
+                }
+                SetSupervisor(on, exempt);
+                await Respond(ctx, 200, SupervisorJson());
                 return;
             }
 
@@ -486,7 +534,11 @@ public sealed class Server
     private async Task<(string transcript, bool park, int wait, string resume)> Voice(TurnPayload turn, string id, string? turnId)
     {
         FireReminders(r => r.After == id);   // its turn ended: "wenn Shirts fertig ist"
-        Sessions.Queued(id, turn.Label ?? "", turn.Project, turn.Cwd);
+        lock (_lock)   // together: no report slips in between and is wiped with what waited for it
+        {
+            ReclaimReports(id);
+            Sessions.Queued(id, turn.Label ?? "", turn.Project, turn.Cwd);
+        }
         Delivery.ClaimName(id, turn.Cwd);
         if (Sessions.Name(id) is { } own) turn.Label = own;   // its own name: announced, rung, shown
         // v7: <speak to="Max"> and Max is a guest of this session — the question goes to him
@@ -504,13 +556,35 @@ public sealed class Server
             }
             turn = outcome.ForSir ?? turn;   // unanswered: Sir's voice, like any update
         }
+        // Überwachungsmodus (Supervisor.cs): only the Zentrale's turn (and an exempt session's) is
+        // voiced; any other is its report. The mod's Zentrale gets the reports on its presence; a
+        // hook-carried turn takes them with its reply (nothing else may reach a busy hook-only session).
+        var takesReports = false;
+        if (_supervisor is { On: true } supervisor)
+        {
+            var label = Sessions.Describe(id)?.label ?? turn.SpokenLabel;
+            if (Supervisor.IsZentrale(label, turn.Cwd, ZentraleDir())) takesReports = turnId is null;
+            else if (!supervisor.Exempts(id, label)) return Report(turn, id, label, park: turnId is null);
+        }
         using var hold = PhoneCall.Hold();   // released after the reply — never leaks on an error
         Interlocked.Increment(ref _queued);
         if (_turnGate.Busy)   // another turn is active → this one waits
             Notifier.Notify("Parley", $"Projekt {turn.SpokenLabel} wartet auf Antwort");
-        var w = Enlist(id, turn: true, turnId);   // older ones of this session are answered "" now
+        var w = Enlist(id, turn: true, turnId, turn);   // older ones of this session are answered "" now
         var entered = await Enter(id, w);   // FIFO; hook connection stays open
         Interlocked.Decrement(ref _queued);
+        bool reported;
+        lock (_lock)   // let in, or reported meanwhile (SetSupervisor): one of the two, never both
+        {
+            reported = w.Reported;
+            if (entered && !reported) w.Entered = true;
+        }
+        if (reported)   // the Überwachungsmodus came on while it waited: its report is in the inbox
+        {
+            Delist(id, w);
+            if (entered) _turnGate.Release();
+            return EndReported(turn, id, park: turnId is null);
+        }
         if (!entered)   // a newer /turn of this session, or /close: no one listens for it
         {
             Delist(id, w);
@@ -518,7 +592,6 @@ public sealed class Server
             Log.Write($"turn dropped ({turn.SpokenLabel}: a newer turn, cancelled, or closed)");
             return ("", false, 0, "");
         }
-        lock (_lock) w.Entered = true;
         (string transcript, bool park, int wait, string resume) r = ("", false, 0, "");
         try
         {
@@ -529,10 +602,196 @@ public sealed class Server
         {
             Delist(id, w);
             if (turnId is not null && !Open(id, turnId)) r = ("", false, 0, "");   // cancelled: nothing of it stays
+            if (takesReports || TakesReports(turn, id, turnId)) r = WithReports(r);   // (on by now: as well)
             Sessions.Finished(id, r.transcript, r.park, r.wait, r.resume, hostWait: turnId is not null);
             _turnGate.Release();
         }
         return r;
+    }
+
+    // ---- Überwachungsmodus (Supervisor.cs) -----------------------------------------------
+
+    private static readonly HashSet<string> Talking = new() { "speaking", "listening", "transcribing", "queued" };
+    private readonly object _zentraleStart = new();   // one start of the Zentrale at a time
+
+    public bool SupervisorOn() => _supervisor.On;
+
+    // The switch (the tray, POST /supervisor): on / off and who is exempt — what is null stays.
+    public void SetSupervisor(bool? on, List<string>? exempt = null)
+    {
+        Supervisor? changed = null;
+        var moved = new List<Waiter>();
+        var zentrale = ZentraleDir();
+        lock (_lock)
+        {
+            var old = _supervisor;
+            var s = new Supervisor
+            {
+                On = on ?? old.On,
+                Exempt = exempt?.Select(x => x.Trim()).Where(x => x.Length > 0).ToList() ?? old.Exempt,
+            };
+            if (s.On != old.On || !s.Exempt.SequenceEqual(old.Exempt))
+            {
+                _supervisor = changed = s;
+                s.Save(Supervisor.FilePath);
+            }
+            // Switched on: turns already waiting for their voice go the new way too — reports, not
+            // a queue for Sir. (One being voiced stays; the Zentrale's own and an exempt one wait on.)
+            if (s.On && !old.On)
+                foreach (var (key, list) in _waiters)
+                {
+                    var w = list.LastOrDefault(o => o.Turn);   // its newest: the older ones are dropped anyway
+                    if (w is null || w.Entered || w.Reported || w.Payload is not { } turn || _closed.Contains(key)
+                        || (w.TurnId is { } tid && !Open(key, tid))) continue;
+                    var label = Sessions.Describe(key)?.label ?? turn.SpokenLabel;
+                    if (Supervisor.IsZentrale(label, turn.Cwd, zentrale) || s.Exempts(key, label)) continue;
+                    _reports.Add(Supervisor.Report(turn, key, Sessions.HasTasks(key)));
+                    Log.Write($"supervisor: {label} waited for its voice — reports to the Zentrale instead ({(turn.WantsListen ? "asks" : "done")})");
+                    w.Reported = true;
+                    moved.Add(w);
+                }
+        }
+        foreach (var w in moved) w.Drop.Cancel();   // outside the lock: continuations may run inline (Voice ends them)
+        if (changed is not null)
+        {
+            Log.Write($"supervisor: {(changed.On ? "on" : "off")}{(changed.Exempt.Count == 0 ? "" : $" — exempt: {string.Join(", ", changed.Exempt)}")}");
+            if (changed.On)
+            {
+                try { Zentrale.Ensure(Config.Load()); }
+                catch (Exception e) { Log.Write($"zentrale: could not prepare its folder ({e.Message})"); }
+            }
+        }
+        SyncSupervisor();
+    }
+
+    // The registry shows the mode in /sessions and marks the Zentrale's row.
+    private void SyncSupervisor() => Sessions.SetSupervised(_supervisor.On, ZentraleDir());
+
+    // {"ok":true,"on","exempt","zentrale" (its session, when it runs),"waiting" (reports in the inbox)}.
+    private string SupervisorJson()
+    {
+        var s = _supervisor;
+        var json = new Dictionary<string, object> { ["ok"] = true, ["on"] = s.On, ["exempt"] = s.Exempt };
+        if (Sessions.InFolder(ZentraleDir()) is { } z) json["zentrale"] = z.Id;
+        lock (_lock) json["waiting"] = _reports.Count;
+        return JsonSerializer.Serialize(json);
+    }
+
+    // POST /dispatch `from`: who asks ("Zentrale") — the session reads "[Auftrag von Zentrale] …"
+    // and, while the mode is on, that its answer goes to the Zentrale (not in the Zentrale's own
+    // folder, not an exempt session — the one the dispatch reaches, as Delivery.Dispatch picks it).
+    private string Addressed(string instruction, string? from, string cwd, string? resume, string? name)
+    {
+        if (string.IsNullOrWhiteSpace(from)) return instruction;
+        var supervisor = _supervisor;
+        name = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+        var here = resume is not null ? (Sessions.Running(resume).Alive ? resume : null)
+            : name is not null ? Sessions.Named(name, cwd)
+            : Sessions.InFolder(cwd)?.Id;
+        var label = resume is not null && name is not null ? name   // Dispatch renames it so
+            : (here is null ? null : Sessions.Describe(here)?.label) ?? name ?? "";
+        var reportsBack = supervisor.On && !CwdPath.Same(cwd, ZentraleDir()) && !supervisor.Exempts(here ?? "", label);
+        return Supervisor.Instruction(instruction, from, reportsBack);
+    }
+
+    // A session's turn while the mode is on: not voiced — its report waits for the Zentrale, the
+    // session is answered empty at once and parks (`park`: its hook polls /wake; the mod's session
+    // is parked by its presence), so it stays resumable and takes the Zentrale's /dispatch.
+    private (string transcript, bool park, int wait, string resume) Report(TurnPayload turn, string id, string label, bool park)
+    {
+        var report = Supervisor.Report(turn, id, Sessions.HasTasks(id));
+        var stale = new List<Waiter>();
+        lock (_lock)
+        {
+            _reports.Add(report);
+            if (id.Length > 0)   // as Enlist: this session's newest turn, though it never lines up
+            {
+                if (_waiters.TryGetValue(id, out var list)) stale.AddRange(list.Where(o => o.Turn));
+                _parked.TryRemove(id, out _);
+                _closed.Remove(id);
+            }
+        }
+        foreach (var o in stale) o.Drop.Cancel();   // outside the lock: continuations may run inline
+        Log.Write($"supervisor: {label} reports to the Zentrale ({(turn.WantsListen ? "asks" : "done")}) — not voiced");
+        return EndReported(turn, id, park);
+    }
+
+    // Its report is in the inbox: the session's turn is over — shown with its line, parked.
+    private (string transcript, bool park, int wait, string resume) EndReported(TurnPayload turn, string id, bool park)
+    {
+        Sessions.Reported(id, turn.Speak);
+        Sessions.Finished(id, "", park, 0);
+        NotifyParked();
+        _ = Task.Run(() => FlushReports(start: true));   // off the reply's way: a start takes a moment
+        return ("", park, 0, "");
+    }
+
+    // A hook-carried turn of the Zentrale while the mode is on: it takes the reports with its reply.
+    private bool TakesReports(TurnPayload turn, string id, string? turnId) =>
+        turnId is null && _supervisor.On
+        && Supervisor.IsZentrale(Sessions.Describe(id)?.label ?? turn.SpokenLabel, turn.Cwd, ZentraleDir());
+
+    // Hands the waiting reports to the Zentrale once it can take them: reachable, nothing else
+    // waiting for it, and not talking to Sir right now (they follow his answer). Not running and
+    // `start`: started, as a wake routed to it (its folder made when missing; the restart guard
+    // allows no second one) — the reports wait here, without the 10-min limit of a dispatch.
+    private void FlushReports(bool start = false)
+    {
+        bool missing;
+        lock (_lock)
+        {
+            if (_reports.Count == 0) return;
+            missing = FlushReportsLocked();
+        }
+        if (!missing) { NotifyParked(); return; }
+        if (!start) return;
+        lock (_zentraleStart)
+        {
+            try { Delivery.Dispatch(Zentrale.Ensure(Config.Load()), "", start: true); }
+            catch (Exception e) { Log.Write($"zentrale: could not start it for its reports ({e.Message})"); }
+        }
+    }
+
+    // Caller holds _lock. True: reports wait and no Zentrale runs.
+    private bool FlushReportsLocked()
+    {
+        if (_reports.Count == 0) return false;
+        if (Sessions.InFolder(ZentraleDir()) is not { } z) return true;
+        if (!z.Deliverable || Sessions.HasPending(z.Id) || (_parked.TryGetValue(z.Id, out var hook) && hook.Pending is not null)
+            || Sessions.Info(z.Id) is not { } info || Talking.Contains(info.State)) return false;
+        var batch = string.Join("\n\n", _reports);
+        Log.Write($"supervisor: {_reports.Count} report(s) → the Zentrale");
+        _reports.Clear();
+        _reportsOut = batch;
+        DeliverLocked(z.Id, batch);
+        return false;
+    }
+
+    // The batch is still untaken and the session moves on (its own turn, another instruction for
+    // it, its end): back into the inbox — no report is lost to an overwrite. Caller holds _lock.
+    private void ReclaimReports(string id)
+    {
+        if (_reportsOut is not { } batch) return;
+        var hook = _parked.TryGetValue(id, out var p) && p.Pending == batch;   // the parked hook's copy
+        if (hook) p!.Pending = null;
+        if (!Sessions.TakeBack(id, batch) && !hook) return;                    // the mod's, not handed out yet
+        _reports.Insert(0, batch);
+        _reportsOut = null;
+        Log.Write("supervisor: the Zentrale moved on before it took its reports — kept for it");
+    }
+
+    // A hook-carried turn of the Zentrale: the waiting reports ride back with its reply.
+    // (An empty, unparked reply is a stale or ended hook's: nobody would read them.)
+    private (string transcript, bool park, int wait, string resume) WithReports((string transcript, bool park, int wait, string resume) r)
+    {
+        lock (_lock)
+        {
+            if (_reports.Count == 0 || r.wait != 0 || !(r.park || r.transcript.Length > 0)) return r;
+            var text = string.Join("\n\n", new[] { r.transcript }.Concat(_reports).Where(t => t.Length > 0));
+            Log.Write($"supervisor: {_reports.Count} report(s) → the Zentrale (with its reply)");
+            _reports.Clear();
+            return (text, false, 0, r.resume);
+        }
     }
 
     // Hookless: is `turnId` still this session's open turn (not cancelled, closed, or overtaken)?
@@ -589,7 +848,12 @@ public sealed class Server
     public bool TimerQueued() => Sessions.TimerQueued() || Volatile.Read(ref _remindersWaiting) > 0;
 
     // Every 30 s (Program): what is due by time, or because its session is done.
-    public void TickReminders() => FireReminders(r => ReminderStore.IsDue(r, DateTime.UtcNow, Sessions.StateSince));
+    public void TickReminders()
+    {
+        SyncSupervisor();
+        FireReminders(r => ReminderStore.IsDue(r, DateTime.UtcNow, Sessions.StateSince));
+        FlushReports(start: true);
+    }
 
     /// A session by id, spoken name / folder name (running first), or a past session's id.
     private (string? Id, string Label, string Cwd)? ResolveSession(string name)
@@ -603,7 +867,7 @@ public sealed class Server
 
     private void FireReminders(Func<Reminder, bool> due)
     {
-        foreach (var r in Reminders.Take(due)) Hand(r);
+        foreach (var r in Reminders.Take(due, DateTime.UtcNow)) Hand(r);   // a recurring one stays, due again
     }
 
     // For Sir: spoken through the gate like an update. For a session: its instruction now if it
@@ -631,7 +895,27 @@ public sealed class Server
             return;
         }
         var text = ReminderStore.Instruction(r);
-        if (r.Session is { } id && Sessions.Running(id).Deliverable) Deliver(id, text);
+        if (r.Every is not null)
+        {
+            // Recurring: whoever runs in its folder now (a new session since, maybe) — started
+            // when none does, and no round while it works or talks to Sir (the next comes anyway).
+            (string Id, bool Deliverable)? live = null;
+            if (r.Session is { } known && Sessions.Running(known).Alive) live = (known, Sessions.Running(known).Deliverable);
+            else if (r.Cwd is { Length: > 0 } folder) live = Sessions.InFolder(folder);
+            if (live is { } busy && Sessions.Info(busy.Id) is { } info && ReminderStore.SkipRound.Contains(info.State))
+            {
+                Log.Write($"remind: {r.Label} is busy ({info.State}) — this round is skipped");
+                return;
+            }
+            if (live is { } target && target.Deliverable) Deliver(target.Id, text);
+            else if (r.Cwd is { Length: > 0 } dir) Delivery.Dispatch(dir, text, true);
+            else
+            {
+                Log.Write($"remind: {r.Label} is gone and has no folder — round dropped: {r.Text}");
+                return;
+            }
+        }
+        else if (r.Session is { } id && Sessions.Running(id).Deliverable) Deliver(id, text);
         else if (r.Cwd is { Length: > 0 } cwd)
             Delivery.Dispatch(cwd, text, true, r.Session is { } sid && Transcript.File(sid) is not null ? sid : null);
         else
@@ -786,6 +1070,7 @@ public sealed class Server
         List<Waiter> drop;
         lock (_lock)
         {
+            ReclaimReports(id);   // the Zentrale ended with its reports untaken: kept for the next one
             _closed.Add(id);
             _turns.Remove(id);
             _parked.TryRemove(id, out _);
@@ -824,9 +1109,12 @@ public sealed class Server
     private void DeliverLocked(string id, string instruction)
     {
         Prune();
-        if (_parked.TryGetValue(id, out var p) && (p.Pending is not null || Sessions.IsParked(id)))
+        // (Asked first: taking an untaken batch of reports back empties its hook's copy.)
+        var parked = _parked.TryGetValue(id, out var p) && (p.Pending is not null || Sessions.IsParked(id));
+        ReclaimReports(id);   // not overwritten by this one: it goes out again later
+        if (parked)
         {
-            p.Pending = instruction;
+            p!.Pending = instruction;
             Sessions.SetPending(id, instruction);
             Sessions.WakeQueued(id);
         }
@@ -1038,9 +1326,9 @@ public sealed class Server
 
     // Line up at the gate for session `id`. A /turn drops the older /turns of that session still
     // waiting (their hooks are gone or moved on), and its parked entry; it revives a closed one.
-    private Waiter Enlist(string id, bool turn, string? turnId = null)
+    private Waiter Enlist(string id, bool turn, string? turnId = null, TurnPayload? payload = null)
     {
-        var w = new Waiter { Turn = turn, TurnId = turnId };
+        var w = new Waiter { Turn = turn, TurnId = turnId, Payload = payload };
         var drop = new List<Waiter>();
         lock (_lock)
         {

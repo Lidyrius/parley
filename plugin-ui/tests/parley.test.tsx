@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import type { On } from 'claude-code'
 
-import { bgLabel, ease, facts, parseSpeak, ringSvg, scrollPane, timer, todayParts, turnParts, wave, waveSvg } from '../hooks/register'
+import { bgLabel, contextOf, ease, facts, parseSpeak, ringSvg, scrollPane, timer, todayParts, turnParts, wave, waveSvg } from '../hooks/register'
 
 const BAND = {
   plugin: 'parley-ui',
@@ -17,6 +17,14 @@ test('parseSpeak takes the last tag, like stop-hook.sh', async () => {
   expect(parseSpeak('<speak>offen ohne close')).toEqual({ text: 'offen ohne close', listen: true })
   expect(parseSpeak('Text.\n<speak to="Max">Max, welche Variante?</speak>')).toEqual({ text: 'Max, welche Variante?', listen: true, to: 'Max' })
   expect(wave(3, 14, 1).length).toBe(14)
+})
+
+test('contextOf: the prose before the final tag, like stop-hook.sh', async () => {
+  expect(contextOf('Bericht.\n<reply on="Ja">Gut.</reply>\n<speak>Weiter?</speak>')).toBe('Bericht.')
+  expect(contextOf('<speak>a</speak> Mitte\n<speak-end>Fertig.</speak-end>')).toBe('<speak>a</speak> Mitte')
+  expect(contextOf('<speak>Nur das.</speak>')).toBe('')
+  expect(Array.from(contextOf('😀'.repeat(1600) + ' Ende.<speak>x</speak>')).length).toBe(1500) // whole characters
+  expect(contextOf('😀'.repeat(1600) + ' Ende.<speak>x</speak>').endsWith('😀 Ende.')).toBe(true)
 })
 
 test('Stop shows the spoken line, then the reply, on terminal and desktop', async ($, on) => {
@@ -418,6 +426,7 @@ test('async: Stop posts the turn and resolves at once, without the hook beneath'
   expect([turn.event, turn.session_id, turn.cwd, turn.project, turn.speak, turn.listen])
     .toEqual(['turn', 's1', '/tmp/parley-demo', 'parley-demo', 'Soll ich den Prototyp bauen?', true])
   expect(turn.replies).toEqual([{ on: 'Ja', say: 'Gut, Sir.', listen: false }])
+  expect(turn.context).toBeUndefined() // nothing but tags: no excerpt
   expect(await ui.find({ type: 'Text', text: /wartet/ })).toBeDefined() // queued
 
   await clock.advance(600)

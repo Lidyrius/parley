@@ -334,7 +334,12 @@ on by default):
   von Sir …"), resumed or started in its folder if it doesn't run. Due for Sir: a `reminder`
   dialog, spoken like an update (the phone rings when Unterwegs). `/sessions` carries
   `reminders: [{id, text, to, at (ms) | null, after | null}]`; the phone lists them under the
-  sessions.
+  sessions. With `every` (minutes) one comes again and again until cancelled (CONTRACT.md).
+- **Überwachungsmodus** (`POST /supervisor`, CONTRACT.md): only the Zentrale talks to Sir; the other
+  sessions' turns reach it as reports. The `sessions` frame then carries `supervisor: true` and the
+  Zentrale's row `zentrale: true` — the phone shows the Zentrale as the one card, the others folded
+  away under "Weitere Sessions"; the Live Activity's `sessions` hold the Zentrale alone (`alive`
+  still counts all).
 
 
 ## Protocol v6 — Snapshots

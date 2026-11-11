@@ -69,7 +69,31 @@ got_speak="$(jq -r '.speak' < "$bodyfile")"
 [ "$(jq -r '.event' < "$bodyfile")" = "turn" ] || fail "event != turn"
 [ "$(jq -r '.session_id' < "$bodyfile")" = "abc123" ] || fail "session_id mismatch"
 [ "$(jq -r '.project' < "$bodyfile")" = "parley" ] || fail "project mismatch"
+[ "$(jq -r '.context' < "$bodyfile")" = "Here is a report." ] || fail "context mismatch: [$(jq -r '.context' < "$bodyfile")]"
 echo "PASS: tagged input -> correct /turn JSON"
+
+# --- Test 1b: context = the prose before the final tag, no <reply> lines, last 1500 whole characters ---
+start_listener
+long="$(printf 'ä%.0s' $(seq 1 1600))"
+in1b="$(jq -n --arg m "Anfang ${long} Ende.
+<reply on=\"Ja\">Gut.</reply>
+<speak>Weiter?</speak>" '{last_assistant_message:$m, cwd:"/tmp/p", session_id:"c1"}')"
+printf '%s' "$in1b" | PARLEY_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+jq -e . < "$bodyfile" >/dev/null || fail "context body is not valid JSON"
+ctx="$(jq -r '.context' < "$bodyfile")"
+[ "$(jq -r '.context | length' < "$bodyfile")" = "1500" ] || fail "context not cut to 1500 characters"
+case "$ctx" in *"ä Ende.") ;; *) fail "context should end with the prose before the tag: [${ctx: -20}]" ;; esac
+case "$ctx" in *reply*|*Weiter*) fail "context carries tags" ;; esac
+[ "$(jq -r '.speak' < "$bodyfile")" = "Weiter?" ] || fail "speak mismatch beside context"
+echo "PASS: context excerpt beside the spoken line"
+
+# --- Test 1c: nothing but the tag -> no context field ---
+start_listener
+printf '%s' '{"last_assistant_message":"<speak>Nur das.</speak>","cwd":"/tmp/p","session_id":"c2"}' | PARLEY_PORT=$port bash "$hook"
+wait "$srv" 2>/dev/null || true
+[ "$(jq -r 'has("context")' < "$bodyfile")" = "false" ] || fail "empty context should be omitted"
+echo "PASS: no prose -> no context"
 
 # --- Test 2: multiline / quotes / unicode -> valid JSON, exact text ---
 start_listener

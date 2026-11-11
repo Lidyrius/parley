@@ -131,6 +131,18 @@ project="$(basename "${cwd:-unknown}")"
 label=""
 [ -f "$cwd/.parley.json" ] && label="$(jq -r '.name // ""' "$cwd/.parley.json" 2>/dev/null || echo "")"
 
+# Überwachungsmodus: an excerpt of the message beside the spoken line — the app's report to the
+# Zentrale carries it. The prose before the final tag, without <reply> lines; its last 1500
+# characters (whole ones: -CSD).
+context="$(printf '%s' "$msg" | perl -CSD -0777 -ne '
+  my $m = $_;
+  my $cut = -1; while ($m =~ /<speak-end>|<speak(?:\s+to="[^"<>]{0,40}")?>/g) { $cut = $-[0]; }
+  $m = substr($m, 0, $cut) if $cut >= 0;
+  $m =~ s/<reply\b[^>]*>.*?<\/reply>//gs;
+  $m =~ s/^\s+|\s+$//g;
+  print length($m) > 1500 ? substr($m, -1500) : $m;
+' 2>/dev/null || true)"
+
 payload="$(jq -n \
   --arg event "turn" \
   --arg session_id "$session_id" \
@@ -140,13 +152,15 @@ payload="$(jq -n \
   --arg speak "$speak" \
   --arg label "$label" \
   --arg to "$to" \
+  --arg context "$context" \
   --argjson listen "$listen" \
   --argjson replies "${replies:-[]}" \
   --argjson slides "${slides:-[]}" \
   '{event:$event, session_id:$session_id, cwd:$cwd, project:$project, tmux_pane:$tmux_pane, speak:$speak, label:$label, listen:$listen}
    + (if ($replies | length) > 0 then {replies:$replies} else {} end)
    + (if ($slides | length) > 0 then {slides:$slides} else {} end)
-   + (if $to != "" then {to:$to} else {} end)')"
+   + (if $to != "" then {to:$to} else {} end)
+   + (if $context != "" then {context:$context} else {} end)')"
 
 # Blocks while the turn is queued + spoken + recorded + transcribed. With many parallel
 # projects a turn can wait long in the queue before it is its turn to

@@ -17,6 +17,10 @@ final class ReminderTests: XCTestCase {
         server = ControlServer(sessions: reg, now: { c.t })
         voiced = []
         server.replyProvider = { [unowned self] turn, done in self.voiced.append(turn); done(TurnReply(transcript: "", park: false)) }
+        // A reminder for a session that went quiet starts one in its folder: never a real Terminal
+        // session from a test (it used to open `claude` in the temp folder on every run).
+        server.starter = { _, _, _ in }
+        server.parleyStartRunning = { _ in false }
     }
 
     private func post(_ path: String, _ json: String) -> (Int, String) {

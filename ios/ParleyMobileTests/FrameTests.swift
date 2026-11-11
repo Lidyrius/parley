@@ -165,6 +165,18 @@ struct FrameTests {
         #expect(snap.today?.rateLimits.count == 2)
     }
 
+    /// Überwachungsmodus: the host marks the mode and the Zentrale's row; an older host sends neither.
+    @Test func supervisorFrameDecodes() throws {
+        guard case .sessions(let snap)? = Frame.decode(Demo.frame(now: .now, supervisor: true)) else { Issue.record("demo frame broken"); return }
+        #expect(snap.supervisor)
+        #expect(snap.sessions.filter(\.zentrale).map(\.label) == ["Zentrale"])
+        #expect(snap.sessions.count == 9)
+        #expect(!snap.sessions.contains { !$0.zentrale && ($0.voice || $0.state == .speaking) })   // only it talks
+        #expect(snap.reminders.last?.every == 5)
+        guard case .sessions(let plain)? = Frame.decode(Demo.frame(now: .now)) else { Issue.record("demo frame broken"); return }
+        #expect(!plain.supervisor && !plain.sessions.contains(where: \.zentrale))
+    }
+
     @Test func historyAndImageFrames() {
         let h = Frame.decode(#"{"t":"history","id":"s1","items":[{"id":"a#0","k":"assistant","text":"Fertig.","at":1},{"id":"r#0","k":"image","who":"assistant"},{"id":"v#0","k":"voice","text":"Ja"},{"id":"x#0","k":"новое"},{"k":"user"},7]}"#)
         #expect(h == .history(id: "s1", items: [

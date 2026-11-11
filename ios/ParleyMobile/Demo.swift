@@ -25,14 +25,15 @@ enum Demo {
         }
     }
 
-    static func frame(now: Date) -> String {
+    /// `supervisor` (`-demoSupervisor`): the Überwachungsmodus — the Zentrale talks, the others report to it.
+    static func frame(now: Date, supervisor: Bool = false) -> String {
         let t = Int64(now.ms)
         func ago(_ s: Int64) -> Int64 { t - s * 1000 }
         func stats(_ startedMin: Int64, _ ctx: Int, _ cost: Double, _ turns: Int, _ replies: Int, _ line: String?) -> String {
             let last = line.map { "\"\($0)\"" } ?? "null"
             return #"{"startedAt":\#(ago(startedMin * 60)),"contextPercent":\#(ctx),"costUsd":\#(cost),"turns":\#(turns),"replies":\#(replies),"lastLine":\#(last)}"#
         }
-        let sessions = [
+        var sessions = [
             #"{"id":"demo-parley","label":"Parley","project":"vloude","state":"speaking","since":\#(ago(9)),"until":null,"voice":true,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(74, 41, 3.12, 14, 6, "Die Tests laufen wieder grün. Soll ich den Release vorbereiten?"))}"#,
             #"{"id":"demo-shirts","label":"Shirts","project":"ds-shirts","state":"working","since":\#(ago(134)),"until":null,"voice":false,"resumable":false,"tasks":[],"host":null,"shared":[{"id":"sh1","name":"Max","role":"Marketing"}],"stats":\#(stats(38, 22, 1.47, 7, 3, "Ich baue jetzt die Mockups für die neue Kollektion."))}"#,
             #"{"id":"demo-angebote","label":"Angebote","project":"angebotserstellung","state":"waiting","since":\#(ago(48)),"until":\#(t + 252_000),"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(21, 18, 0.86, 4, 2, "Ich warte fünf Minuten auf den Build und melde mich dann."))}"#,
@@ -42,8 +43,18 @@ enum Demo {
             #"{"id":"demo-notizen","label":"Notizen","project":"notes","state":"parked","since":\#(ago(1260)),"until":null,"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(140, 33, 0.58, 5, 3, "Alles notiert."))}"#,
             #"{"id":"demo-doku","label":"Doku","project":"docs","state":"stopped","since":\#(ago(180)),"until":null,"voice":false,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(61, 48, 0.94, 6, 2, "Fertig, die Doku ist aktualisiert."))}"#,
         ]
+        if supervisor {
+            sessions = sessions.map {
+                $0.replacingOccurrences(of: #""state":"speaking""#, with: #""state":"parked""#)
+                    .replacingOccurrences(of: #""state":"queued""#, with: #""state":"parked""#)
+                    .replacingOccurrences(of: #""voice":true"#, with: #""voice":false"#)
+                    .replacingOccurrences(of: #""callback":0,"#, with: "")
+            }
+            sessions.insert(#"{"id":"zentrale","label":"Zentrale","project":"parley-zentrale","zentrale":true,"state":"speaking","since":\#(ago(7)),"until":null,"voice":true,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(310, 27, 1.92, 31, 12, "Shirts ist fertig, Angebote fragt nach dem Rabatt für Bestandskunden."))}"#, at: 0)
+        }
         let today = #"{"costUsd":13.61,"turns":65,"spokenSeconds":754,"rateLimits":[{"kind":"five_hour","percentUsed":42,"resetsAt":null},{"kind":"seven_day","percentUsed":18,"resetsAt":null}]}"#
-        let reminders = #"[{"id":"r1","text":"Lass die Tests laufen und berichte, was rot ist.","to":"Shirts","at":\#(t + 14 * 3_600_000)},{"id":"r2","text":"Deploye auf Staging.","to":"Zentrale","after":"Shirts"}]"#
+        let again = supervisor ? #",{"id":"r3","text":"Prüfe Mails, Teams und die Sessions.","to":"Zentrale","at":\#(t + 180_000),"every":5}"# : ""
+        let reminders = #"[{"id":"r1","text":"Lass die Tests laufen und berichte, was rot ist.","to":"Shirts","at":\#(t + 14 * 3_600_000)},{"id":"r2","text":"Deploye auf Staging.","to":"Zentrale","after":"Shirts"}\#(again)]"#
         func snap(_ id: String, _ name: String, _ hoursAgo: Int64, _ items: [(String, String)]) -> String {
             let list = items.map { #"{"id":"\#($0.0)","name":"\#($0.1)","cwd":"~/kunden/\#($0.1.lowercased())"}"# }
             return #"{"id":"\#(id)","name":"\#(name)","at":\#(t - hoursAgo * 3_600_000),"sessions":[\#(list.joined(separator: ","))]}"#
@@ -53,7 +64,7 @@ enum Demo {
             snap("s2", "Parley intern", 26, [("demo-parley", "Parley"), ("demo-relay", "Relay"), ("zentrale", "Zentrale")]),
             snap("s3", "Recherche", 170, [("gta", "GTA 6 Research"), ("poly", "Polymarket")]),
         ].joined(separator: ",")
-        return #"{"t":"sessions","at":\#(t),"sessions":[\#(sessions.joined(separator: ","))],"today":\#(today),"reminders":\#(reminders),"snapshots":[\#(snapshots)]}"#
+        return #"{"t":"sessions","at":\#(t),\#(supervisor ? #""supervisor":true,"# : "")"sessions":[\#(sessions.joined(separator: ","))],"today":\#(today),"reminders":\#(reminders),"snapshots":[\#(snapshots)]}"#
     }
 }
 

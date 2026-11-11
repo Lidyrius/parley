@@ -9,6 +9,7 @@ struct MenuBarView: View {
     var demo: MenuBoard?
     @State private var board = MenuBoard()
     @State private var options = false
+    @State var others = false   // Überwachungsmodus: the other sessions, folded away
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -86,7 +87,7 @@ struct MenuBarView: View {
     private var sessions: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Sessions").font(.title3.weight(.semibold))
+                Text(board.supervisor ? "Überwachung" : "Sessions").font(.title3.weight(.semibold))
                 Text("\(board.sessions.count + guests.shares.count)").font(.title3).foregroundStyle(.secondary)
                 Spacer()
                 Button("Anrufen") { controller.callFromMac() }
@@ -94,31 +95,69 @@ struct MenuBarView: View {
                     .disabled(controller.phoneAway)
                     .help(controller.phoneAway ? "Unterwegs: Parley spricht nur übers iPhone" : "Mit Parley sprechen — Mikrofon des Macs")
             }
-            if board.sessions.isEmpty && guests.shares.isEmpty {
+            if board.supervisor {
+                supervised
+            } else if board.sessions.isEmpty && guests.shares.isEmpty {
                 Text("Keine Session. Starte /parley:voice in Claude Code.")
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
                     .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(MenuTheme.card))
             } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(Array(board.sessions.enumerated()), id: \.element.id) { i, s in
-                            if i > 0 { Divider().padding(.leading, 52) }
-                            SessionRow(session: s, resume: { controller.resume(s.id) })
-                        }
-                        ForEach(Array(guests.shares.enumerated()), id: \.element.id) { i, g in
-                            if i > 0 || !board.sessions.isEmpty { Divider().padding(.leading, 52) }
-                            GuestRow(share: g, row: guests.rows[g.id], hub: guests)
-                        }
-                    }
-                }
-                .frame(maxHeight: 360)
-                .fixedSize(horizontal: false, vertical: true)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(MenuTheme.card))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                card(board.sessions, guests: true)
             }
         }
+    }
+
+    // Überwachungsmodus: the Zentrale as the one card — it alone talks to Sir —, the others
+    // (name, state, last line) folded away below it.
+    @ViewBuilder
+    private var supervised: some View {
+        let rest = board.sessions.filter { $0.zentrale != true }
+        if let z = board.sessions.first(where: { $0.zentrale == true }) {
+            card([z], guests: false)
+        } else {
+            Text("Die Zentrale läuft gerade nicht — Parley startet sie mit dem nächsten Bericht.")
+                .font(.callout).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(MenuTheme.card))
+        }
+        Text("Nur die Zentrale spricht mit dir. Die anderen berichten an sie.")
+            .font(.caption).foregroundStyle(.secondary)
+        if !rest.isEmpty || !guests.shares.isEmpty {
+            DisclosureGroup(isExpanded: $others) {
+                card(rest, guests: true).padding(.top, 6)
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Weitere Sessions").font(.callout.weight(.medium))
+                    Text("\(rest.count + guests.shares.count)").font(.callout).foregroundStyle(.secondary)
+                    let busy = rest.filter { ["working", "background"].contains($0.state) }.count
+                    if busy > 0 { Text("· \(busy) arbeiten").font(.caption).foregroundStyle(MenuTheme.working) }
+                }
+            }
+        }
+    }
+
+    private func card(_ rows: [MenuBoard.Row], guests withGuests: Bool) -> some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { i, s in
+                    if i > 0 { Divider().padding(.leading, 52) }
+                    SessionRow(session: s, resume: { controller.resume(s.id) })
+                }
+                if withGuests {
+                    ForEach(Array(guests.shares.enumerated()), id: \.element.id) { i, g in
+                        if i > 0 || !rows.isEmpty { Divider().padding(.leading, 52) }
+                        GuestRow(share: g, row: guests.rows[g.id], hub: guests)
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: 360)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(MenuTheme.card))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     // MARK: - snapshots and shares
@@ -155,6 +194,12 @@ struct MenuBarView: View {
     private var optionsSection: some View {
         DisclosureGroup(isExpanded: $options) {
             VStack(alignment: .leading, spacing: 6) {
+                Toggle("Überwachungsmodus (nur die Zentrale spricht)", isOn: Binding(
+                    get: { board.supervisor },
+                    set: { on in
+                        controller.server.setSupervisor(on: on)
+                        board.supervisor = on
+                    }))
                 Toggle("Unterwegs, wenn der Mac gesperrt ist", isOn: $controller.autoAwayOnLock)
                 Toggle("Unterbrechen (einfach reinreden)", isOn: $controller.bargeIn)
                 Toggle("Ohne Floskeln (keine Ansagen, keine Bestätigung)", isOn: $controller.brief)
@@ -177,8 +222,11 @@ struct MenuBarView: View {
         HStack(spacing: 6) {
             FooterButton(title: "iPhone", symbol: "iphone") { controller.pairIPhone() }
             FooterButton(title: "Statistik", symbol: "chart.bar") { StatsPresenter.shared.show() }
+            // Symbol only: with its title the row is wider than the window and both edges are cut off.
             FooterButton(title: "Beitreten", symbol: "person.badge.plus") { guests.askToJoin() }
+                .labelStyle(.iconOnly)
                 .help("Einer geteilten Session beitreten (Einladungslink)")
+                .accessibilityLabel("Beitreten")
             FooterButton(title: "Setup", symbol: "wand.and.stars") { OnboardingPresenter.shared.show() }
             Menu {
                 Button("Zurücksetzen (Onboarding testen) — Statistiken bleiben") { DevTools.resetKeepingStats() }
@@ -220,6 +268,7 @@ struct MenuBoard {
         var shared: [Tag]?
         var asking: String?
         var stats: Stats?
+        var zentrale: Bool?
         var name: String { label.isEmpty ? project : label }
     }
     struct Today: Decodable {
@@ -229,32 +278,43 @@ struct MenuBoard {
         var spokenSeconds: Int
         var rateLimits: [Limit]
     }
-    private struct Wire: Decodable { var sessions: [Row]; var today: Today? }
+    private struct Wire: Decodable { var sessions: [Row]; var today: Today?; var supervisor: Bool? }
 
     var sessions: [Row] = []
     var today: Today?
+    var supervisor = false   // Überwachungsmodus: the Zentrale is the one card
 
     init() {}
-    init(sessions: [Row], today: Today?) { self.sessions = sessions; self.today = today }
+    init(sessions: [Row], today: Today?, supervisor: Bool = false) { self.sessions = sessions; self.today = today; self.supervisor = supervisor }
     init(json: String) {
         guard let w = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) else { return }
         sessions = w.sessions
         today = w.today
+        supervisor = w.supervisor ?? false
     }
 }
 
 // `Parley --render-menu out.png [dark]`: the window with sample sessions, as a PNG (screenshots).
 @MainActor
 enum MenuSnapshot {
-    static func render(to path: String, dark: Bool) {
+    // `supervisor`: the Überwachungsmodus — the Zentrale as the one card, the others unfolded.
+    static func render(to path: String, dark: Bool, supervisor: Bool = false) {
         let now = Date().timeIntervalSince1970 * 1000
         func row(_ id: String, _ state: String, ago: Double, line: String? = nil, resumable: Bool = false,
                  callback: Double? = nil, until: Double? = nil, tasks: Int = 0, shared: [String] = []) -> MenuBoard.Row {
             MenuBoard.Row(id: id, label: id, project: id, state: state, since: now - ago * 1000, until: until, callback: callback,
                           resumable: resumable, tasks: Array(repeating: .init(type: "subagent"), count: tasks),
-                          shared: shared.map { .init(name: $0) }, asking: nil, stats: .init(lastLine: line))
+                          shared: shared.map { .init(name: $0) }, asking: nil, stats: .init(lastLine: line), zentrale: id == "Zentrale")
         }
-        let board = MenuBoard(sessions: [
+        let board = supervisor ? MenuBoard(sessions: [
+            row("Zentrale", "speaking", ago: 9, line: "Shirts ist fertig, Angebote fragt nach dem Rabatt."),
+            row("Shirts", "parked", ago: 138, line: "Die Mockups für die neue Kollektion sind gebaut.", resumable: true),
+            row("Angebote", "parked", ago: 30, line: "Soll der Rabatt auch für Bestandskunden gelten?", resumable: true),
+            row("SEO-Landing", "background", ago: 207, line: "Ein Agent prüft das Protokoll, ich melde mich.", tasks: 1),
+            row("Edge Army", "working", ago: 61),
+        ], today: .init(costUsd: 13.61, turns: 65, spokenSeconds: 780,
+                        rateLimits: [.init(kind: "five_hour", percentUsed: 42), .init(kind: "seven_day", percentUsed: 18)]), supervisor: true)
+        : MenuBoard(sessions: [
             row("Parley", "speaking", ago: 13),
             row("Shirts", "working", ago: 138, line: "Ich baue jetzt die Mockups für die neue Kollektion."),
             row("Angebote", "waiting", ago: 30, line: "Ich warte fünf Minuten auf den Build und melde mich.", resumable: true, until: now + 247_000),
@@ -265,7 +325,7 @@ enum MenuSnapshot {
                         rateLimits: [.init(kind: "five_hour", percentUsed: 42), .init(kind: "seven_day", percentUsed: 18)]))
         let app = NSApplication.shared
         app.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        let host = NSHostingView(rootView: MenuBarView(controller: AppController.shared, demo: board))
+        let host = NSHostingView(rootView: MenuBarView(controller: AppController.shared, demo: board, others: supervisor))
         host.appearance = app.appearance
         let size = host.fittingSize
         host.frame = NSRect(origin: .zero, size: size)

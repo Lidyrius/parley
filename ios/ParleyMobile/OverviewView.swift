@@ -12,6 +12,8 @@ struct OverviewView: View {
     @State private var detail: Session?
     /// Raster (default) or Liste, remembered.
     @AppStorage("sessionsAsList") private var asList = false
+    /// Überwachungsmodus: the other sessions, folded away below the Zentrale.
+    @State private var showsOthers = ProcessInfo.processInfo.arguments.contains("-demoOthers")   // screenshots
 
     var body: some View {
         @Bindable var model = model
@@ -118,7 +120,7 @@ struct OverviewView: View {
         case .connected, .connecting:
             if let snapshot = relay.snapshot {
                 if let today = snapshot.today { TodayCard(today: today) }
-                sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend)
+                sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend, supervisor: snapshot.supervisor)
                 if !snapshot.reminders.isEmpty { RemindersCard(list: snapshot.reminders, skew: relay.skew) }
             } else {
                 HStack(spacing: 10) {
@@ -132,7 +134,7 @@ struct OverviewView: View {
     }
 
     @ViewBuilder
-    private func sessions(_ unsorted: [Session], skew: Double, canSend: Bool) -> some View {
+    private func sessions(_ unsorted: [Session], skew: Double, canSend: Bool, supervisor: Bool = false) -> some View {
         // The Mac sorts too (this holds with older hosts); shared sessions sort in like the own ones.
         let list = SessionGroup.sorted(unsorted + model.guestSessions)
         let actions = SessionActions(open: { detail = $0 }, resume: model.resume, callBack: model.callParley, canSend: canSend,
@@ -142,13 +144,15 @@ struct OverviewView: View {
         let shared = model.guestSessions.first?.id
         let canCall = model.hasOwnMac ? canSend || model.demo : shared.map(actions.guestCanSend) ?? false
         VStack(alignment: .leading, spacing: 12) {
-            SessionsHead(count: list.filter { $0.state != .stopped }.count, asList: $asList,
-                         canCall: canCall, inCall: model.call.isBusy) {
+            SessionsHead(title: supervisor ? "Überwachung" : "Sessions", count: list.filter { $0.state != .stopped }.count,
+                         asList: supervisor ? nil : $asList, canCall: canCall, inCall: model.call.isBusy) {
                 if model.call.isBusy { model.call.showsScreen = true }
                 else if !model.hasOwnMac, let shared { model.callSession(shared) }
                 else { model.callParley() }
             }
-            if list.isEmpty {
+            if supervisor {
+                supervised(list, actions: actions)
+            } else if list.isEmpty {
                 Notice(title: "Keine Sessions", symbol: "waveform",
                        text: "Sobald eine Claude-Code- oder Codex-Session über Parley spricht, erscheint sie hier.")
             } else if asList {
@@ -181,6 +185,54 @@ struct OverviewView: View {
             }
         }
         .animation(.snappy, value: asList)
+        .animation(.snappy, value: showsOthers)
+    }
+
+    /// Überwachungsmodus: the Zentrale as the one card — it alone talks to Sir —, and the others
+    /// (name, state, last line) folded away below it.
+    @ViewBuilder
+    private func supervised(_ list: [Session], actions: SessionActions) -> some View {
+        let rest = list.filter { !$0.zentrale }
+        if let z = list.first(where: \.zentrale) {
+            SessionRow(session: z, skew: model.relay(for: z.id).skew, actions: actions)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .background(CardBackground(live: z.voice))
+        } else {
+            Notice(title: "Die Zentrale läuft nicht", symbol: "person.wave.2",
+                   text: "Parley startet sie mit dem nächsten Bericht einer Session.")
+        }
+        Text("Nur die Zentrale spricht mit dir. Die anderen Sessions berichten an sie.")
+            .font(.footnote).foregroundStyle(.secondary)
+        if !rest.isEmpty {
+            let busy = rest.filter { [.working, .background].contains($0.state) }.count
+            Button { showsOthers.toggle() } label: {
+                HStack(spacing: 6) {
+                    Text("Weitere Sessions").font(.subheadline.weight(.semibold))
+                    Text("\(rest.count)").font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
+                    if busy > 0 { Text("· \(busy) arbeiten").font(.footnote).foregroundStyle(SessionState.working.color) }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(showsOthers ? 90 : 0))
+                }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(CardBackground())
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Weitere Sessions, \(rest.count)")
+            .accessibilityValue(showsOthers ? "aufgeklappt" : "zugeklappt")
+            if showsOthers {
+                VStack(spacing: 0) {
+                    ForEach(Array(rest.enumerated()), id: \.element.id) { i, s in
+                        if i > 0 { Divider().padding(.leading, 54) }
+                        SessionRow(session: s, skew: model.relay(for: s.id).skew, actions: actions)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .background(CardBackground())
+                .transition(.opacity)
+            }
+        }
     }
 
     private var otherSheet: Bool { detail != nil || showsSettings || showsSnapshots }
@@ -212,8 +264,9 @@ struct OverviewView: View {
 
 /// "Sessions 7", the grid / list switch, and "Anrufen".
 private struct SessionsHead: View {
+    var title = "Sessions"
     let count: Int
-    @Binding var asList: Bool
+    let asList: Binding<Bool>?   // nil: no grid / list switch (Überwachungsmodus)
     let canCall: Bool
     let inCall: Bool
     let call: () -> Void
@@ -221,15 +274,17 @@ private struct SessionsHead: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("Sessions").font(.title3.bold())
+                Text(title).font(.title3.bold())
                 Text("\(count)").font(.title3).foregroundStyle(.secondary).monospacedDigit()
             }
-            HStack(spacing: 2) {
-                choice("square.grid.2x2.fill", "Raster", on: !asList) { asList = false }
-                choice("list.bullet", "Liste", on: asList) { asList = true }
+            if let asList {
+                HStack(spacing: 2) {
+                    choice("square.grid.2x2.fill", "Raster", on: !asList.wrappedValue) { asList.wrappedValue = false }
+                    choice("list.bullet", "Liste", on: asList.wrappedValue) { asList.wrappedValue = true }
+                }
+                .padding(3)
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
             }
-            .padding(3)
-            .background(Capsule().fill(Color.primary.opacity(0.06)))
             Spacer(minLength: 8)
             Button(action: call) {
                 Label(inCall ? "Zum Anruf" : "Anrufen", systemImage: "phone.fill")
@@ -352,6 +407,7 @@ struct RemindersCard: View {
         guard let at = r.at else { return "wenn \(r.after ?? "es") fertig ist" }
         let date = Date(timeIntervalSince1970: (at - skew) / 1000)
         let time = date.formatted(date: .omitted, time: .shortened)
+        if let every = r.every { return "alle \(every.formatted()) min · \(time)" }
         let cal = Calendar.current
         if cal.isDateInToday(date) { return "heute \(time)" }
         if cal.isDateInTomorrow(date) { return "morgen \(time)" }

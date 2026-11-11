@@ -541,11 +541,12 @@ public sealed class Delivery
 
     // A wake utterance → a running session by name (Groq LLM, label substring fallback) or the
     // Zentrale. Returns the short line Parley confirms with.
-    public async Task<string> Route(string utterance, Config config)
+    // `zentraleOnly` (Überwachungsmodus): Sir talks to the Zentrale only — it passes things on itself.
+    public async Task<string> Route(string utterance, Config config, bool zentraleOnly = false)
     {
         var zentrale = Zentrale.Dir(config);
         var all = _sessions.RouteTargets();
-        var targets = all.Where(t => t.Label.Trim().Length > 0 && !Zentrale.Is(t.Label, t.Cwd, zentrale)).ToList();
+        var targets = all.Where(t => !zentraleOnly && t.Label.Trim().Length > 0 && !Zentrale.Is(t.Label, t.Cwd, zentrale)).ToList();
         var labels = targets.Select(t => t.Label).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var choice = (labels.Count > 0 ? await Groq.Route(utterance, labels, config) : null)
             ?? Routing.Fallback(utterance, labels);

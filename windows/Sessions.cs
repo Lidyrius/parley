@@ -209,6 +209,15 @@ public sealed class SessionRegistry
         }
     }
 
+    // Überwachungsmodus: its turn went to the Zentrale as a report — the line is its last one,
+    // but it never held the voice.
+    public void Reported(string id, string speak) =>
+        Update(id, "", "", (e, t) =>
+        {
+            e.HookAt = t;
+            e.LastLine = speak;
+        });
+
     // The turn's reply went back to the hook: wait, park, inject a transcript, or end.
     // `hostWait`: a hookless turn — no hook sleeps through the wait, the server's timer delivers it.
     public void Finished(string id, string transcript, bool park, int waitSeconds, string resume = "", bool hostWait = false)
@@ -259,6 +268,19 @@ public sealed class SessionRegistry
             if (!_entries.ContainsKey(id)) return;
             Update(id, "", "", (e, _) => e.Pending.Add(new Handoff { Id = Guid.NewGuid().ToString("N"), Text = instruction }));
         }
+    }
+
+    // A delivery still waits for its mod (not handed out yet, or not acked).
+    public bool HasPending(string id)
+    {
+        lock (_gate) return _entries.TryGetValue(id, out var e) && e.Pending.Count > 0;
+    }
+
+    // Überwachungsmodus: the delivery `text` still waits for its mod, never handed out — taken
+    // back (the server keeps its reports). False: none such (the mod has it, or it never waited).
+    public bool TakeBack(string id, string text)
+    {
+        lock (_gate) return _entries.TryGetValue(id, out var e) && e.Pending.RemoveAll(d => d.SentAt is null && d.Text == text) > 0;
     }
 
     // A parked hook polled /wake. `resumed` = it was handed an instruction and goes on working.
@@ -414,6 +436,28 @@ public sealed class SessionRegistry
                 .Select(e => e.Id)
                 .FirstOrDefault();
         }
+    }
+
+    // A live session in `cwd` — one an instruction can reach first (as DeliverableIn), else one
+    // that runs there but can't take any now; null if none runs there. As macOS session(inFolder:).
+    public (string Id, bool Deliverable)? InFolder(string? cwd)
+    {
+        lock (_gate)
+        {
+            Refresh();
+            var here = _entries.Values
+                .Where(e => e.State != "stopped" && CwdPath.Same(e.Cwd, cwd))
+                .OrderByDescending(e => Deliverable(e))
+                .ThenByDescending(e => e.PresenceAt ?? e.HookAt)
+                .FirstOrDefault();
+            return here is null ? null : (here.Id, Deliverable(here));
+        }
+    }
+
+    // Its background tasks still run (as its mod last reported).
+    public bool HasTasks(string id)
+    {
+        lock (_gate) return _entries.TryGetValue(id, out var e) && e.Tasks.Count > 0;
     }
 
     // The session's parked hook is still polling /wake (regardless of a running dialog).
@@ -659,6 +703,20 @@ public sealed class SessionRegistry
                 ? list.FirstOrDefault(g => string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase)) : null;
     }
 
+    // Überwachungsmodus (Supervisor.cs; the server keeps both current): on → `supervisor` in
+    // /sessions; the Zentrale's row is marked `zentrale` either way.
+    private bool _supervised;
+    private string _zentraleCwd = "";
+
+    public void SetSupervised(bool on, string zentraleCwd)
+    {
+        lock (_gate)
+        {
+            _supervised = on;
+            _zentraleCwd = zentraleCwd;
+        }
+    }
+
     private sealed record Row(
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("label")] string Label,
@@ -673,7 +731,16 @@ public sealed class SessionRegistry
         [property: JsonPropertyName("host")] string? Host,
         [property: JsonPropertyName("shared"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<ShareTag>? Shared,
         [property: JsonPropertyName("asking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Asking,
+        [property: JsonPropertyName("zentrale"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IsZentrale,   // the Zentrale's row (omitted otherwise)
         [property: JsonPropertyName("stats")] object Stats);
+
+    // `supervisor`: only while the Überwachungsmodus is on (omitted otherwise).
+    private sealed record Wire(
+        [property: JsonPropertyName("sessions")] List<Row> Sessions,
+        [property: JsonPropertyName("today")] object Today,
+        [property: JsonPropertyName("reminders")] List<object> Reminders,
+        [property: JsonPropertyName("snapshots")] List<object> Snapshots,
+        [property: JsonPropertyName("supervisor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Supervised);
 
     // GET /sessions — by status group (needs input, working, halted, stopped), newest change
     // first within a group, then label, then id. As macOS.
@@ -706,6 +773,7 @@ public sealed class SessionRegistry
                     only is null ? DesktopSessions.Resolve(e.Id, e.Host) : null,
                     _shared.TryGetValue(e.Id, out var tags) && tags.Count > 0 ? tags : null,
                     _asking.TryGetValue(e.Id, out var asking) ? asking : null,
+                    only is null && Supervisor.IsZentrale(e.Label, e.Cwd, _zentraleCwd) ? true : (bool?)null,   // never in a guest's view
                     new
                     {
                         startedAt = (long?)Ms(e.StartedAt ?? e.FirstSeen),
@@ -732,13 +800,12 @@ public sealed class SessionRegistry
                 spokenSeconds = (int)Math.Round(day.SpokenSeconds),
                 rateLimits = _rateLimits,
             };
-            return JsonSerializer.Serialize(new
-            {
-                sessions = rows,
+            return JsonSerializer.Serialize(new Wire(
+                rows,
                 today,
-                reminders = ReminderRows?.Invoke() ?? new List<object>(),
-                snapshots = SnapshotRows?.Invoke() ?? new List<object>(),
-            });
+                ReminderRows?.Invoke() ?? new List<object>(),
+                SnapshotRows?.Invoke() ?? new List<object>(),
+                _supervised ? true : (bool?)null));
         }
     }
 

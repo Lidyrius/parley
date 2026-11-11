@@ -64,6 +64,16 @@ final class ControlServer: @unchecked Sendable {
     lazy var snapshots: [Snapshot] = Snapshots.load(snapshotsFile)
     // A Wiedervorlage was handed to a session (the app shows a notification).
     var onReminded: ((Reminder) -> Void)?
+    // Überwachungsmodus (Supervisor.swift): the switch (nil file = not persisted, tests), the
+    // reports waiting for the Zentrale, and the batch handed to it last (until it took it).
+    // ponytail: the inbox is in memory — reports not handed over yet (seconds, usually) are gone
+    // with a restart; keep them beside reminders.json if that ever bites.
+    var supervisorFile: URL?
+    private lazy var supervisor = Supervisor.load(supervisorFile)
+    private var reports: [String] = []
+    private var reportsOut: String?
+    // Creates the Zentrale's folder when it is missing (the app sets it; nothing in tests).
+    var ensureZentrale: () -> Void = {}
 
     // POST /permission holds the hook at most this long, then answers "ask".
     var permissionHold: TimeInterval = 110
@@ -121,6 +131,7 @@ final class ControlServer: @unchecked Sendable {
         queue.async {
             self.sessions.reminders = Reminders.rows(self.reminders)
             self.sessions.snapshots = Snapshots.rows(self.snapshots)
+            self.syncSupervisor()
         }
     }
 
@@ -188,6 +199,7 @@ final class ControlServer: @unchecked Sendable {
             Log.write("turn: \(stale.count) older queued turn(s) of \(turn.spokenLabel) answered empty — a newer one arrived")
             for item in stale { item.respond(TurnReply(transcript: "", park: false)) }
         }
+        reclaimReports(key)
         parked[key] = nil
         closedKeys.remove(key)   // a resumed session (same id) runs again
         turnsInFlight[key] = ((turnsInFlight[key]?.count ?? 0) + 1, now())
@@ -223,7 +235,115 @@ final class ControlServer: @unchecked Sendable {
             }
             return
         }
-        enqueueReply(turn, respond)
+        voice(turn, key: key, respond)
+    }
+
+    // MARK: - Überwachungsmodus (Supervisor.swift)
+
+    static let talking: Set<String> = ["speaking", "listening", "transcribing", "queued"]
+
+    func supervisorOn() -> Bool { queue.sync { supervisor.on } }
+    func setSupervisor(on: Bool) { queue.sync { setSupervisorOnQueue(on: on, exempt: nil) } }
+
+    // The registry shows the mode in /sessions and marks the Zentrale's row.
+    private func syncSupervisor() {
+        sessions.supervisor = supervisor.on
+        sessions.zentraleCwd = Zentrale.normalize(zentraleDir())
+    }
+
+    private func setSupervisorOnQueue(on: Bool?, exempt: [String]?) {
+        var s = supervisor
+        if let on { s.on = on }
+        if let exempt { s.exempt = exempt.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        let switchedOn = s.on && !supervisor.on
+        if s != supervisor {
+            supervisor = s
+            s.save(to: supervisorFile)
+            Log.write("supervisor: \(s.on ? "on" : "off")\(s.exempt.isEmpty ? "" : " — exempt: \(s.exempt.joined(separator: ", "))")")
+            if s.on { ensureZentrale() }
+        }
+        syncSupervisor()
+        guard switchedOn else { return }
+        // Turns already waiting for their voice go the new way too: reports, not a queue for Sir.
+        for item in replyQueue where item.turn.event == "turn" {
+            replyQueue.removeAll { $0.id == item.id }
+            voice(item.turn, key: Self.sessionKey(item.turn), item.respond)
+        }
+    }
+
+    private func supervisorJSON() -> String {
+        struct Wire: Encodable { let ok = true; let on: Bool; let exempt: [String]; let zentrale: String?; let waiting: Int }
+        return Self.encode(Wire(on: supervisor.on, exempt: supervisor.exempt,
+                                zentrale: sessions.session(inFolder: sessions.zentraleCwd)?.id, waiting: reports.count))
+    }
+
+    // A turn's way to Sir's ear — or, while the mode is on, to the Zentrale as a report: the
+    // session is answered empty at once and parks (its hook polls /wake, the mod's session is
+    // parked by its presence), so it stays resumable and takes the Zentrale's /dispatch.
+    private func voice(_ turn: TurnPayload, key: String, _ respond: @escaping (TurnReply) -> Void) {
+        guard supervisor.on else { return enqueueReply(turn, respond) }
+        let label = sessions.label(of: key) ?? turn.spokenLabel
+        if Supervisor.isZentrale(label: label, cwd: Zentrale.normalize(turn.cwd), zentrale: Zentrale.normalize(zentraleDir())) {
+            // The mod's Zentrale gets its reports on its presence; a hook-carried turn takes
+            // them with its reply (nothing else may reach a busy hook-only session).
+            guard turn.asyncTurnId == nil else { return enqueueReply(turn, respond) }
+            return enqueueReply(turn) { [weak self] reply in respond(self?.withReports(reply, key: key) ?? reply) }
+        }
+        if supervisor.exempts(id: key, label: label) { return enqueueReply(turn, respond) }
+        reports.append(Supervisor.report(turn, id: key, background: !(sessions.entries[key]?.tasks.isEmpty ?? true)))
+        Log.write("supervisor: \(label) reports to the Zentrale (\(turn.wantsListen ? "asks" : "done")) — not voiced")
+        sessions.reported(id: key, speak: turn.speak)
+        let reply = TurnReply(transcript: "", park: turn.asyncTurnId == nil)
+        sessions.finished(id: key, reply: reply)
+        respond(reply)
+        notifyParked()
+        flushReports(start: true)
+    }
+
+    // Hands the waiting reports to the Zentrale once it can take them: reachable, nothing else
+    // waiting for it, and not talking to Sir right now (they follow his answer). Not running and
+    // `start`: started — the reports wait here, without the 10-min limit of a dispatch.
+    private func flushReports(start: Bool = false) {
+        guard !reports.isEmpty else { return }
+        let cwd = Zentrale.normalize(zentraleDir())
+        guard let z = sessions.session(inFolder: cwd) else {
+            if start {
+                ensureZentrale()
+                _ = dispatchOnQueue(cwd: cwd, instruction: "", start: true)
+            }
+            return
+        }
+        guard z.reachable, sessions.entries[z.id]?.pending == nil, parked[z.id]?.pending == nil,
+              let state = sessions.info(z.id)?.state, !Self.talking.contains(state) else { return }
+        let batch = reports.joined(separator: "\n\n")
+        Log.write("supervisor: \(reports.count) report(s) → the Zentrale")
+        reports = []
+        reportsOut = batch
+        deliver(z.id, batch)
+    }
+
+    // The batch is still untaken and the session moves on (its own turn, another instruction for
+    // it, its end): back into the inbox — no report is lost to an overwrite.
+    private func reclaimReports(_ key: String) {
+        guard let out = reportsOut else { return }
+        let waiting = sessions.entries[key]?.pending
+        guard parked[key]?.pending == out || (waiting?.text == out && waiting?.sentAt == nil) else { return }
+        reports.insert(out, at: 0)
+        reportsOut = nil
+        Log.write("supervisor: the Zentrale moved on before it took its reports — kept for it")
+    }
+
+    // A hook-carried turn of the Zentrale: the waiting reports ride back with its reply.
+    private func withReports(_ reply: TurnReply, key: String) -> TurnReply {
+        // (An empty, unparked reply is a stale or ended hook's: nobody would read them.)
+        guard !reports.isEmpty, reply.waitSeconds == 0, reply.park || !reply.transcript.isEmpty else { return reply }
+        var r = reply
+        r.transcript = ([reply.transcript] + reports).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        r.park = false
+        Log.write("supervisor: \(reports.count) report(s) → the Zentrale (with its reply)")
+        reports = []
+        sessions.finished(id: key, reply: r)
+        return r
     }
 
     // MARK: - the mod carries the turn (docs/HOOKLESS.md)
@@ -313,6 +433,7 @@ final class ControlServer: @unchecked Sendable {
         }
         for item in gone { item.respond(TurnReply(transcript: "", park: false)) }
         sessions.waitOver(id: key)
+        reclaimReports(key)
         sessions.clearPending(id: key)
         parked[key] = nil
         closedKeys.insert(key)
@@ -329,7 +450,7 @@ final class ControlServer: @unchecked Sendable {
     func voiceForSir(_ turn: TurnPayload, respond: @escaping (TurnReply) -> Void) {
         queue.async {
             self.sessions.asking[Self.sessionKey(turn)] = nil
-            self.enqueueReply(turn, respond)
+            self.voice(turn, key: Self.sessionKey(turn), respond)
         }
     }
 
@@ -460,11 +581,12 @@ final class ControlServer: @unchecked Sendable {
     // ponytail: the instruction still waits by folder; another idle session in the same folder
     // could take it first. Key it by session id if that ever bites. A session the app hasn't seen
     // since its start counts as new.
+    // `from`: who asks ("Zentrale") — the session reads "[Auftrag von Zentrale] …".
     func dispatchOnQueue(cwd raw: String, instruction: String, start: Bool, resume: String? = nil,
-                                 name rawName: String? = nil) -> DispatchResult {
+                                 name rawName: String? = nil, from: String? = nil) -> DispatchResult {
         let cwd = Zentrale.normalize(raw)
         prunePending()
-        let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let plain = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = rawName.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
         var here = resume.map { sessions.alive($0) } ?? sessions.session(inFolder: cwd)
         var forNew = false
@@ -476,6 +598,10 @@ final class ControlServer: @unchecked Sendable {
                 forNew = here == nil
             }
         }
+        // While the Überwachungsmodus is on, its answer goes to the Zentrale: it is told so.
+        let reportsBack = supervisor.on && cwd != Zentrale.normalize(zentraleDir())
+            && !supervisor.exempts(id: here?.id ?? "", label: here.flatMap { sessions.label(of: $0.id) } ?? name ?? "")
+        let text = Supervisor.instruction(plain, from: from, reportsBack: reportsBack)
         var result = DispatchResult(delivered: "none", started: false)
         if !text.isEmpty {
             if let s = here, s.reachable {
@@ -643,6 +769,7 @@ final class ControlServer: @unchecked Sendable {
             notifyParked()
             return Self.turnJSON(TurnReply(transcript: "", park: false), end: true)
         }
+        flushReports()   // the Zentrale's parked hook takes its reports with this poll
         var p = parked[key] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date(), since: now())
         p.label = w?.spokenLabel ?? p.label
         p.project = w?.project ?? p.project
@@ -684,6 +811,7 @@ final class ControlServer: @unchecked Sendable {
     // its next /presence (≤2 s) and submits it as a prompt. Parked, but no /wake for over 30 s
     // (a stalled poll, or the hook is gone): both copies — whichever takes it first clears the other.
     private func deliver(_ id: String, _ instruction: String) {
+        reclaimReports(id)   // an untaken batch of reports is not overwritten: it goes out again later
         let alive = sessions.parkedHookAlive(id)
         if alive || sessions.entries[id]?.parked == true {
             var p = parked[id] ?? Parked(label: "", project: "", cwd: "", pending: nil, lastSeen: Date(), since: now())
@@ -933,6 +1061,7 @@ final class ControlServer: @unchecked Sendable {
                 delivery = sessions.handOver(id: p.session_id, text)
             }
             notifyParked()
+            flushReports()   // the Zentrale may take its reports now (they go out with its next presence)
             struct Wire: Encodable { var instruction: String?; var delivery_id: String?; var unknown_turn: Bool? }
             var w = Wire(instruction: delivery?.text, delivery_id: isAsync ? delivery?.id : nil)
             if let a = p.awaiting, !a.isEmpty, asyncTurns[p.session_id] != a { w.unknown_turn = true }   // e.g. Parley restarted
@@ -961,7 +1090,7 @@ final class ControlServer: @unchecked Sendable {
             guard !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || start else {
                 return (400, #"{"ok":false,"error":"nothing to do"}"#)
             }
-            let r = dispatchOnQueue(cwd: cwd, instruction: instruction, start: start, resume: d.resume, name: d.name)
+            let r = dispatchOnQueue(cwd: cwd, instruction: instruction, start: start, resume: d.resume, name: d.name, from: d.from)
             return (200, #"{"ok":true,"delivered":"\#(r.delivered)","started":\#(r.started)}"#)
         case ("POST", "/past"):
             // The Zentrale looks up a past session (title, folder, last prompt) to resume it.
@@ -980,6 +1109,17 @@ final class ControlServer: @unchecked Sendable {
                 reply = (200, Reply(ok: true, name: p.name))
             }
             return (reply.0, (try? JSONEncoder().encode(reply.1)).map { String(decoding: $0, as: UTF8.self) } ?? "{}")
+        case ("GET", "/supervisor"):
+            syncSupervisor()
+            return (200, supervisorJSON())
+        case ("POST", "/supervisor"):
+            // The Überwachungsmodus on / off (the Zentrale sets it itself), and who is exempt.
+            struct Body: Decodable { var on: Bool?; var exempt: [String]? }
+            guard let b = try? JSONDecoder().decode(Body.self, from: req.body), b.on != nil || b.exempt != nil else {
+                return (400, #"{"ok":false,"error":"give on (true / false) and / or exempt (session names or ids)"}"#)
+            }
+            setSupervisorOnQueue(on: b.on, exempt: b.exempt)
+            return (200, supervisorJSON())
         case ("POST", "/remind"):
             return remind(req.body)
         case ("GET", "/starting"):
@@ -1115,7 +1255,7 @@ extension ControlServer {
         case .success(let r):
             reminders.append(r)
             saveReminders()
-            Log.write("remind: for \(r.label), \(r.at.map { "at \($0)" } ?? "after \(r.afterLabel ?? "?")")")
+            Log.write("remind: for \(r.label), \(r.at.map { "at \($0)" } ?? "after \(r.afterLabel ?? "?")")\(r.every.map { ", every \($0) min" } ?? "")")
             fireReminders { $0.id == r.id && Reminders.isDue($0, now: self.now(), state: self.sessions.stateSince) }
             return (200, Self.encode(Wire(ok: true, reminder: Reminders.rows([r]).first)))
         }
@@ -1123,7 +1263,11 @@ extension ControlServer {
 
     // Every 30 s (AppController): what is due by time, or because its session is done.
     func tickReminders() {
-        queue.async { self.fireReminders { Reminders.isDue($0, now: self.now(), state: self.sessions.stateSince) } }
+        queue.async {
+            self.syncSupervisor()
+            self.fireReminders { Reminders.isDue($0, now: self.now(), state: self.sessions.stateSince) }
+            self.flushReports(start: true)
+        }
     }
 
     /// A session by id, spoken name / folder name (running first), or a past session's id.
@@ -1149,7 +1293,14 @@ extension ControlServer {
         let fire = reminders.filter(due)
         guard !fire.isEmpty else { return }
         let ids = Set(fire.map(\.id))
-        reminders.removeAll { ids.contains($0.id) }
+        // A recurring one stays, due again at its next time; the others go.
+        reminders = reminders.compactMap { r in
+            guard ids.contains(r.id) else { return r }
+            guard let next = Reminders.next(r, after: now()) else { return nil }
+            var r = r
+            r.at = next
+            return r
+        }
         saveReminders()
         for r in fire { hand(r) }
     }
@@ -1165,7 +1316,23 @@ extension ControlServer {
             return
         }
         let text = Reminders.instruction(r, now: now())
-        if let id = r.session, sessions.reachable(id) {
+        if r.every != nil {
+            // Recurring: whoever runs in its folder now (a new session since, maybe) — started
+            // when none does, and no round while it works or talks to Sir (the next comes anyway).
+            let live = r.session.flatMap { sessions.alive($0) } ?? r.cwd.flatMap { sessions.session(inFolder: $0) }
+            if let live, let state = sessions.info(live.id)?.state, Reminders.skipRound.contains(state) {
+                Log.write("remind: \(r.label) is busy (\(state)) — this round is skipped")
+                return
+            }
+            if let live, live.reachable {
+                deliver(live.id, text)
+            } else if let cwd = r.cwd, !cwd.isEmpty {
+                _ = dispatchOnQueue(cwd: cwd, instruction: text, start: true)
+            } else {
+                Log.write("remind: \(r.label) is gone and has no folder — round dropped: \(r.text)")
+                return
+            }
+        } else if let id = r.session, sessions.reachable(id) {
             deliver(id, text)
         } else if let cwd = r.cwd, !cwd.isEmpty {
             let resume = r.session.flatMap { Transcript.file(for: $0, root: transcripts) != nil ? $0 : nil }
