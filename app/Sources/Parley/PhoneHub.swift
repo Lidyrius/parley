@@ -55,16 +55,69 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     // the phone has hung up and its `call end` got lost (the app suspended right after) — the
     // call is over here too, so the next update rings instead of talking into the void.
     static let silentCall: TimeInterval = 6
+    // v8 ("Funkloch"): the phone keeps its mic and its place in a clip through a dead zone — the
+    // call waits this long for it (after `stallAfter` the clocks of a listening stand still).
+    static let funkloch: TimeInterval = 180
+    static let stallAfter: TimeInterval = 3
     private let now: @Sendable () -> Date
     private var lastAudio = Date.distantPast
     private var liveTimer: DispatchSourceTimer?
+    private var clipCall = false                 // this call: clips down, a numbered mic up
+    private var micSeq: UInt32?                  // the newest mic frame received …
+    private var micAcked: UInt32?                // … and told to the phone
+    private var stallSince: Date?
+    private var clipSink: (@Sendable (ClipStatus) -> Void)?
+    // A listening follows clip `id`: once the phone holds all of it (`heldAt`: the mic's number
+    // then) it plays, its mic running along one frame per frame played — so the clip is over at
+    // heldAt + frames. Mic frames up to there are not Sir's answer (`listenAfter`); those after
+    // it are kept until the listener is there.
+    private var awaited: (id: Int, frames: Int, heldAt: UInt32?)?
+    private var listenAfter: UInt32?
+    private var kept: [Data] = []
+    static let keepMost = 9000                   // 3 min
 
     // Internal for tests: one look (every second while a call runs).
     func checkAlive() {
-        let gone = lock.withLock { active && now().timeIntervalSince(lastAudio) > Self.silentCall }
+        let t = now()
+        let (gone, limit, ack, note, send) = lock.withLock { () -> (Bool, TimeInterval, UInt32?, String?, (@Sendable (String) -> Void)?) in
+            guard active else { return (false, 0, nil, nil, nil) }
+            let quiet = t.timeIntervalSince(lastAudio)
+            let limit = clipCall ? Self.funkloch : Self.silentCall
+            var note: String?
+            if clipCall, quiet > Self.stallAfter, stallSince == nil {
+                stallSince = lastAudio
+                note = "phone: nothing from the phone — a dead zone? The call waits up to \(Int(Self.funkloch)) s"
+            }
+            var ack: UInt32?
+            if clipCall, micSeq != micAcked { micAcked = micSeq; ack = micSeq }
+            return (quiet > limit, limit, ack, note, sendText)
+        }
+        if let note { log(note) }
+        if let ack { send?(RelayFrame.micGot(ack)) }
         guard gone else { return }
-        log("phone: call gone — no audio from the phone for \(Int(Self.silentCall)) s (its \"call end\" got lost)")
+        log("phone: call gone — no audio from the phone for \(Int(limit)) s (its \"call end\" got lost)")
         handle(.call(false))
+    }
+
+    /// v8: nothing comes from the phone right now — the call is kept, a listening's clocks wait.
+    var stalled: Bool { lock.withLock { active && clipCall && now().timeIntervalSince(lastAudio) > Self.stallAfter } }
+    var clips: Bool { lock.withLock { active && clipCall } }
+
+    func sendControl(_ text: String) {
+        lock.withLock { active ? sendText : nil }?(text)
+    }
+
+    func setClipSink(_ sink: (@Sendable (ClipStatus) -> Void)?) {
+        lock.withLock { clipSink = sink }
+    }
+
+    var micHeard: UInt32 { lock.withLock { micSeq ?? 0 } }
+
+    func listensAfter(clip id: Int, frames: Int) {
+        lock.withLock {
+            guard active, clipCall else { return }
+            awaited = (id, frames, nil)
+        }
     }
 
     private func watchAlive(_ on: Bool) {
@@ -155,11 +208,18 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     // A phone frame (resume is handled by the server).
     func handle(_ event: PhoneEvent) {
         switch event {
-        case .call(true, let down):
+        case .call(true, let down, let clips):
             let (changed, state, send) = lock.withLock { () -> (Bool, PhoneAudioState, (@Sendable (String) -> Void)?) in
                 rate = down
                 guard !active else { return (false, desired, nil) }   // a repeated start keeps the call
                 active = true
+                clipCall = clips
+                micSeq = nil
+                micAcked = nil
+                stallSince = nil
+                awaited = nil
+                listenAfter = nil
+                kept.removeAll()
                 ending = false
                 topic = nil
                 bargeFlag = false
@@ -171,10 +231,35 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             }
             guard changed else { return }
             watchAlive(true)
-            log("phone: call connected (voice at \(down / 1000) kHz)")
+            log("phone: call connected (voice at \(down / 1000) kHz\(clips ? ", clips" : ""))")
             send?(RelayFrame.audio(state, label: lock.withLock { speaker }))
             onChange?()
-        case .call(false, _):
+        case .callIdle:
+            // The phone is there and in no call: ours ended and its `call end` never got here.
+            guard callActive else { return }
+            log("phone: the phone is in no call — ours is over")
+            handle(.call(false))
+        case .clip(let status):
+            // How far it got with a clip (after each one, and after every break in the line):
+            // the clip in flight takes it from there — and the phone learns how much of its mic is here.
+            let (sink, ack, send) = lock.withLock { () -> ((@Sendable (ClipStatus) -> Void)?, UInt32?, (@Sendable (String) -> Void)?) in
+                guard active else { return (nil, nil, nil) }
+                // Before the answer below lets the phone send what it kept: where the listening starts.
+                if var a = awaited, a.id == status.id {
+                    if status.have >= a.frames, a.heldAt == nil { a.heldAt = micSeq ?? 0 }
+                    awaited = a
+                    if status.played {
+                        listenAfter = (a.heldAt ?? micSeq ?? 0) &+ UInt32(a.frames)
+                        kept.removeAll()
+                        awaited = nil
+                    }
+                }
+                micAcked = micSeq
+                return (clipSink, micSeq ?? 0, sendText)
+            }
+            if let ack { send?(RelayFrame.micGot(ack)) }
+            sink?(status)
+        case .call(false, _, _):
             let changed = lock.withLock { () -> Bool in
                 guard active else { declined = true; return false }
                 active = false
@@ -244,7 +329,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             }) else { return }
             log("phone: Sir interrupts — stopping the line")
         case .history, .image, .say, .hello, .paletteSaved, .snapshotSave, .snapshotOpen, .snapshotDelete,
-             .shareCreate, .shareApprove, .shareRemove, .join, .answer:
+             .shareCreate, .shareApprove, .shareRemove, .join, .answer, .supervisor:
             onChat?(event)
         case .resume:
             break
@@ -252,15 +337,48 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     }
 
     // A binary frame from the relay: the phone's mic.
+    // v8: four bytes in front number it (little-endian) — after a dead zone the phone sends what
+    // it kept from where the host stands, and a frame that comes twice is dropped here.
     func audioIn(_ frame: Data) {
+        var pcm = frame
+        var back: String?
         let s = lock.withLock { () -> (@Sendable (Data) -> Void)? in
             guard active else { return nil }
-            lastAudio = now()
-            recent.append(frame)
+            let t = now()
+            if let since = stallSince {
+                back = "phone: the phone is back after \(Int(t.timeIntervalSince(since))) s"
+                stallSince = nil
+            }
+            lastAudio = t
+            if frame.count == PhoneAudioFormat.frameBytes + 4 {
+                let b = frame.startIndex
+                let seq = UInt32(frame[b]) | UInt32(frame[b + 1]) << 8 | UInt32(frame[b + 2]) << 16 | UInt32(frame[b + 3]) << 24
+                if let last = micSeq, seq <= last {
+                    // Twice (sent again after a break): dropped. But a count that starts over is a
+                    // new call whose start was taken for a repeated one (its end got lost).
+                    guard seq <= 3, last > 100 else { return nil }
+                    micAcked = nil
+                    awaited = nil
+                    listenAfter = nil
+                    kept.removeAll()
+                }
+                micSeq = seq
+                pcm = frame.subdata(in: (b + 4)..<frame.endIndex)
+                if let after = listenAfter {
+                    if seq <= after { return nil }            // recorded while the clip still played
+                    if sink == nil {                          // the listener is not there yet: kept for it
+                        kept.append(pcm)
+                        if kept.count > Self.keepMost { kept.removeFirst(kept.count - Self.keepMost) }
+                        return nil
+                    }
+                }
+            }
+            recent.append(pcm)
             if recent.count > Self.prerollFrames { recent.removeFirst(recent.count - Self.prerollFrames) }
             return sink
         }
-        s?(frame)
+        if let back { log(back) }
+        s?(pcm)
     }
 
     // MARK: - barge-in
@@ -349,7 +467,13 @@ final class PhoneHub: CallLink, @unchecked Sendable {
         if let (frame, send) = out { send?(frame) }
     }
 
+    // (What was kept for the listener goes to it first, under the lock: no newer frame overtakes.)
     func setAudioSink(_ sink: (@Sendable (Data) -> Void)?) {
-        lock.withLock { self.sink = sink }
+        lock.withLock {
+            self.sink = sink
+            guard let sink else { listenAfter = nil; kept.removeAll(); return }
+            for frame in kept { sink(frame) }
+            kept.removeAll()
+        }
     }
 }

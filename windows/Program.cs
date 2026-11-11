@@ -69,6 +69,7 @@ internal sealed class TrayApp : ApplicationContext
             _ = PhoneCall.Reply(frame);
         };
         _pipeline.Route = (text, config) => _server.Delivery.Route(text, config, _server.SupervisorOn());
+        _pipeline.Host = _server;   // what Sir missed (a call of the Zentrale he didn't take)
         PhoneCall.LoadSettings(Config.Load());
         // v7: shared sessions — Sir's phone hears who asks to join; a guest's question
         // (<speak to="Max">) goes to him, and unanswered comes back to Sir's voice.
@@ -191,7 +192,8 @@ internal sealed class TrayApp : ApplicationContext
         _panel = new TrayPanel(new TrayPanel.Hooks
         {
             Sessions = () => _server.Sessions.Json(),
-            Call = () => _server.StartLocalWake(),
+            // After a call he didn't take: first what he missed, as one summary (at the PC's speaker).
+            Call = () => { if (_server.MissedCount > 0 && !PhoneCall.Away) _server.CallBack(); else _server.StartLocalWake(); },
             Resume = id => _server.Resume(id, Server.ResumeInstruction),
             Muted = () => mute.Checked,
             ToggleMute = () => mute.Checked = !mute.Checked,
@@ -247,7 +249,9 @@ internal sealed class TrayApp : ApplicationContext
     private async Task GreetCaller()
     {
         await Task.Delay(1200);
-        if (PhoneCall.Active && !_server.ResumedRecently()) _server.StartWake();
+        if (!PhoneCall.Active || _server.ResumedRecently()) return;
+        // He calls back after a call he didn't take: first what he missed, as one summary.
+        if (_server.MissedCount > 0) _server.CallBack(); else _server.StartWake();
     }
 
     // v7 part 3: a guest's question on his own call line (Shares.cs) — ring his phone (his
@@ -261,8 +265,8 @@ internal sealed class TrayApp : ApplicationContext
         if (!await RingGuest(line, $"Rückfrage · {share.Label}", share)) return null;
         var config = Config.Load();
         line.SetSpeaker(share.Label);
-        await SpeakToGuest(line, turn.Speak, config, turn.Slides, Server.SessionKey(turn));
-        if (await ListenToGuest(line, config) is not { } text) return null;
+        var beeped = await SpeakToGuest(line, turn.Speak, config, turn.Slides, Server.SessionKey(turn), beep: true);
+        if (await ListenToGuest(line, config, beeped) is not { } text) return null;
         Log.Write($"share: {name} answered on the phone ({text.Length} chars)");
         if (line.Active)
         {
@@ -286,8 +290,8 @@ internal sealed class TrayApp : ApplicationContext
             line.TakeBarge();
             return null;
         }
-        await SpeakToGuest(line, $"Ja, {g.Name}? Was soll ich {share.Label} sagen?", config);
-        if (await ListenToGuest(line, config) is not { } text) return null;
+        var beeped = await SpeakToGuest(line, $"Ja, {g.Name}? Was soll ich {share.Label} sagen?", config, beep: true);
+        if (await ListenToGuest(line, config, beeped) is not { } text) return null;
         Log.Write($"share: {g.Name} called in for {share.Label} ({text.Length} chars)");
         if (line.Active)
         {
@@ -298,23 +302,24 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     // One line on a guest's call — with his captions and slides, as on Sir's phone.
-    private static async Task SpeakToGuest(PhoneLine line, string text, Config config, IReadOnlyList<SlideSpec>? slides = null,
-                                           string session = "", bool last = false)
+    // `beep`: Parley listens after it; true = the beep went with the line (a phone that takes clips, v8).
+    private static async Task<bool> SpeakToGuest(PhoneLine line, string text, Config config, IReadOnlyList<SlideSpec>? slides = null,
+                                                 string session = "", bool last = false, bool beep = false)
     {
-        if (await GoogleTts.Synthesize(text, config) is not { } raw) return;
+        if (await GoogleTts.Synthesize(text, config) is not { } raw) return false;
         var pcm = AudioOut.ApplyRate(raw, config.SpeakingRate);
         var timed = Captions.Timings(text, pcm, GoogleTts.SampleRate);
         if (timed is not null) await line.Reply(Captions.Frame(timed, last));
         if (slides is { Count: > 0 }) await Slides.Send(slides, timed, session, line);
-        await line.PlayAsync(pcm, GoogleTts.SampleRate);
+        return (await line.SpeakAsync(pcm, GoogleTts.SampleRate, beep)).Beeped;
     }
 
-    // The beep (unless he talked over Parley: then at once, with what he already said), his answer
-    // transcribed. null = the call is gone.
-    private static async Task<string?> ListenToGuest(PhoneLine line, Config config)
+    // The beep (unless he talked over Parley: then at once, with what he already said — or it went
+    // with the line, `beeped`), his answer transcribed. null = the call is gone.
+    private static async Task<string?> ListenToGuest(PhoneLine line, Config config, bool beeped = false)
     {
         var barged = line.TakeBarge();
-        if (!barged)
+        if (!barged && !beeped && !await line.BeepClip())
         {
             await line.PlayAsync(AudioOut.Beep(), GoogleTts.SampleRate);
             await Task.Delay(100);
@@ -486,14 +491,21 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneResume r: _server.StartResume(r.Id); break;
             case PhoneCallState c:
                 var wasInCall = PhoneCall.Active;
-                PhoneCall.OnCall(c.Started, c.Down);
+                PhoneCall.OnCall(c.Started, c.Down, c.Clips);
                 if (c.Started && !wasInCall) _ = GreetCaller();
                 break;
+            // v8 ("Funkloch"): the phone is in no call (ours is over); how far it got with a clip.
+            case PhoneCallIdle or PhoneClipStatus: PhoneCall.Line.Handle(message); break;
             case PhoneWake _: _server.StartWake(); break;
             case PhonePush p: PhoneCall.SetPush(p.Token, p.Env); break;
             case PhoneAway a: PhoneCall.SetAway(a.On); break;
             case PhoneLater l: PhoneCall.SetLater(l.After); break;
             case PhoneSilent s: PhoneCall.SetSilent(s.On); break;
+            // The Überwachungsmodus, switched in the phone's app (its overview follows the next `sessions`).
+            case PhoneSupervisor sup:
+                Log.Write($"phone: Überwachungsmodus {(sup.On ? "an" : "aus")}");
+                _server.SetSupervisor(sup.On);
+                break;
             case PhoneBrief b:
                 if (Config.Load().Brief != b.On)
                 {

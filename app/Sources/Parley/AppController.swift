@@ -139,6 +139,7 @@ final class AppController: ObservableObject {
         server.remindersFile = Reminders.file
         server.snapshotsFile = Snapshots.file
         server.supervisorFile = Supervisor.file
+        server.missedFile = Missed.file
         server.ensureZentrale = {
             let z = ZentraleSettings.load()
             if (try? Zentrale.ensure(z, template: Zentrale.templateDir())) == true { Log.write("zentrale: created \(z.zentraleDir)") }
@@ -184,6 +185,12 @@ final class AppController: ObservableObject {
             // An answer (typed, or tapped in the Live Activity) closes that session's question there.
             if case .say(let id, _) = event {
                 Task { @MainActor in if self?.activityAsk?.id == id { self?.activityAsk = nil } }
+            }
+            // The Überwachungsmodus, switched in the phone's app (its overview follows the next `sessions`).
+            if case .supervisor(let on) = event {
+                Log.write("phone: Überwachungsmodus \(on ? "an" : "aus")")
+                self?.server.setSupervisor(on: on)
+                return
             }
             // A palette made by voice: again on every (re)connect until the phone confirms it.
             if case .hello(let device) = event {
@@ -363,7 +370,8 @@ final class AppController: ObservableObject {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.2))
             guard let self, phone.callActive, !server.resumedRecently() else { return }
-            server.wakeFromPhone()
+            // He calls back after a call he didn't take: first what he missed, as one summary.
+            if server.missedCount() > 0 { server.callBack() } else { server.wakeFromPhone() }
         }
     }
 
@@ -448,6 +456,7 @@ final class AppController: ObservableObject {
         case ControlServer.wakeEvent: return await runWake()
         case ControlServer.permissionEvent, ControlServer.watchdogEvent: return await runPermission(turn)
         case ControlServer.reminderEvent: return await runReminder(turn)
+        case ControlServer.callbackEvent: return await runCallBack(turn)
         default: break
         }
         upsert(SessionInfo(id: key, project: turn.project, pane: turn.tmux_pane, status: "speaking"))
@@ -471,6 +480,19 @@ final class AppController: ObservableObject {
         if phone.away && phone.silent && !phone.callActive { return silentTurn(turn, key: key) }
         let ringing = shouldRing
         if effectivelyMuted && !phone.callActive && !ringing { return mutedTurn() }
+
+        // Überwachungsmodus: a call Sir didn't take must not hold the Zentrale. While lines of it
+        // wait for his call back, a new one joins them — no new ring. And once he can hear again
+        // (he is in a call, or back at the Mac) all of them come as one summary, not this line alone.
+        let session = ControlServer.sessionKey(turn)
+        if server.missedCount() > 0, server.isZentrale(session) {
+            if ringing { return missedTurn(turn, key: key, first: false) }
+            if phone.callActive || !phone.away {
+                server.addMissed(turn)
+                server.callBack()
+                return TurnReply(transcript: "", park: true)
+            }
+        }
 
         // Kick off Google TTS synthesis IMMEDIATELY — it runs in parallel with everything
         // below. Its observed duration feeds the TTSTiming prediction model.
@@ -504,7 +526,18 @@ final class AppController: ObservableObject {
         var calledBack = false
         if ringing { await gatherRound(session: ControlServer.sessionKey(turn)) }
         let rang = ringing && !phone.callActive
-        if rang, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: key) {
+        // The line's voice is ready before the phone rings: once Sir answers it goes out in one
+        // piece (a phone that takes clips plays it only when it holds all of it).
+        if rang { _ = await prefetch?.value }
+        if rang, server.isZentrale(session, supervised: true) {
+            // One ring. Not taken (or "not now"): the line is kept for his call back and the
+            // Zentrale goes on — no waiting half an hour with everything behind it.
+            switch await ringPhone(label: turn.spokenLabel) {
+            case .answered: break
+            case .later(let after): prefetch?.cancel(); return missedTurn(turn, key: key, first: true, ringAgain: after)
+            case .missed: prefetch?.cancel(); return missedTurn(turn, key: key, first: true)
+            }
+        } else if rang, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: session, key: key) {
             calledBack = back
         }
         // Unterwegs and not on the phone: the Mac stays silent — the line waits as a notification.
@@ -799,6 +832,58 @@ final class AppController: ObservableObject {
         return TurnReply(transcript: "", park: turn.wantsListen)
     }
 
+    // MARK: - a call Sir didn't take (Überwachungsmodus; Supervisor.swift, Missed)
+
+    private var missedNoticeAt = Date.distantPast
+
+    /// The Zentrale's line is kept for Sir's call back; its turn ends now — nothing waits for him.
+    /// `first`: this is the line that rang: the Zentrale learns that he didn't answer.
+    private func missedTurn(_ turn: TurnPayload, key: String, first: Bool, ringAgain: TimeInterval? = nil) -> TurnReply {
+        let n = server.addMissed(turn, ringAgain: ringAgain)
+        setStatus(key, "waiting")
+        Log.write("missed: \(turn.spokenLabel) — \(first ? "the call was not taken" : "no new ring"), \(n) line(s) wait for Sir's call back"
+                  + (ringAgain.map { ", ringing once more in \(Int($0)) s" } ?? ""))
+        // One notification, then at most one every quarter of an hour with the count — the Live
+        // Activity shows it all the time (LiveActivity.content reads `missed`).
+        if first || Date().timeIntervalSince(missedNoticeAt) >= Missed.noticeEvery, let target = phone.alertTarget {
+            missedNoticeAt = Date()
+            let apns = self.apns, session = ControlServer.sessionKey(turn)
+            let body = Missed.waiting(n) + ". Zuletzt: " + turn.speak
+            Task.detached { await apns.notify(token: target.token, env: target.env, title: "Parley · \(turn.spokenLabel)", body: body, session: session) }
+        }
+        return TurnReply(transcript: first ? Missed.note : "", park: true)
+    }
+
+    static let summaryWait: TimeInterval = 60
+
+    /// Sir is back — he called, pressed "Anrufen", or the ring he asked for was taken: everything
+    /// he missed goes to the Zentrale as one instruction, and the line is held until its summary
+    /// is next in the queue (no hang-up in between, no second ring).
+    private func runCallBack(_ turn: TurnPayload) async -> TurnReply {
+        let none = TurnReply(transcript: "", park: false)
+        if turn.speak == "ring" {   // "In 5 Min.": the one ring he asked for
+            guard shouldRing, server.missedCount() > 0 else { return none }
+            guard await ringPhone(label: Zentrale.label) == .answered else {
+                Log.write("missed: the ring Sir asked for was not taken either — the lines keep waiting")
+                return none
+            }
+        }
+        guard phone.callActive || !phone.away, let all = server.takeMissed() else { return none }
+        Log.write("missed: Sir is back — what he missed goes to the Zentrale for one summary")
+        _ = deliverToZentrale(all)
+        let config = AppConfig.load()
+        if !brief {
+            let de = config.language.lowercased().hasPrefix("de")
+            await speakLine(de ? "Einen Moment, Sir, ich fasse zusammen, was Sie verpasst haben."
+                               : "One moment, Sir, I'll sum up what you missed.", config: config)
+        }
+        let until = Date().addingTimeInterval(Self.summaryWait)
+        while Date() < until, server.nothingQueued(), phone.callActive || !phone.away {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return none
+    }
+
     enum RingOutcome: Equatable { case answered, missed, later(TimeInterval?) }
     enum Reach { case reached(calledBack: Bool), notReached }
 
@@ -929,7 +1014,7 @@ final class AppController: ObservableObject {
     /// One line on a guest's call — with his captions and slides, just as on Sir's phone.
     private func speakToGuest(_ line: PhoneHub, _ text: String, slides: [SlideSpec] = [], session: String = "",
                               beep: Bool, config: AppConfig) async {
-        let voice = PhoneVoice(link: line, rate: config.speakingRate)
+        let voice = Self.voice(for: line, rate: config.speakingRate)
         if let pcm = await GoogleTTS.synth(text, config: config) {
             let t = Captions.timings(text: text, pcm: pcm, sampleRate: PhoneAudioFormat.ttsRate, rate: config.speakingRate)
             if let t { line.reply(Captions.frame(t, last: !beep)) }
@@ -983,6 +1068,8 @@ final class AppController: ObservableObject {
     // or the Zentrale → confirm. Nothing said → nothing happens.
     /// The menu's "Anrufen": the wake dialog on the Mac's speaker and mic.
     func callFromMac() {
+        // After a call he didn't take: first what he missed, as one summary (at the Mac's speaker).
+        if server.missedCount() > 0, !phone.away { server.callBack(); return }
         localWake = true
         server.wakeFromPhone()
     }
@@ -1017,7 +1104,11 @@ final class AppController: ObservableObject {
             return data
         }
         let confirmation: String
-        if let id = target.id {
+        if let all = server.takeMissed(said: text) {
+            // "Hey Parley" after a call he didn't take: what he missed and what he says now, together.
+            _ = deliverToZentrale(all)
+            confirmation = Zentrale.takeOver.randomElement()!
+        } else if let id = target.id {
             server.deliverRouted(id: id, instruction: text)
             confirmation = "Verstanden, ich gebe das an \(target.label) weiter."
         } else {
@@ -1208,6 +1299,12 @@ final class AppController: ObservableObject {
         }
     }
 
+    /// Parley's voice down a call: a phone that takes clips (v8) gets the whole line and plays it
+    /// once it holds all of it — a dead zone no longer cuts it; an older one hears it streamed.
+    nonisolated static func voice(for link: any CallLink, rate: Double) -> any PhoneSpeech {
+        link.clips ? PhoneClip(link: link, rate: rate) : PhoneVoice(link: link, rate: rate)
+    }
+
     // Speak the summary + beep, then FULLY release the audio output device before the
     // mic engine starts. A still-running (or merely stopped-but-alive) output engine
     // starves the input engine → the mic tap never fires (0 buffers). Fresh player per
@@ -1217,7 +1314,7 @@ final class AppController: ObservableObject {
     private func speakAndBeep(_ text: String, config: AppConfig, prefetched: Data? = nil, beep: Bool = true,
                               slides: [SlideSpec] = [], session: String = "", last: Bool = false) async {
         if phone.callActive {
-            let voice = PhoneVoice(link: phone, rate: config.speakingRate)
+            let voice = Self.voice(for: phone, rate: config.speakingRate)
             var captioned = false
             await synthesize(text, config: config, prefetched: prefetched) { pcm in
                 // Live captions: word times from the (whole, Google) line, just before its first
@@ -1469,7 +1566,7 @@ final class AppController: ObservableObject {
     private func playClip(_ data: Data, rate: Double = 1.0) async {
         var data = data
         if phone.callActive {
-            let voice = PhoneVoice(link: phone, rate: rate)
+            let voice = Self.voice(for: phone, rate: rate)
             voice.enqueue(data)
             guard let rest = await voice.finish(beep: false) else { return }
             Log.write("phone: call ended during a clip → the rest on the Mac's speaker")
@@ -1487,7 +1584,7 @@ final class AppController: ObservableObject {
 
     private func playChime() async {
         if phone.callActive {
-            let voice = PhoneVoice(link: phone, rate: 1)
+            let voice = Self.voice(for: phone, rate: 1)
             voice.enqueue(PCMFrames.bytes(PCMFrames.int16(Tones.turnChime(sampleRate: Double(PhoneAudioFormat.ttsRate)))))
             if await voice.finish(beep: false) == nil { return }   // call ended → chime on the Mac
         }

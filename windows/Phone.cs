@@ -7,6 +7,8 @@ namespace Parley;
 // phone's CallKit call is connected, ALL of Parley's audio goes through it: TTS, beep, clips
 // and permission questions out as paced 20 ms frames, listening in from the phone's mic — the
 // PC's speaker and mic stay quiet. The phone learns what the host does from `audio` frames.
+// v8 ("Funkloch"): a phone that says so gets each line as a clip it plays once it holds all of
+// it, numbers its mic frames (kept through a dead zone, sent again after), and its call waits one out.
 
 // The call audio format, pure: raw PCM 16-bit LE, mono, 16 kHz, one frame per 20 ms (640 bytes).
 public static class PhoneAudio
@@ -103,6 +105,10 @@ public sealed class PhoneLine
 {
     public const int PrerollFrames = 100;   // 2 s of the phone's mic (20 ms frames)
     private const int LeadFrames = 12;  // sent 240 ms ahead of real time: absorbs timer + mobile network jitter
+    // v8: the phone is on the line and never says "played" — this long after the clip's own
+    // length the turn goes on (as macOS PhoneClip.patience).
+    private static readonly TimeSpan ClipPatience = TimeSpan.FromSeconds(20);
+    private static int _lastClip;       // clip ids count up across all lines (0 = "no clip" to the phone)
 
     private readonly object _gate = new();
     private readonly SemaphoreSlim _stateGate = new(1, 1);   // `audio` frames go out one at a time, latest wins
@@ -125,6 +131,21 @@ public sealed class PhoneLine
     private (bool Set, double? After) _later;   // the ringing phone's "not now"
     private bool _declined;                     // `call end` with no call: the ring was declined
     private string _pushToken = "", _pushEnv = "production";   // a guest's VoIP token (in memory)
+    // v8 ("Funkloch")
+    private bool _clips;                // this call: clips down, a numbered mic up
+    private uint? _micSeq;              // the newest mic frame received …
+    private uint? _micAcked;            // … and told to the phone
+    private DateTime? _stallSince;      // nothing from the phone since then (noted once)
+    private Action<PhoneClipStatus>? _clipSink;   // the clip in flight
+    private System.Threading.Timer? _alive;       // CheckAlive, once a second while a clip call runs
+    // A listening follows clip Id: once the phone holds all of it (HeldAt: the mic's number then)
+    // it plays, its mic running along one frame per frame played — so the clip is over at
+    // HeldAt + Frames. Mic frames up to there are not his answer (_listenAfter); those after it
+    // are kept until the listener is there.
+    private (int Id, int Frames, uint? HeldAt)? _awaited;
+    private uint? _listenAfter;
+    private readonly Queue<byte[]> _kept = new();
+    private const int KeepMost = 9000;  // 3 min
 
     public PhoneLine(string name = "phone", bool meter = false)
     {
@@ -148,7 +169,35 @@ public sealed class PhoneLine
     }
 
     private bool ActiveLocked(DateTime now) =>
-        _call && _relay?.Connected == true && now - _audioAt < PhoneCall.AudioSilentLimit;
+        _call && _relay?.Connected == true && now - _audioAt < SilentLimit;
+
+    // How long the call may stay silent: a clip call (v8) waits out a dead zone. Under _gate.
+    private TimeSpan SilentLimit => _clips ? PhoneCall.Funkloch : PhoneCall.AudioSilentLimit;
+
+    // The relay to this line's phone is up (a `ring` frame can reach it).
+    public bool Linked
+    {
+        get { lock (_gate) return _relay?.Connected == true; }
+    }
+
+    // v8: this call takes clips (and numbers its mic).
+    public bool TakesClips
+    {
+        get { lock (_gate) return _clips && ActiveLocked(DateTime.UtcNow); }
+    }
+
+    // v8: nothing comes from the phone right now (a dead zone) — the call is kept, a listening's clocks wait.
+    public bool Stalled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                var now = DateTime.UtcNow;
+                return _clips && ActiveLocked(now) && now - _audioAt > PhoneCall.StallAfter;
+            }
+        }
+    }
 
     // When the last call ended (a Fragerunde gathers for a few minutes after it).
     public DateTime? LastCallEnd
@@ -187,12 +236,14 @@ public sealed class PhoneLine
         if (relay is not null) await relay.SendTextAsync(frame);
     }
 
-    // A frame of the call (as macOS PhoneHub.handle): `call`, `push`, `later`, `barge`.
+    // A frame of the call (as macOS PhoneHub.handle): `call`, `clip`, `push`, `later`, `barge`.
     public void Handle(PhoneMessage message)
     {
         switch (message)
         {
-            case PhoneCallState c: OnCall(c.Started, c.Down); break;
+            case PhoneCallState c: OnCall(c.Started, c.Down, c.Clips); break;
+            case PhoneCallIdle: OnIdle(); break;
+            case PhoneClipStatus s: OnClip(s); break;
             case PhonePush p: SetPush(p.Token, p.Env); break;
             case PhoneLater l: SetLater(l.After); break;
             case PhoneBarge: OnBarge(); break;
@@ -201,37 +252,182 @@ public sealed class PhoneLine
 
     // `call` start / end from the phone; true = the call state changed.
     // The phone repeats its call state on every (re)connect, so only a change is logged.
-    public bool OnCall(bool started, int down = PhoneAudio.SampleRate)
+    // `clips` (v8): this call takes clips and numbers its mic. `gone`: the host found the call
+    // over itself (`call idle`, a clip call silent for too long) — never a declined ring.
+    public bool OnCall(bool started, int down = PhoneAudio.SampleRate, bool clips = false, bool gone = false)
     {
         bool changed;
         lock (_gate)
         {
+            if (gone && !_call) return false;
+            // v8: a new call (also one after a call that went silent without a word) says whether
+            // it takes clips; a repeated start keeps the call, and where its mic stands.
+            var fresh = started && (!_call || DateTime.UtcNow - _audioAt >= SilentLimit);
             changed = _call != started;
             if (!started && !_call) _declined = true;
             if (changed) { _barge = false; _recent.Clear(); _ending = false; _topic = null; }
             if (!started && _call) _lastCallEnd = DateTime.UtcNow;
             _call = started;
             if (started) _downRate = down;
+            if (fresh || !started)
+            {
+                _clips = started && clips;
+                _micSeq = null;
+                _micAcked = null;
+                _stallSince = null;
+                _awaited = null;
+                _listenAfter = null;
+                _kept.Clear();
+                _alive?.Dispose();
+                _alive = _clips ? new System.Threading.Timer(_ => CheckAlive(), null, 1000, 1000) : null;
+            }
             _audioAt = DateTime.UtcNow;   // grace until its first frame arrives
             _sent = null;                 // a (re)joined call learns the current state
         }
-        if (changed) Log.Write(started ? $"{_name}: call started (voice at {down / 1000} kHz)" : $"{_name}: call ended");
+        if (changed) Log.Write(started ? $"{_name}: call started (voice at {down / 1000} kHz{(clips ? ", clips" : "")})" : $"{_name}: call ended");
         if (started) _ = PushState();
         return changed;
     }
 
+    // v8: the phone is connected and in no call — ours ended and its `call end` never got here.
+    public void OnIdle()
+    {
+        lock (_gate)
+        {
+            if (!_call) return;
+        }
+        Log.Write($"{_name}: the phone is in no call — ours is over");
+        OnCall(false, gone: true);
+    }
+
+    // v8: how far the phone got with a clip (after each one, and after every break in the line):
+    // the clip in flight takes it from there — and the phone learns how much of its mic is here.
+    public void OnClip(PhoneClipStatus status)
+    {
+        Action<PhoneClipStatus>? sink;
+        RelayClient? relay;
+        uint got;
+        lock (_gate)
+        {
+            if (!_call) return;
+            // Before the answer below lets the phone send what it kept: where the listening starts.
+            if (_awaited is { } a && a.Id == status.Id)
+            {
+                if (status.Have >= a.Frames && a.HeldAt is null) a.HeldAt = _micSeq ?? 0u;
+                _awaited = a;
+                if (status.Played)
+                {
+                    _listenAfter = unchecked((a.HeldAt ?? _micSeq ?? 0u) + (uint)a.Frames);
+                    _kept.Clear();
+                    _awaited = null;
+                }
+            }
+            _micAcked = _micSeq;
+            got = _micSeq ?? 0u;
+            sink = _clipSink;
+            relay = _relay;
+        }
+        if (relay is not null) _ = relay.SendTextAsync(RelayFrame.MicGot(got));
+        sink?.Invoke(status);
+    }
+
+    // v8, once a second while a clip call runs (as macOS PhoneHub.checkAlive): the phone learns
+    // how much of its mic is here, a dead zone is noted once, and a call that stays silent for
+    // PhoneCall.Funkloch is over (its `call end` got lost).
+    private void CheckAlive()
+    {
+        try
+        {
+            string? note = null;
+            uint? ack = null;
+            RelayClient? relay;
+            bool lost;
+            lock (_gate)
+            {
+                if (!_call || !_clips) return;
+                var quiet = DateTime.UtcNow - _audioAt;
+                if (quiet > PhoneCall.StallAfter && _stallSince is null)
+                {
+                    _stallSince = _audioAt;
+                    note = $"{_name}: nothing from the phone — a dead zone? The call waits up to {(int)PhoneCall.Funkloch.TotalSeconds} s";
+                }
+                if (_micSeq != _micAcked)
+                {
+                    _micAcked = _micSeq;
+                    ack = _micSeq;
+                }
+                lost = quiet > PhoneCall.Funkloch;
+                relay = _relay;
+            }
+            if (note is not null) Log.Write(note);
+            if (ack is { } got && relay is not null) _ = relay.SendTextAsync(RelayFrame.MicGot(got));
+            if (!lost) return;
+            Log.Write($"{_name}: call gone — no audio from the phone for {(int)PhoneCall.Funkloch.TotalSeconds} s (its \"call end\" got lost)");
+            OnCall(false, gone: true);
+        }
+        catch (Exception e) { Log.Write($"{_name}: liveness check failed: {e.Message}"); }   // a timer callback must not throw
+    }
+
     // A binary frame from the phone: its microphone.
+    // v8: four bytes in front number it (little-endian) — after a dead zone the phone sends what
+    // it kept from where the host stands, and a frame that comes twice is dropped here (it still
+    // counts as heard from the phone). After a clip Parley listens after: what was recorded while
+    // it still played is dropped too, and his answer is kept until the listener is there.
     public void OnAudio(byte[] frame)
     {
         Action<byte[]>? sink;
+        string? back = null;
+        var skip = false;
         lock (_gate)
         {
-            _audioAt = DateTime.UtcNow;
+            var now = DateTime.UtcNow;
+            if (_stallSince is { } since)
+            {
+                back = $"{_name}: the phone is back after {(int)(now - since).TotalSeconds} s";
+                _stallSince = null;
+            }
+            _audioAt = now;
+            if (frame.Length == PhoneAudio.FrameBytes + 4)
+            {
+                var seq = BinaryPrimitives.ReadUInt32LittleEndian(frame);
+                if (_micSeq is { } seen && seq <= seen)
+                {
+                    // Twice (sent again after a break): dropped. But a count that starts over is a
+                    // new call whose start was taken for a repeated one (the old call's end got lost).
+                    if (seq <= 3 && seen > 100)
+                    {
+                        _micAcked = null;
+                        _awaited = null;
+                        _listenAfter = null;
+                        _kept.Clear();
+                    }
+                    else skip = true;
+                }
+                if (!skip)
+                {
+                    _micSeq = seq;
+                    frame = frame[4..];
+                    if (_listenAfter is { } after)
+                    {
+                        if (seq <= after) skip = true;   // recorded while the clip still played
+                        else if (_sink is null)          // the listener is not there yet: kept for it
+                        {
+                            _kept.Enqueue(frame);
+                            while (_kept.Count > KeepMost) _kept.Dequeue();
+                            skip = true;
+                        }
+                    }
+                }
+            }
             sink = _sink;
-            _recent.Enqueue(frame);
-            while (_recent.Count > PrerollFrames) _recent.Dequeue();
+            if (!skip)
+            {
+                _recent.Enqueue(frame);
+                while (_recent.Count > PrerollFrames) _recent.Dequeue();
+            }
         }
-        sink?.Invoke(frame);
+        if (back is not null) Log.Write(back);
+        if (!skip) sink?.Invoke(frame);
     }
 
     // ---- barge-in (as macOS): the caller talks over Parley ------------------------------
@@ -395,15 +591,171 @@ public sealed class PhoneLine
         return null;
     }
 
+    // Parley's voice down the call (as macOS AppController.voice(for:)): a phone that takes clips
+    // (v8) gets the whole line as a clip — with the beep when Parley listens after it (`beep`) —
+    // and an older one hears it streamed as before; its beep stays the caller's own PlayAsync.
+    // Rest: as PlayAsync. Beeped: the beep went with the line, the caller plays none.
+    public async Task<(byte[]? Rest, bool Beeped)> SpeakAsync(byte[] pcm, int sampleRate, bool beep = false, CancellationToken ct = default)
+    {
+        if (!TakesClips) return (await PlayAsync(pcm, sampleRate, ct), false);
+        var rest = await PlayClipAsync(pcm, sampleRate, beep, ct);
+        return (rest, beep && rest is null);
+    }
+
+    // The beep with no line before it: true once a phone that takes clips (v8) played it — as a
+    // clip that says Parley listens after it. false: no such call, the caller plays it as before.
+    public async Task<bool> BeepClip() =>
+        TakesClips && (await SpeakAsync(Array.Empty<byte>(), GoogleTts.SampleRate, beep: true)).Beeped;
+
+    // One line for a phone that takes clips (v8, as macOS PhoneClip): every frame goes out as fast
+    // as the link carries it, between a `clip` header and its end, and the phone plays it only
+    // once it holds all of it — a dead zone in the middle of a line no longer cuts it. After a
+    // break the phone says how far it got and the rest follows from there. null once the phone
+    // played it (or he talked over it); when the call ends first, the speech for the PC's speaker
+    // — unless the phone already held all of it (then it played, with or without a line to say so).
+    private async Task<byte[]?> PlayClipAsync(byte[] pcm, int sampleRate, bool beep, CancellationToken ct)
+    {
+        var down = DownRate;
+        var frames = PhoneAudio.FramesFor(pcm, sampleRate, down);
+        // The line's end: the beep, or a 20 ms silent marker.
+        if (beep) frames.AddRange(PhoneAudio.FramesFor(AudioOut.Beep(), GoogleTts.SampleRate, down));
+        else frames.Add(new byte[down * PhoneAudio.FrameMs / 1000 * 2]);
+        RelayClient? relay;
+        lock (_gate) relay = _relay;
+        if (relay is null) return pcm;
+        var id = Interlocked.Increment(ref _lastClip);
+        var total = frames.Count;
+        var state = new object();
+        int next = 0, have = 0;   // the next frame to send; what the phone holds, as it last said
+        bool opened = false, closed = false, played = false;   // this run's header / its end went out
+        var poke = new SemaphoreSlim(0);   // ponytail: never disposed — a late status may still release it
+
+        // The phone's word (on the relay's receive task): played → done; fewer frames than there
+        // are (a break in the line), or another clip (it never heard of this one) → again from
+        // where it stands.
+        void Heard(PhoneClipStatus s)
+        {
+            int holds;
+            lock (state)
+            {
+                if (s.Id == id)
+                {
+                    have = s.Have;
+                    if (s.Played) played = true;
+                    else if (s.Have >= total) return;   // it holds all of it: nothing to do
+                }
+                else have = 0;
+                holds = played ? -1 : have;
+                if (!played)
+                {
+                    next = Math.Min(have, total);
+                    opened = false;
+                    closed = false;
+                }
+            }
+            if (holds >= 0) Log.Write($"{_name}: clip {id} — the phone holds {holds} of {total} frames, sending the rest");
+            poke.Release();
+        }
+
+        Action<PhoneClipStatus> heard = Heard;
+        using var hold = Hold();
+        SetAudio("speaking");
+        lock (_gate)
+        {
+            // A new line: what was kept for a listening that never came is nobody's.
+            // ponytail: not on macOS — there a listening always follows its beep; here a turn Sir
+            // answered by typing meanwhile (TurnPipeline.Abandon) records nothing.
+            if (_sink is null)
+            {
+                _listenAfter = null;
+                _kept.Clear();
+            }
+            // Parley listens after this clip (as macOS PhoneHub.listensAfter): OnClip marks where.
+            if (beep && _call && _clips) _awaited = (id, total, (uint?)null);
+            _clipSink = heard;
+        }
+        var clock = Stopwatch.StartNew();
+        var waited = TimeSpan.Zero;   // with everything out and the phone on the line
+        TimeSpan? last = null;
+        try
+        {
+            while (true)
+            {
+                string? header = null;
+                byte[]? frame = null;
+                bool done;
+                int held;
+                lock (state)
+                {
+                    done = played;
+                    held = have;
+                    if (!opened) { header = RelayFrame.Clip(id, next); opened = true; }
+                    else if (next < total) frame = frames[next++];
+                    else if (!closed) { header = RelayFrame.ClipEnd(id, total, beep); closed = true; }
+                }
+                if (done) return null;
+                if (!Active) return held >= total ? null : pcm;   // the call ended
+                if (Barged) return null;   // talked over: the phone went quiet itself
+                if (ct.IsCancellationRequested) return null;
+                if (header is not null || frame is not null)
+                {
+                    if (header is not null) await relay.SendTextAsync(header);
+                    else await relay.SendAudioAsync(frame!);
+                    last = null;
+                    continue;
+                }
+                // Everything is out: the phone's word decides. On the line and silent for the
+                // clip's own length + ClipPatience → the turn goes on (a dead zone doesn't count).
+                var now = clock.Elapsed;
+                if (last is { } before && !Stalled) waited += now - before;
+                last = now;
+                if (waited > TimeSpan.FromMilliseconds(total * PhoneAudio.FrameMs) + ClipPatience)
+                {
+                    Log.Write($"{_name}: clip {id} — no word from the phone that it played; going on");
+                    return null;
+                }
+                await poke.WaitAsync(50, ct);
+            }
+        }
+        catch (OperationCanceledException) { return null; }
+        finally
+        {
+            lock (_gate)
+            {
+                if (_clipSink == heard) _clipSink = null;
+            }
+        }
+    }
+
     // Route the phone's microphone frames to `sink` until the returned handle is disposed.
+    // v8: what was kept for it (his answer after a clip, sent in one burst before anyone
+    // listened) goes to it first, in order — the sink is attached only once nothing is left, so
+    // no newer frame overtakes (OnAudio keeps them meanwhile).
     public IDisposable Listen(Action<byte[]> sink)
     {
-        lock (_gate) _sink = sink;
+        while (true)
+        {
+            byte[][] kept;
+            lock (_gate)
+            {
+                if (_kept.Count == 0)
+                {
+                    _sink = sink;
+                    break;
+                }
+                kept = _kept.ToArray();
+                _kept.Clear();
+            }
+            foreach (var frame in kept) sink(frame);
+        }
         return new Release(() =>
         {
             lock (_gate)
             {
-                if (_sink == sink) _sink = null;
+                if (_sink != sink) return;
+                _sink = null;
+                _listenAfter = null;
+                _kept.Clear();
             }
         });
     }
@@ -503,6 +855,11 @@ public static class PhoneCall
     // lost with its link): Parley uses the PC's speaker and mic until frames arrive again. The
     // phone streams its mic all through a call, so a healthy call never gets near this.
     public static readonly TimeSpan AudioSilentLimit = TimeSpan.FromSeconds(6);   // as macOS PhoneHub.silentCall
+    // v8 ("Funkloch", as macOS PhoneHub.funkloch / stallAfter): a phone that takes clips keeps its
+    // mic and its place in a clip through a dead zone — its call waits this long for it; after
+    // StallAfter without a frame the clocks of a listening stand still.
+    public static readonly TimeSpan Funkloch = TimeSpan.FromSeconds(180);
+    public static readonly TimeSpan StallAfter = TimeSpan.FromSeconds(3);
 
     public static readonly PhoneLine Line = new("phone", meter: true);
 
@@ -526,9 +883,9 @@ public static class PhoneCall
     public static Task Reply(string frame) => Line.Reply(frame);
 
     // `call` start / end from the phone.
-    public static void OnCall(bool started, int down = PhoneAudio.SampleRate)
+    public static void OnCall(bool started, int down = PhoneAudio.SampleRate, bool clips = false)
     {
-        if (Line.OnCall(started, down) && started) Clips.PrerenderGreet(Config.Load());   // the first "Hey Parley" answers at once
+        if (Line.OnCall(started, down, clips) && started) Clips.PrerenderGreet(Config.Load());   // the first "Hey Parley" answers at once
     }
 
     public static void OnAudio(byte[] frame) => Line.OnAudio(frame);
@@ -554,8 +911,12 @@ public static class PhoneCall
 
     public static void SetSpeaker(string label) => Line.SetSpeaker(label);
 
-    public static Task<byte[]?> PlayAsync(byte[] pcm, int sampleRate, CancellationToken ct = default) =>
-        Line.PlayAsync(pcm, sampleRate, ct);
+    public static Task<(byte[]? Rest, bool Beeped)> SpeakAsync(byte[] pcm, int sampleRate, bool beep = false, CancellationToken ct = default) =>
+        Line.SpeakAsync(pcm, sampleRate, beep, ct);
+
+    public static Task<bool> BeepClip() => Line.BeepClip();
+
+    public static bool TakesClips => Line.TakesClips;
 
     public static IDisposable Listen(Action<byte[]> sink) => Line.Listen(sink);
 
@@ -730,6 +1091,18 @@ public static class PhoneCall
 public static class Ringer
 {
     public static readonly TimeSpan AnswerWait = TimeSpan.FromSeconds(45);
+
+    // Ringing is possible at all (as macOS shouldRing, without its "no call yet"): Unterwegs, not
+    // Stumm, and the phone can be reached — by a VoIP push (key + token) or over the relay.
+    public static bool CanRing
+    {
+        get
+        {
+            if (!PhoneCall.Away || PhoneCall.Silent) return false;
+            var c = Config.Load();
+            return (c.ApnsKeyId.Length > 0 && c.ApnsKeyP8.Length > 0 && PhoneCall.Push.Token.Length > 0) || PhoneCall.Line.Linked;
+        }
+    }
 
     // Answered = in a call now; Later = the phone's "not now" (After: ring again in n s, null = Sir calls back).
     public static async Task<RingOutcome> Ring(string label)

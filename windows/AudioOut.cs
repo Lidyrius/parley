@@ -58,11 +58,14 @@ public static class AudioOut
     /// Play raw 16-bit LE mono PCM at `sampleRate`, blocking until done.
     /// `caption`: the line's text — in a call the phone shows it as live captions (v3), and
     /// `slides` at the times of their words (`session` finds "last" screenshots).
-    public static async Task PlayPcm(byte[] pcm, int sampleRate = GoogleTts.SampleRate,
-                                     CancellationToken cancellationToken = default, string? caption = null,
-                                     IReadOnlyList<SlideSpec>? slides = null, string session = "", bool last = false)
+    /// `beep`: Parley listens after this line — a phone that takes clips (v8) gets the beep with
+    /// it. true = it did; else the caller plays the beep as before.
+    public static async Task<bool> PlayPcm(byte[] pcm, int sampleRate = GoogleTts.SampleRate,
+                                           CancellationToken cancellationToken = default, string? caption = null,
+                                           IReadOnlyList<SlideSpec>? slides = null, string session = "", bool last = false,
+                                           bool beep = false)
     {
-        if (pcm.Length < 2) return;
+        if (pcm.Length < 2) return false;
         // In an iPhone call (docs/IPHONE.md, v2) all of Parley's audio goes to the phone; if the
         // call drops midway, the rest plays here.
         if (PhoneCall.Active)
@@ -71,13 +74,13 @@ public static class AudioOut
             if (timed is not null) await PhoneCall.Reply(Captions.Frame(timed, last));   // just before the line's first frame
             if (caption is not null) PhoneCall.Line.MarkEnding(last && timed is not null);
             if (slides is { Count: > 0 }) await Slides.Send(slides, timed, session);
-            var rest = await PhoneCall.PlayAsync(pcm, sampleRate, cancellationToken);
-            if (rest is null || rest.Length < 2) return;
+            var (rest, beeped) = await PhoneCall.SpeakAsync(pcm, sampleRate, beep, cancellationToken);
+            if (rest is null || rest.Length < 2) return beeped;
             Log.Write("phone: call gone mid-playback → the rest on the speaker");
             pcm = rest;   // still at sampleRate
         }
         // Unterwegs: the PC stays silent; only a call voices anything.
-        if (PhoneCall.Away) return;
+        if (PhoneCall.Away) return false;
         var format = new WaveFormat(sampleRate, 16, 1);
         var provider = new BufferedWaveProvider(format)
         {
@@ -98,16 +101,22 @@ public static class AudioOut
             try { output.Stop(); } catch { }
             done.TrySetResult();
         });
-        if (cancellationToken.IsCancellationRequested) return;
+        if (cancellationToken.IsCancellationRequested) return false;
         output.Play();
         await Task.WhenAny(done.Task, Task.Delay(
             TimeSpan.FromSeconds(pcm.Length / (double)(sampleRate * 2) + 5), cancellationToken));
         output.Stop();
+        return false;
     }
 
-    /// The "you can talk now" cue — same 880 Hz character as macOS.
-    public static Task PlayBeep(double frequency = 880, double seconds = 0.18, double amplitude = 0.3)
-        => PlayPcm(Beep(frequency, seconds, amplitude));
+    /// The "you can talk now" cue — same 880 Hz character as macOS. true = a phone that takes
+    /// clips (v8) played it as a clip of its own.
+    public static async Task<bool> PlayBeep(double frequency = 880, double seconds = 0.18, double amplitude = 0.3)
+    {
+        if (await PhoneCall.BeepClip()) return true;
+        await PlayPcm(Beep(frequency, seconds, amplitude));
+        return false;
+    }
 
     /// The beep's PCM (at GoogleTts.SampleRate) — a guest's call line plays it itself (Shares.cs).
     public static byte[] Beep(double frequency = 880, double seconds = 0.18, double amplitude = 0.3)
@@ -116,8 +125,16 @@ public static class AudioOut
     /// Soft two-tone "done" chime (ack fallback), C5 → G5 as on macOS.
     public static async Task PlayChime()
     {
-        await PlayPcm(Chime(523.25, 0.32, 0.4, 8));
-        await PlayPcm(Chime(783.99, 0.6, 0.4, 5.5));
+        byte[] c5 = Chime(523.25, 0.32, 0.4, 8), g5 = Chime(783.99, 0.6, 0.4, 5.5);
+        // A phone that takes clips (v8) gets both notes as one clip (as macOS) — two would each
+        // wait for the phone's word in between.
+        if (PhoneCall.TakesClips)
+        {
+            await PlayPcm(c5.Concat(g5).ToArray());
+            return;
+        }
+        await PlayPcm(c5);
+        await PlayPcm(g5);
     }
 
     private static byte[] Tone(double freq, double seconds, double amplitude)

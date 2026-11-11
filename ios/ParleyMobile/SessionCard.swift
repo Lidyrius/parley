@@ -42,7 +42,7 @@ extension Fmt {
 }
 
 @MainActor
-private func stateInk(_ s: Session) -> Color {
+func stateInk(_ s: Session) -> Color {
     if s.callback != nil { return SessionState.waiting.ink }
     return s.state == .stopped ? .secondary : s.state.ink
 }

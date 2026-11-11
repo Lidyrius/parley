@@ -661,8 +661,9 @@ public sealed class ShareHub
                         _ = client.SendTextAsync(Shares.AskFrame(qid, s, q.Turn));
                     if (s.Welcomed == false) { s.Welcomed = true; Store(); after = () => Welcome(id); }   // null: let in before welcomes existed
                     break;
-                case PhoneCallState or PhonePush or PhoneLater or PhoneBarge when active:
-                    // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley.
+                case PhoneCallState or PhoneCallIdle or PhoneClipStatus or PhonePush or PhoneLater or PhoneBarge when active:
+                    // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley
+                    // — and (v8) being in no call, how far he got with a clip.
                     if (_lines.TryGetValue(id, out var line))
                         after = () =>
                         {

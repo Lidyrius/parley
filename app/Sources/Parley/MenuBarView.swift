@@ -90,6 +90,15 @@ struct MenuBarView: View {
                 Text(board.supervisor ? "Überwachung" : "Sessions").font(.title3.weight(.semibold))
                 Text("\(board.sessions.count + guests.shares.count)").font(.title3).foregroundStyle(.secondary)
                 Spacer()
+                if board.supervisor {
+                    // Off right here (on: Optionen below, or the phone's app, or the Zentrale by voice).
+                    Toggle("Überwachungsmodus", isOn: Binding(get: { board.supervisor }, set: { on in
+                        controller.server.setSupervisor(on: on)
+                        board.supervisor = on
+                    }))
+                    .toggleStyle(.switch).labelsHidden().controlSize(.small).tint(MenuTheme.accent)
+                    .help("Überwachungsmodus ausschalten — alle Sessions sprechen wieder selbst")
+                }
                 Button("Anrufen") { controller.callFromMac() }
                     .buttonStyle(AccentButton())
                     .disabled(controller.phoneAway)
@@ -123,8 +132,13 @@ struct MenuBarView: View {
                 .padding(14)
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(MenuTheme.card))
         }
-        Text("Nur die Zentrale spricht mit dir. Die anderen berichten an sie.")
-            .font(.caption).foregroundStyle(.secondary)
+        if board.missed > 0 {
+            // A call he didn't take: nothing waits for him, the updates are kept for his call back.
+            Label(Missed.waiting(board.missed) + " — „Anrufen“ fasst sie zusammen.", systemImage: "phone.arrow.down.left")
+                .font(.callout.weight(.medium)).foregroundStyle(MenuTheme.accent)
+        }
+        Text(running(board.sessions.first { $0.zentrale == true }) + "Nur die Zentrale spricht mit dir. Die anderen berichten an sie.")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         if !rest.isEmpty || !guests.shares.isEmpty {
             DisclosureGroup(isExpanded: $others) {
                 card(rest, guests: true).padding(.top, 6)
@@ -137,6 +151,13 @@ struct MenuBarView: View {
                 }
             }
         }
+    }
+
+    /// "Läuft seit 5 h 10 min. " — how long the Zentrale has been running (its card's caption).
+    private func running(_ z: MenuBoard.Row?) -> String {
+        guard let started = z?.stats?.startedAt, z?.state != "stopped" else { return "" }
+        let m = max(0, Int((Date().timeIntervalSince1970 * 1000 - started) / 60_000))
+        return "Läuft seit \(m < 60 ? "\(m) min" : "\(m / 60) h \(m % 60) min"). "
     }
 
     private func card(_ rows: [MenuBoard.Row], guests withGuests: Bool) -> some View {
@@ -255,7 +276,7 @@ struct MenuBoard {
     struct Row: Decodable, Identifiable {
         struct Task: Decodable { var type: String? }
         struct Tag: Decodable { var name: String }
-        struct Stats: Decodable { var lastLine: String? }
+        struct Stats: Decodable { var lastLine: String?; var startedAt: Double? }
         var id: String
         var label: String
         var project: String
@@ -278,11 +299,12 @@ struct MenuBoard {
         var spokenSeconds: Int
         var rateLimits: [Limit]
     }
-    private struct Wire: Decodable { var sessions: [Row]; var today: Today?; var supervisor: Bool? }
+    private struct Wire: Decodable { var sessions: [Row]; var today: Today?; var supervisor: Bool?; var missed: Int? }
 
     var sessions: [Row] = []
     var today: Today?
     var supervisor = false   // Überwachungsmodus: the Zentrale is the one card
+    var missed = 0           // … and so many of its updates wait for Sir's call back
 
     init() {}
     init(sessions: [Row], today: Today?, supervisor: Bool = false) { self.sessions = sessions; self.today = today; self.supervisor = supervisor }
@@ -291,6 +313,7 @@ struct MenuBoard {
         sessions = w.sessions
         today = w.today
         supervisor = w.supervisor ?? false
+        missed = w.missed ?? 0
     }
 }
 
@@ -301,13 +324,14 @@ enum MenuSnapshot {
     static func render(to path: String, dark: Bool, supervisor: Bool = false) {
         let now = Date().timeIntervalSince1970 * 1000
         func row(_ id: String, _ state: String, ago: Double, line: String? = nil, resumable: Bool = false,
-                 callback: Double? = nil, until: Double? = nil, tasks: Int = 0, shared: [String] = []) -> MenuBoard.Row {
+                 callback: Double? = nil, until: Double? = nil, tasks: Int = 0, shared: [String] = [], started: Double? = nil) -> MenuBoard.Row {
             MenuBoard.Row(id: id, label: id, project: id, state: state, since: now - ago * 1000, until: until, callback: callback,
                           resumable: resumable, tasks: Array(repeating: .init(type: "subagent"), count: tasks),
-                          shared: shared.map { .init(name: $0) }, asking: nil, stats: .init(lastLine: line), zentrale: id == "Zentrale")
+                          shared: shared.map { .init(name: $0) }, asking: nil,
+                          stats: .init(lastLine: line, startedAt: started.map { now - $0 * 60_000 }), zentrale: id == "Zentrale")
         }
         let board = supervisor ? MenuBoard(sessions: [
-            row("Zentrale", "speaking", ago: 9, line: "Shirts ist fertig, Angebote fragt nach dem Rabatt."),
+            row("Zentrale", "speaking", ago: 9, line: "Shirts ist fertig, Angebote fragt nach dem Rabatt.", started: 310),
             row("Shirts", "parked", ago: 138, line: "Die Mockups für die neue Kollektion sind gebaut.", resumable: true),
             row("Angebote", "parked", ago: 30, line: "Soll der Rabatt auch für Bestandskunden gelten?", resumable: true),
             row("SEO-Landing", "background", ago: 207, line: "Ein Agent prüft das Protokoll, ich melde mich.", tasks: 1),

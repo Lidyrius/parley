@@ -14,6 +14,8 @@ struct OverviewView: View {
     @AppStorage("sessionsAsList") private var asList = false
     /// Überwachungsmodus: the other sessions, folded away below the Zentrale.
     @State private var showsOthers = ProcessInfo.processInfo.arguments.contains("-demoOthers")   // screenshots
+    /// The switch was just thrown: the overview turns at once, the host's next `sessions` confirms it.
+    @State private var wantsSupervisor: Bool?
 
     var body: some View {
         @Bindable var model = model
@@ -120,7 +122,9 @@ struct OverviewView: View {
         case .connected, .connecting:
             if let snapshot = relay.snapshot {
                 if let today = snapshot.today { TodayCard(today: today) }
-                sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend, supervisor: snapshot.supervisor)
+                sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend,
+                         supervisor: wantsSupervisor ?? snapshot.supervisor, missed: snapshot.missed,
+                         canSwitch: model.demo || (snapshot.callVersion >= 8 && relay.canSend))
                 if !snapshot.reminders.isEmpty { RemindersCard(list: snapshot.reminders, skew: relay.skew) }
             } else {
                 HStack(spacing: 10) {
@@ -134,7 +138,8 @@ struct OverviewView: View {
     }
 
     @ViewBuilder
-    private func sessions(_ unsorted: [Session], skew: Double, canSend: Bool, supervisor: Bool = false) -> some View {
+    private func sessions(_ unsorted: [Session], skew: Double, canSend: Bool, supervisor: Bool = false, missed: Int = 0,
+                          canSwitch: Bool = false) -> some View {
         // The Mac sorts too (this holds with older hosts); shared sessions sort in like the own ones.
         let list = SessionGroup.sorted(unsorted + model.guestSessions)
         let actions = SessionActions(open: { detail = $0 }, resume: model.resume, callBack: model.callParley, canSend: canSend,
@@ -143,15 +148,26 @@ struct OverviewView: View {
         // "Anrufen": the own Mac — or, with only shares, the (first) shared session.
         let shared = model.guestSessions.first?.id
         let canCall = model.hasOwnMac ? canSend || model.demo : shared.map(actions.guestCanSend) ?? false
+        let call = {
+            if model.call.isBusy { model.call.showsScreen = true }
+            else if !model.hasOwnMac, let shared { model.callSession(shared) }
+            else { model.callParley() }
+        }
+        // The Überwachungsmodus, switched here (a host that takes it): the overview turns at once.
+        let mode = !canSwitch ? nil : Binding(get: { supervisor }, set: { on in
+            withAnimation(.snappy) { wantsSupervisor = on }
+            model.setSupervisor(on)
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(6))   // a host that doesn't follow: back to what it says
+                wantsSupervisor = nil
+            }
+        })
         VStack(alignment: .leading, spacing: 12) {
             SessionsHead(title: supervisor ? "Überwachung" : "Sessions", count: list.filter { $0.state != .stopped }.count,
-                         asList: supervisor ? nil : $asList, canCall: canCall, inCall: model.call.isBusy) {
-                if model.call.isBusy { model.call.showsScreen = true }
-                else if !model.hasOwnMac, let shared { model.callSession(shared) }
-                else { model.callParley() }
-            }
+                         asList: supervisor ? nil : $asList, supervised: supervisor, mode: mode,
+                         canCall: canCall, inCall: model.call.isBusy, call: call)
             if supervisor {
-                supervised(list, actions: actions)
+                supervised(list, actions: actions, missed: missed, canCall: canCall, call: call)
             } else if list.isEmpty {
                 Notice(title: "Keine Sessions", symbol: "waveform",
                        text: "Sobald eine Claude-Code- oder Codex-Session über Parley spricht, erscheint sie hier.")
@@ -186,17 +202,21 @@ struct OverviewView: View {
         }
         .animation(.snappy, value: asList)
         .animation(.snappy, value: showsOthers)
+        .onChange(of: model.relay.snapshot?.supervisor) { _, _ in wantsSupervisor = nil }   // the host said it
     }
 
     /// Überwachungsmodus: the Zentrale as the one card — it alone talks to Sir —, and the others
     /// (name, state, last line) folded away below it.
     @ViewBuilder
-    private func supervised(_ list: [Session], actions: SessionActions) -> some View {
+    private func supervised(_ list: [Session], actions: SessionActions, missed: Int, canCall: Bool,
+                            call: @escaping () -> Void) -> some View {
         let rest = list.filter { !$0.zentrale }
         if let z = list.first(where: \.zentrale) {
-            SessionRow(session: z, skew: model.relay(for: z.id).skew, actions: actions)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .background(CardBackground(live: z.voice))
+            ZentraleCard(session: z, skew: model.relay(for: z.id).skew,
+                         others: rest.filter { $0.state != .stopped }.count,
+                         working: rest.filter { [.working, .background].contains($0.state) }.count,
+                         missed: missed, actions: actions, inCall: model.call.isBusy, canCall: canCall,
+                         openHistory: { show(z.id, compose: false) }, message: { show(z.id, compose: true) }, call: call)
         } else {
             Notice(title: "Die Zentrale läuft nicht", symbol: "person.wave.2",
                    text: "Parley startet sie mit dem nächsten Bericht einer Session.")
@@ -208,7 +228,7 @@ struct OverviewView: View {
             Button { showsOthers.toggle() } label: {
                 HStack(spacing: 6) {
                     Text("Weitere Sessions").font(.subheadline.weight(.semibold))
-                    Text("\(rest.count)").font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
+                    Text("\(rest.filter { $0.state != .stopped }.count)").font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
                     if busy > 0 { Text("· \(busy) arbeiten").font(.footnote).foregroundStyle(SessionState.working.color) }
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
@@ -267,6 +287,10 @@ private struct SessionsHead: View {
     var title = "Sessions"
     let count: Int
     let asList: Binding<Bool>?   // nil: no grid / list switch (Überwachungsmodus)
+    /// Überwachungsmodus: `mode` switches it (nil: this host can't be told from here). On, the
+    /// switch takes the place of "Anrufen" — the Zentrale's card has that button.
+    var supervised = false
+    var mode: Binding<Bool>?
     let canCall: Bool
     let inCall: Bool
     let call: () -> Void
@@ -285,7 +309,27 @@ private struct SessionsHead: View {
                 .padding(3)
                 .background(Capsule().fill(Color.primary.opacity(0.06)))
             }
+            if !supervised, let mode {
+                // Off: one tap turns it on (only the Zentrale talks then; the others report to it).
+                Button { mode.wrappedValue = true } label: {
+                    Image(systemName: "person.wave.2")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, height: 30)
+                        .background(Capsule().fill(Color.primary.opacity(0.06)))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Überwachungsmodus einschalten")
+                .accessibilityHint("Nur die Zentrale spricht dann mit dir")
+            }
             Spacer(minLength: 8)
+            if supervised, let mode {
+                Toggle("Überwachungsmodus", isOn: mode)
+                    .labelsHidden()
+                    .tint(Theme.claude)
+                    .accessibilityHint("Aus: alle Sessions sprechen wieder selbst mit dir")
+            } else {
             Button(action: call) {
                 Label(inCall ? "Zum Anruf" : "Anrufen", systemImage: "phone.fill")
                     .labelStyle(.titleOnly)
@@ -300,6 +344,7 @@ private struct SessionsHead: View {
             .disabled(!canCall)
             .opacity(canCall ? 1 : 0.45)
             .accessibilityLabel(inCall ? "Zum Anruf" : "Parley anrufen")
+            }
         }
     }
 

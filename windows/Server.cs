@@ -66,6 +66,8 @@ public sealed class Server
     public const string WatchdogEvent = "watchdog";
     // A Wiedervorlage for Sir himself (Reminders.cs), spoken like an update.
     public const string ReminderEvent = "reminder";
+    // Sir is back after a call he didn't take: what he missed goes to the Zentrale for one summary.
+    public const string CallbackEvent = "callback";
 
     // Wiedervorlagen (Reminders.cs), kept in reminders.json; a handed-over one → OnReminded.
     public ReminderStore Reminders { get; } = new(Path.Combine(Config.Dir, "reminders.json"));
@@ -80,6 +82,12 @@ public sealed class Server
     private volatile Supervisor _supervisor = Supervisor.Load(Supervisor.FilePath);
     private readonly List<string> _reports = new();
     private string? _reportsOut;
+    // What Sir missed (Supervisor.cs, Missed): the Zentrale's lines since a call he didn't take,
+    // kept for his call back (missed.json), and when to ring once more ("In 5 Min." on the
+    // phone) — both under _lock. `_callBackWaits`: a call-back dialog waits at the gate.
+    private readonly List<MissedLine> _missed = Missed.Load(Missed.FilePath);
+    private DateTime? _ringAgainAt;
+    private int _callBackWaits;
 
     // POST /permission is answered within this — the hook waits ≤ 120 s; a few seconds spare.
     public static readonly TimeSpan PermissionHold = TimeSpan.FromSeconds(115);
@@ -664,17 +672,94 @@ public sealed class Server
         SyncSupervisor();
     }
 
-    // The registry shows the mode in /sessions and marks the Zentrale's row.
-    private void SyncSupervisor() => Sessions.SetSupervised(_supervisor.On, ZentraleDir());
+    // The registry shows the mode in /sessions and marks the Zentrale's row (and how many of its
+    // lines wait for Sir's call back).
+    private void SyncSupervisor()
+    {
+        Sessions.SetSupervised(_supervisor.On, ZentraleDir());
+        lock (_lock) Sessions.SetMissed(_missed.Count);
+    }
 
-    // {"ok":true,"on","exempt","zentrale" (its session, when it runs),"waiting" (reports in the inbox)}.
+    // {"ok":true,"on","exempt","zentrale" (its session, when it runs),"waiting" (reports in the
+    // inbox),"missed" (lines kept for Sir's call back)}.
     private string SupervisorJson()
     {
         var s = _supervisor;
         var json = new Dictionary<string, object> { ["ok"] = true, ["on"] = s.On, ["exempt"] = s.Exempt };
         if (Sessions.InFolder(ZentraleDir()) is { } z) json["zentrale"] = z.Id;
-        lock (_lock) json["waiting"] = _reports.Count;
+        lock (_lock)
+        {
+            json["waiting"] = _reports.Count;
+            json["missed"] = _missed.Count;
+        }
         return JsonSerializer.Serialize(json);
+    }
+
+    // ---- what Sir missed (a call of the Zentrale he didn't take; Supervisor.cs, Missed) ----
+
+    public int MissedCount
+    {
+        get { lock (_lock) return _missed.Count; }
+    }
+
+    /// Session `id` is the Zentrale; `supervised`: … and the Überwachungsmodus is on.
+    public bool IsZentrale(string id, bool supervised = false) =>
+        (!supervised || _supervisor.On) && Sessions.Info(id) is { } i && Supervisor.IsZentrale(i.Label, i.Cwd, ZentraleDir());
+
+    /// The Zentrale's line is kept for Sir's call back; how many wait now. `ringAgain`: he asked
+    /// to be rung again in that many seconds.
+    public int AddMissed(TurnPayload turn, double? ringAgain = null)
+    {
+        int n;
+        lock (_lock)
+        {
+            _missed.Add(new MissedLine { At = (DateTime.UtcNow - DateTime.UnixEpoch).TotalMilliseconds, Text = turn.Speak, Asks = turn.WantsListen });
+            if (_missed.Count > Missed.Most) _missed.RemoveRange(0, _missed.Count - Missed.Most);
+            Missed.Save(_missed, Missed.FilePath);
+            n = _missed.Count;
+            Sessions.SetMissed(n);
+            if (ringAgain is { } seconds) _ringAgainAt = DateTime.UtcNow.AddSeconds(seconds);
+        }
+        Sessions.Reported(SessionKey(turn), turn.Speak);
+        return n;
+    }
+
+    /// Sir is back: everything kept, as the one instruction for the Zentrale — and the list is
+    /// empty again. null: nothing waited.
+    public string? TakeMissed(string? said = null)
+    {
+        lock (_lock)
+        {
+            if (_missed.Count == 0) return null;
+            var text = Missed.Instruction(_missed, said);
+            _missed.Clear();
+            _ringAgainAt = null;
+            Missed.Save(_missed, Missed.FilePath);
+            Sessions.SetMissed(0);
+            return text;
+        }
+    }
+
+    /// The call-back dialog rides the gate like the wake dialog (never over a line being voiced).
+    /// `ring`: ring the phone first — the one ring Sir asked for. Not lined up twice: one may be
+    /// at it and one more may wait.
+    public void CallBack(bool ring = false)
+    {
+        if (Interlocked.CompareExchange(ref _callBackWaits, 1, 0) != 0) return;
+        _ = Task.Run(async () =>
+        {
+            using var hold = PhoneCall.Hold();
+            Interlocked.Increment(ref _queued);
+            await _turnGate.WaitAsync();
+            Volatile.Write(ref _callBackWaits, 0);
+            try
+            {
+                Interlocked.Decrement(ref _queued);
+                await _runTurn(new TurnPayload { Event = CallbackEvent, Speak = ring ? "ring" : "", Listen = false });
+            }
+            catch (Exception e) { Log.Write($"call back failed: {e.Message}"); }
+            finally { _turnGate.Release(); }
+        });
     }
 
     // POST /dispatch `from`: who asks ("Zentrale") — the session reads "[Auftrag von Zentrale] …"
@@ -853,6 +938,16 @@ public sealed class Server
         SyncSupervisor();
         FireReminders(r => ReminderStore.IsDue(r, DateTime.UtcNow, Sessions.StateSince));
         FlushReports(start: true);
+        var ring = false;   // "In 5 Min.": the one ring Sir asked for
+        lock (_lock)
+        {
+            if (_ringAgainAt is { } at && at <= DateTime.UtcNow)
+            {
+                _ringAgainAt = null;
+                ring = _missed.Count > 0;
+            }
+        }
+        if (ring) CallBack(ring: true);
     }
 
     /// A session by id, spoken name / folder name (running first), or a past session's id.

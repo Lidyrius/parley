@@ -71,7 +71,7 @@ final class RelayFrameTests: XCTestCase {
         reg.presence(id: "a", label: "Demo", project: "demo", state: "idle")
         let at = Date(timeIntervalSince1970: 1_760_000_123.456)
         let frame = try object(RelayFrame.sessions(reg.json(), at: at))
-        XCTAssertEqual(Set(frame.keys), ["t", "at", "sessions", "today", "reminders", "snapshots"])
+        XCTAssertEqual(Set(frame.keys), ["t", "at", "call", "sessions", "today", "reminders", "snapshots"])
         XCTAssertEqual(frame["t"] as? String, "sessions")
         XCTAssertEqual((frame["at"] as? NSNumber)?.int64Value, 1_760_000_123_456)
         let rows = try XCTUnwrap(frame["sessions"] as? [[String: Any]])
@@ -82,7 +82,7 @@ final class RelayFrameTests: XCTestCase {
 
     func testSessionsFrameEdgeCases() throws {
         let at = Date(timeIntervalSince1970: 1)
-        XCTAssertEqual(RelayFrame.sessions("{}", at: at), #"{"t":"sessions","at":1000}"#)
+        XCTAssertEqual(RelayFrame.sessions("{}", at: at), #"{"t":"sessions","at":1000,"call":8}"#)
         XCTAssertNil(RelayFrame.sessions("[]", at: at))
         XCTAssertNil(RelayFrame.sessions("", at: at))
     }
@@ -186,7 +186,7 @@ final class RelayClientTests: XCTestCase {
         XCTAssertEqual(world.sockets.count, 1)
         XCTAssertEqual(socket.request.url?.absoluteString, "wss://relay.example.dev/v1/room/room1?role=host")
         XCTAssertEqual(socket.request.value(forHTTPHeaderField: "Authorization"), "Bearer sekret")
-        XCTAssertEqual(socket.sent, [#"{"t":"sessions","at":1760000000000,"sessions":[],"today":{}}"#])
+        XCTAssertEqual(socket.sent, [#"{"t":"sessions","at":1760000000000,"call":8,"sessions":[],"today":{}}"#])
         XCTAssertEqual(world.states, [true])
     }
 
@@ -196,7 +196,7 @@ final class RelayClientTests: XCTestCase {
         world.json = #"{"sessions":[{"id":"a"}],"today":{}}"#
         tick(after: 2)
         XCTAssertEqual(socket.sent.count, 2)                            // changed
-        XCTAssertTrue(socket.sent[1].hasPrefix(#"{"t":"sessions","at":1760000004000,"sessions":[{"id":"a"}]"#))
+        XCTAssertTrue(socket.sent[1].hasPrefix(#"{"t":"sessions","at":1760000004000,"call":8,"sessions":[{"id":"a"}]"#))
         tick(after: 2); tick(after: 2); tick(after: 2); tick(after: 2)
         XCTAssertEqual(socket.sent.count, 2)                            // 8 s unchanged
         tick(after: 2)

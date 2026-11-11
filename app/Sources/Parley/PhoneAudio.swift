@@ -31,11 +31,27 @@ protocol CallLink: AnyObject, Sendable {
     func setAudioSink(_ sink: (@Sendable (Data) -> Void)?)   // where the phone's mic frames go
     var downRate: Int { get }                       // Parley's voice to the phone: 16 or 24 kHz
     var barged: Bool { get }                        // Sir talked over Parley: stop the line now
+    // v8 (docs/IPHONE.md → "Funkloch"): the phone takes a whole line before it plays it
+    // (PhoneClip), and the call waits out a dead zone instead of ending.
+    var clips: Bool { get }
+    var stalled: Bool { get }                       // nothing from the phone right now: the clocks wait
+    func sendControl(_ text: String)                // a text frame of the call (a clip's header / end)
+    func setClipSink(_ sink: (@Sendable (ClipStatus) -> Void)?)   // what the phone says about its clips
+    /// Parley listens after clip `id` (`frames` long). The link then sorts the phone's mic by
+    /// itself, the moment the phone says "played": what it recorded while the clip still played
+    /// is dropped, what came after is kept until the listener is there — after a dead zone all
+    /// of it arrives in one burst, before anyone could start to listen.
+    func listensAfter(clip id: Int, frames: Int)
 }
 
 extension CallLink {
     var downRate: Int { PhoneAudioFormat.sampleRate }
     var barged: Bool { false }
+    var clips: Bool { false }
+    var stalled: Bool { false }
+    func sendControl(_ text: String) {}
+    func setClipSink(_ sink: (@Sendable (ClipStatus) -> Void)?) {}
+    func listensAfter(clip id: Int, frames: Int) {}
 }
 
 // MARK: - pure helpers
@@ -253,7 +269,7 @@ final class TimeStretch {
 // played everything, and returns nil. When the call ends first it returns the speech the phone
 // did not play yet (24 kHz), for the Mac's speaker; the beep is not part of it.
 // ponytail: @unchecked Sendable — all state lives on `queue`.
-final class PhoneVoice: @unchecked Sendable {
+final class PhoneVoice: PhoneSpeech, @unchecked Sendable {
     private let link: any CallLink
     private let generation: Int
     private let rate: Double
@@ -395,6 +411,208 @@ final class PhoneVoice: @unchecked Sendable {
     }
 }
 
+// MARK: - out, v8: the whole line first
+
+/// Parley's voice down a call, either way: streamed in real time (PhoneVoice), or as a clip the
+/// phone plays once it holds all of it (PhoneClip).
+protocol PhoneSpeech: Sendable {
+    func enqueue(_ pcm: Data)                 // 24 kHz PCM16 LE mono, any chunk size
+    func finish(beep: Bool) async -> Data?    // nil = played; else the speech the phone never played
+}
+
+/// What the phone says about a clip: how many of its frames it holds, and whether it played it.
+/// `id` 0: it knows of none.
+struct ClipStatus: Equatable, Sendable {
+    var id: Int
+    var have: Int
+    var played: Bool
+}
+
+/// 24 kHz PCM in, the call's 20 ms frames out: the speaking rate, the call's own rate, whole frames.
+/// ponytail: the same steps as PhoneVoice's push / cut / finish — fold them together when either changes.
+final class LineRenderer {
+    private let stretch: TimeStretch?
+    private var resampler: Resampler?
+    private let frameSize: Int
+    private var carry = Data()          // odd byte between chunks
+    private var pending: [Int16] = []   // samples short of a whole frame
+
+    init(rate: Double, outRate: Int) {
+        let r = min(2.0, max(0.5, rate))
+        stretch = abs(r - 1) < 0.01 ? nil : TimeStretch(rate: r)
+        resampler = outRate == PhoneAudioFormat.ttsRate ? nil : Resampler(from: PhoneAudioFormat.ttsRate, to: outRate)
+        frameSize = outRate / 50
+    }
+
+    func add(_ pcm: Data) -> [Data] {
+        carry.append(pcm)
+        let even = carry.count & ~1
+        guard even > 0 else { return [] }
+        let samples = PCMFrames.samples(carry.prefix(even))
+        carry.removeFirst(even)
+        return push(PCMFrames.floats(samples))
+    }
+
+    /// The line's end: the beep (or a 20 ms silent marker), the stretcher's tail, the last frame whole.
+    func end(beep: Bool) -> [Data] {
+        let tone = beep ? Tones.beep(sampleRate: Double(PhoneAudioFormat.ttsRate))
+                        : [Float](repeating: 0, count: PhoneAudioFormat.ttsRate / 50)
+        var out = push(tone)
+        var tail = stretch?.flush() ?? []
+        if resampler != nil { tail = resampler!.process(tail) + resampler!.flush() }
+        pending += PCMFrames.int16(tail)
+        pending += [Int16](repeating: 0, count: (frameSize - pending.count % frameSize) % frameSize)
+        out += cut()
+        return out
+    }
+
+    private func push(_ floats: [Float]) -> [Data] {
+        let timed = stretch.map { $0.process(floats) } ?? floats
+        pending += PCMFrames.int16(resampler != nil ? resampler!.process(timed) : timed)
+        return cut()
+    }
+
+    private func cut() -> [Data] {
+        let (f, rest) = PCMFrames.frames(pending, size: frameSize)
+        pending = rest
+        return f
+    }
+}
+
+// One stretch of Parley's voice for a phone that takes clips (v8): every frame of the line goes
+// out as fast as the line carries it, and the phone plays it only once it holds all of it — a
+// dead zone in the middle of a line no longer cuts it. After a break the phone says how far it
+// got and the rest follows from there. finish() returns nil once the phone played the clip (or
+// Sir talked over it); when the call ends first, the speech for the Mac's speaker — unless the
+// phone already held all of it (then it played, with or without a line to say so).
+// ponytail: @unchecked Sendable — all state lives on `queue`.
+final class PhoneClip: PhoneSpeech, @unchecked Sendable {
+    private static let counter = NSLock()
+    nonisolated(unsafe) private static var last = 0
+    static func nextID() -> Int { counter.withLock { last += 1; return last } }
+
+    let id: Int
+    private let link: any CallLink
+    private let generation: Int
+    private let queue: DispatchQueue
+    private let renderer: LineRenderer
+    private var speech = Data()         // all 24 kHz speech enqueued (the fallback plays it)
+    private var frames: [Data] = []
+    private var total: Int?             // every frame is there (finish)
+    private var listen = false
+    private var sent = 0                // next frame to hand to the link
+    private var opened = false          // this run's header went out
+    private var closed = false          // … and its end
+    private var have = 0                // what the phone holds, as it last said
+    private var timer: DispatchSourceTimer?
+    private var waiter: CheckedContinuation<Data?, Never>?
+    private var done = false
+    private var waited = 0.0            // seconds since finish with the phone on the line
+    private var lastTick = Date()
+    private let now: @Sendable () -> Date
+    /// The phone is on the line and never says "played": this long after the clip's own length
+    /// the turn goes on (a phone that lost its way must not hold it for good).
+    static let patience: TimeInterval = 20
+
+    init(link: any CallLink, rate: Double, id: Int = PhoneClip.nextID(), now: @escaping @Sendable () -> Date = { Date() },
+         queue: DispatchQueue = DispatchQueue(label: "de.developaway.parley.phone-clip", qos: .userInteractive)) {
+        self.id = id
+        self.now = now
+        self.link = link
+        self.generation = link.callGeneration
+        self.queue = queue
+        renderer = LineRenderer(rate: rate, outRate: link.downRate)
+        link.setAudioState(.speaking)
+        link.setClipSink { [weak self] status in self?.queue.async { self?.heard(status) } }
+    }
+
+    func enqueue(_ pcm: Data) {
+        queue.async {
+            self.speech.append(pcm)
+            self.frames += self.renderer.add(pcm)
+            self.send()   // a streamed synthesis is on its way while it still renders
+        }
+    }
+
+    func finish(beep: Bool) async -> Data? {
+        await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
+            queue.async {
+                self.frames += self.renderer.end(beep: beep)
+                self.total = self.frames.count
+                self.listen = beep
+                self.waiter = cont
+                self.lastTick = self.now()
+                if beep { self.link.listensAfter(clip: self.id, frames: self.frames.count) }
+                self.send()
+                let t = DispatchSource.makeTimerSource(queue: self.queue)
+                t.schedule(deadline: .now(), repeating: 0.05)
+                t.setEventHandler { [weak self] in self?.tick() }
+                t.resume()
+                self.timer = t
+            }
+        }
+    }
+
+    // MARK: on `queue`
+
+    private func send() {
+        guard !done, link.isLive(generation) else { return }
+        if !opened, sent < frames.count || total != nil {
+            link.sendControl(RelayFrame.clip(id: id, from: sent))
+            opened = true
+        }
+        while sent < frames.count {
+            link.sendAudio(frames[sent])
+            sent += 1
+        }
+        if let total, !closed {
+            link.sendControl(RelayFrame.clipEnd(id: id, frames: total, listen: listen))
+            closed = true
+        }
+    }
+
+    // The phone's word: played → done; fewer frames than there are (a break in the line), or
+    // another clip (it never heard of this one) → again from where it stands.
+    private func heard(_ s: ClipStatus) {
+        guard !done else { return }
+        if s.id == id {
+            have = s.have
+            if s.played { return resolve(nil) }
+            guard let total, s.have < total else { return }
+        } else {
+            have = 0
+        }
+        Log.write("phone: clip \(id) — the phone holds \(have) of \(total.map(String.init) ?? "?") frames, sending the rest")
+        sent = min(have, frames.count)
+        opened = false
+        closed = false
+        send()
+    }
+
+    private func tick() {
+        guard let total, !done else { return }
+        if !link.isLive(generation) { return resolve(have >= total ? nil : speech) }
+        if link.barged { return resolve(nil) }   // Sir talks over Parley: the phone went quiet itself
+        let t = now()
+        if !link.stalled { waited += t.timeIntervalSince(lastTick) }   // a dead zone doesn't count
+        lastTick = t
+        if waited > Double(total) * PhoneAudioFormat.frameSeconds + Self.patience {
+            Log.write("phone: clip \(id) — no word from the phone that it played; going on")
+            resolve(nil)
+        }
+    }
+
+    private func resolve(_ rest: Data?) {
+        guard !done, let w = waiter else { return }
+        done = true
+        waiter = nil
+        timer?.cancel()
+        timer = nil
+        link.setClipSink(nil)
+        w.resume(returning: rest)
+    }
+}
+
 // MARK: - in: the phone's mic
 
 // One reply over a connected call: the phone's 16 kHz frames run through UtteranceRecorder
@@ -415,6 +633,7 @@ final class PhoneListener: @unchecked Sendable {
     private let now: @Sendable () -> Date
     private var recorder = UtteranceRecorder()
     private var started = Date()
+    private var lastCheck = Date()
     private var timer: DispatchSourceTimer?
     private var waiter: CheckedContinuation<Outcome, Never>?
     private var onLevel: (@Sendable (Float) -> Void)?
@@ -436,6 +655,7 @@ final class PhoneListener: @unchecked Sendable {
                 self.recorder.reset()
                 for frame in preroll { _ = self.recorder.feed(PCMFrames.samples(frame)) }
                 self.started = self.now()
+                self.lastCheck = self.started
                 guard self.link.isLive(self.generation) else { self.end(.callEnded(Data(), spoke: false)); return }
                 self.link.setAudioState(.listening)
                 self.link.setAudioSink { [weak self] frame in self?.feed(frame) }
@@ -468,7 +688,13 @@ final class PhoneListener: @unchecked Sendable {
             end(.callEnded(recorder.wav(endReason: spoke ? "call-ended" : "no-speech"), spoke: spoke))
             return
         }
-        let elapsed = now().timeIntervalSince(started)
+        // v8: nothing comes from the phone (a dead zone) — its mic is kept there and follows once
+        // the line is back; until then the clocks stand still.
+        let t = now()
+        if link.stalled { started = started.addingTimeInterval(t.timeIntervalSince(lastCheck)) }
+        lastCheck = t
+        guard !link.stalled else { return }
+        let elapsed = t.timeIntervalSince(started)
         // Frames stopped (or never came): the recorder's own no-speech timeout can't fire.
         if !recorder.heardSpeech, elapsed >= UtteranceRecorder.noSpeechTimeout + 1 {
             end(.finished(recorder.wav(endReason: "no-speech")))

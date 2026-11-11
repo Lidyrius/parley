@@ -717,6 +717,15 @@ public sealed class SessionRegistry
         }
     }
 
+    // Lines of the Zentrale kept for Sir's call back (Supervisor.cs, Missed): `missed` in
+    // /sessions, and the Zentrale's row "waits for his call back" while there are any.
+    private int _missed;
+
+    public void SetMissed(int n)
+    {
+        lock (_gate) _missed = n;
+    }
+
     private sealed record Row(
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("label")] string Label,
@@ -735,12 +744,14 @@ public sealed class SessionRegistry
         [property: JsonPropertyName("stats")] object Stats);
 
     // `supervisor`: only while the Überwachungsmodus is on (omitted otherwise).
+    // `missed`: how many of the Zentrale's lines wait for Sir's call back (omitted when none).
     private sealed record Wire(
         [property: JsonPropertyName("sessions")] List<Row> Sessions,
         [property: JsonPropertyName("today")] object Today,
         [property: JsonPropertyName("reminders")] List<object> Reminders,
         [property: JsonPropertyName("snapshots")] List<object> Snapshots,
-        [property: JsonPropertyName("supervisor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Supervised);
+        [property: JsonPropertyName("supervisor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Supervised,
+        [property: JsonPropertyName("missed"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Missed);
 
     // GET /sessions — by status group (needs input, working, halted, stopped), newest change
     // first within a group, then label, then id. As macOS.
@@ -766,7 +777,9 @@ public sealed class SessionRegistry
                 .Select(e => new Row(
                     e.Id, e.Label, e.Project, e.State, Ms(e.Since),
                     e.State == "waiting" && e.WaitUntil is { } u ? Ms(u) : null,
-                    only is null && e.CallbackAt is { } cb ? (cb == DateTime.MaxValue ? 0 : Ms(cb)) : null,   // Sir's put-off call is not the guest's
+                    only is not null ? (long?)null   // Sir's put-off call is not the guest's
+                        : _missed > 0 && Supervisor.IsZentrale(e.Label, e.Cwd, _zentraleCwd) ? 0L   // its lines wait for his call back
+                        : e.CallbackAt is { } cb ? (cb == DateTime.MaxValue ? 0L : Ms(cb)) : (long?)null,
                     e.Id == active,
                     only is null && Resumable(e),
                     e.Tasks,
@@ -805,7 +818,8 @@ public sealed class SessionRegistry
                 today,
                 ReminderRows?.Invoke() ?? new List<object>(),
                 SnapshotRows?.Invoke() ?? new List<object>(),
-                _supervised ? true : (bool?)null));
+                _supervised ? true : (bool?)null,
+                _missed > 0 ? _missed : (int?)null));
         }
     }
 

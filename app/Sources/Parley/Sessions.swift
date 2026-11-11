@@ -464,6 +464,9 @@ final class SessionRegistry {
     // /sessions; the Zentrale's row is marked `zentrale` either way.
     var supervisor = false
     var zentraleCwd = ""
+    // Lines of the Zentrale kept for Sir's call back (Supervisor.swift, Missed): `missed` in
+    // /sessions, and the Zentrale's row "waits for his call back" while there are any.
+    var missed = 0
     struct ShareTag: Encodable, Equatable { let id, name, role: String }
 
     /// The overview's order: 0 needs Sir (voice, an update queued, a call put off), 1 working,
@@ -486,7 +489,10 @@ final class SessionRegistry {
         }.map { e in
             Row(id: e.id, label: e.label, project: e.project, state: e.state, since: Self.ms(e.since),
                 until: e.state == "waiting" ? e.waitUntil.map(Self.ms) : nil,
-                callback: only == nil ? e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) } : nil, voice: e.id == activeId,   // Sir's put-off call is not the guest's
+                callback: only != nil ? nil   // Sir's put-off call is not the guest's
+                    : missed > 0 && Supervisor.isZentrale(label: e.label, cwd: e.cwd, zentrale: zentraleCwd) ? 0
+                    : e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) },
+                voice: e.id == activeId,
                 resumable: only == nil && resumable(e), tasks: e.tasks, host: only == nil ? DesktopSessions.resolve(cli: e.id, reported: e.host) : nil,
                 shared: shared[e.id] ?? [], asking: asking[e.id],
                 zentrale: only == nil && Supervisor.isZentrale(label: e.label, cwd: e.cwd, zentrale: zentraleCwd),
@@ -497,13 +503,15 @@ final class SessionRegistry {
         let today = Today(costUsd: (day.costUsd * 10_000).rounded() / 10_000, turns: day.turns,
                           spokenSeconds: Int(day.spokenSeconds.rounded()), rateLimits: rateLimits)
         let data = try? JSONEncoder().encode(only == nil
-            ? Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots, supervisor: supervisor ? true : nil)
-            : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: [], supervisor: nil))
+            ? Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots, supervisor: supervisor ? true : nil,
+                   missed: missed > 0 ? missed : nil)
+            : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: [], supervisor: nil, missed: nil))
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"sessions":[]}"#
     }
 
     // `supervisor`: only when the Überwachungsmodus is on (omitted otherwise).
-    private struct Wire: Encodable { let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row]; let supervisor: Bool? }
+    // `missed`: how many of the Zentrale's lines wait for Sir's call back (omitted when none).
+    private struct Wire: Encodable { let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row]; let supervisor: Bool?; let missed: Int? }
     private struct Today: Encodable { let costUsd: Double; let turns: Int; let spokenSeconds: Int; let rateLimits: [RateLimit] }
 
     private struct Row: Encodable {

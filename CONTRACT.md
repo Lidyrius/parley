@@ -109,8 +109,20 @@ to the Zentrale.
 POST /supervisor  { "on": true, "exempt": ["Shirts"] }   // either or both; exempt: names or ids that keep talking to Sir
 → { "ok": true, "on": true, "exempt": ["Shirts"], "zentrale": "<its session id, when it runs>", "waiting": 0 }
 ```
-`GET /supervisor` answers the same. Kept in `supervisor.json` beside `reminders.json` (survives
-restarts and updates). `GET /sessions` carries `"supervisor": true` while it is on (omitted
+`GET /supervisor` answers the same, plus `"missed": n`. Kept in `supervisor.json` beside
+`reminders.json` (survives restarts and updates).
+
+**A call Sir doesn't take** (Unterwegs) holds nothing: the Zentrale's line that rang unanswered —
+or was put off — is kept in `missed.json`, its turn is answered with a note ("[Parley] Sir hat den
+Anruf nicht angenommen. …") and the Zentrale works on. Every line it speaks after that joins the
+list without a new ring (its turn is answered empty and parks); Sir gets one notification with
+the count, then at most one every 15 minutes, and "In N Min." on the phone rings exactly once
+more. `GET /sessions` carries `"missed": n` and the Zentrale's row `"callback": 0` ("wartet auf
+Rückruf", the tile offers Rückrufen); the Live Activity's line is "n Updates warten auf deinen
+Rückruf". When Sir calls back (a call from the phone, "Anrufen" at the host, "Hey Parley") — or
+is back at the host when the Zentrale next speaks — the Zentrale gets everything as one
+instruction ("[Parley] Sir ruft zurück. … Offen — … Zur Kenntnis — …"), the list is emptied, and
+the call is held until its one summary is voiced. `GET /sessions` carries `"supervisor": true` while it is on (omitted
 otherwise) and `"zentrale": true` on the Zentrale's row: the apps then show the Zentrale as the
 one card and the other sessions (name, state, last line) folded away below it; the Live Activity
 shows the Zentrale alone.

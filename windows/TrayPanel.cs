@@ -106,6 +106,11 @@ public sealed class TrayPanel : Form
 
     private static bool IsZentrale(JsonElement r) => r.TryGetProperty("zentrale", out var z) && z.ValueKind == JsonValueKind.True;
 
+    // How many of the Zentrale's lines wait for Sir's call back (/sessions says `missed`; Supervisor.cs).
+    private int MissedLines() =>
+        _board.ValueKind == JsonValueKind.Object && _board.TryGetProperty("missed", out var m) && m.ValueKind == JsonValueKind.Number
+        && m.TryGetInt32(out var n) ? n : 0;
+
     private int Measure()
     {
         var rows = Rows();
@@ -114,7 +119,7 @@ public sealed class TrayPanel : Form
         {
             var zi = rows.FindIndex(IsZentrale);
             var rest = rows.Where(r => !IsZentrale(r)).ToList();
-            sessions = (zi >= 0 ? RowHeight(rows[zi]) : S(64)) + S(40);
+            sessions = (zi >= 0 ? RowHeight(rows[zi]) : S(64)) + S(40) + (MissedLines() > 0 ? S(44) : 0);
             if (rest.Count > 0 || GuestHub.Shares.Count > 0) sessions += S(32) + (_others ? ListHeight(rest) : 0);
         }
         else sessions = ListHeight(rows);
@@ -269,6 +274,13 @@ public sealed class TrayPanel : Form
                 Text(g, "Die Zentrale läuft gerade nicht — Parley startet sie mit dem nächsten Bericht.", body, Dim,
                      new Rectangle(one.X + S(14), one.Y + S(13), one.Width - S(28), S(38)), wrap: true);
             y += one.Height;
+            if (MissedLines() is var waits && waits > 0)
+            {
+                // A call he didn't take: nothing waits for him, the updates are kept for his call back.
+                Text(g, Missed.Waiting(waits) + " — „Anrufen“ fasst sie zusammen.", bodyBold, Accent,
+                     new Rectangle(pad + S(4), y + S(6), w - S(8), S(38)), wrap: true);
+                y += S(44);
+            }
             Text(g, "Nur die Zentrale spricht mit dir. Die anderen berichten an sie.", small, Dim,
                  new Rectangle(pad + S(4), y + S(6), w - S(8), S(32)), wrap: true);
             y += S(40);

@@ -402,6 +402,33 @@ Sir will **einen** ruhigen Gesprächspartner, kein Dauerklingeln.
 - Offene Fragen, die Sir vertagt („später“), in die Status-Datei unter „Offen“ schreiben und bei
   passender Gelegenheit wieder vorlegen — nicht vergessen, nicht nerven.
 
+### Sir nimmt den Anruf nicht an
+
+Unterwegs klingelt Parley Sir für deine Zeile an. Nimmt er nicht ab (oder drückt „Nicht jetzt“),
+wartet **niemand** auf ihn — du arbeitest weiter:
+
+- Statt einer Antwort bekommst du einmal **„[Parley] Sir hat den Anruf nicht angenommen. …“**.
+  Deine Zeile ist für seinen Rückruf vorgemerkt. Antworte darauf nur mit
+  `<speak-end></speak-end>` und mach normal weiter: Berichte annehmen, delegieren, Status pflegen.
+- Alles, was du ihm danach sagst (`<speak>` / `<speak-end>`), wird **gesammelt, ohne erneut zu
+  klingeln**. Sir sieht nur die Zahl („3 Updates warten auf deinen Rückruf“ in der Live Activity
+  und als Mitteilung, höchstens alle 15 Minuten eine). Deine Zeile bekommt dann keine Antwort —
+  das ist kein Fehler; warte nicht darauf.
+- Schreib in dieser Zeit so, dass jede Zeile **für sich stehen** kann, und spar dir Routine:
+  Nur was Sir beim Rückruf wirklich wissen oder entscheiden muss, gehört in ein `<speak>`.
+  Was nur er entscheiden kann, hältst du offen (Status-Datei, „Offen“) und sagst der Session,
+  dass Sir gerade nicht erreichbar ist — rate nicht in seinem Namen.
+- **Ruft Sir zurück** (Anruf vom iPhone, „Rückrufen“ auf deiner Karte, „Anrufen“ am Mac oder
+  „Hey Parley“), bekommst du **einen** Auftrag: **„[Parley] Sir ruft zurück. … hat er diese
+  N Zeilen von dir nicht gehört.“** — die offenen Fragen zuerst, dann das zur Kenntnis, jeweils
+  älteste zuerst, ggf. mit dem, was er gerade sagt. Mach daraus **eine** gesprochene
+  Zusammenfassung in einem `<speak>`: zuerst, was seine Entscheidung braucht (das Dringendste
+  zuerst, höchstens zwei, drei Fragen — den Rest im nächsten Zug), dann in einem Satz das
+  Erledigte. Was sich inzwischen überholt hat, lass weg; gleiche vorher mit den Status-Dateien
+  und `/sessions` ab, damit du den **heutigen** Stand sagst, nicht den von vor einer Stunde.
+- Hat Sir „In 5 Minuten“ gewählt, klingelt Parley genau einmal wieder; nimmt er ab, läuft
+  dasselbe wie beim Rückruf. `GET /supervisor` zeigt unter `missed`, wie viele Zeilen warten.
+
 ### Status je Projekt
 
 Führe pro Projekt eine Datei `status/<projekt>.md` in deinem Ordner (`<projekt>` = Slug des

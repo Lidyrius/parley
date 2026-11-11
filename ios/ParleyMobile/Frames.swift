@@ -108,6 +108,11 @@ struct ReminderRow: Identifiable, Equatable, Sendable {
 struct Snapshot: Equatable, Sendable {
     /// Überwachungsmodus on the host: only the Zentrale talks to Sir, the others report to it.
     var supervisor = false
+    /// The call protocol the host speaks (`call`): 8 = clips and a numbered mic ("Funkloch"); 0 = older.
+    /// A host that speaks 8 also takes the Überwachungsmodus switch from this app.
+    var callVersion = 0
+    /// Updates of the Zentrale that wait for a call back (Sir didn't take its call).
+    var missed = 0
     var sessions: [Session] = []
     var today: Today?
     var reminders: [ReminderRow] = []
@@ -245,6 +250,12 @@ enum Frame: Equatable, Sendable {
     case askEnd(String)
     /// v6: the host opened snapshot `id` — what became of each session.
     case snapshotOpened(id: String, results: [SnapshotResult])
+    /// v8 ("Funkloch"): the frames of clip `id` follow, from frame `from` on …
+    case clipStart(id: Int, from: Int)
+    /// … and that was all of it: `frames` in total; `listen`: Parley listens after it.
+    case clipEnd(id: Int, frames: Int, listen: Bool)
+    /// v8: the host has this phone's mic up to frame `seq`.
+    case micGot(UInt32)
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
 
     /// nil for anything that is not a JSON message with a `t` (e.g. the relay's `pong`).
@@ -294,6 +305,13 @@ enum Frame: Equatable, Sendable {
         case "snapshot":
             guard let w = try? decoder.decode(SnapshotWire.self, from: data) else { return .other(head.t) }
             return .snapshotOpened(id: w.id, results: w.results.items)
+        case "clip":
+            guard let w = try? decoder.decode(ClipWire.self, from: data), w.id > 0 else { return .other(head.t) }
+            if let n = w.frames { return n >= 0 ? .clipEnd(id: w.id, frames: n, listen: w.listen ?? false) : .other(head.t) }
+            return .clipStart(id: w.id, from: max(0, w.from ?? 0))
+        case "mic":
+            guard let w = try? decoder.decode(MicWire.self, from: data) else { return .other(head.t) }
+            return .micGot(w.got)
         case "image":
             guard let w = try? decoder.decode(ImageWire.self, from: data) else { return .other(head.t) }
             return .image(key: w.key, data: w.data.flatMap { Data(base64Encoded: $0) })
@@ -311,6 +329,8 @@ enum Frame: Equatable, Sendable {
     private struct ImageWire: Decodable { let key: String; let data: String? }
     private struct ShareLinkWire: Decodable { let id: String; let session: String; let link: String }
     private struct NoticeWire: Decodable { let text: String }
+    private struct ClipWire: Decodable { let id: Int; let from: Int?; let frames: Int?; let listen: Bool? }
+    private struct MicWire: Decodable { let got: UInt32 }
     private struct AskEndWire: Decodable { let id: String }
     private struct SnapshotWire: Decodable { let id: String; let results: Lossy<SnapshotResult> }
     /// `{"t":"palette","name","note","alwaysDark","colors":{role:["#light","#dark"]}}` — every role
@@ -363,8 +383,20 @@ enum Outgoing {
     static func resume(id: String) -> String { encode(["t": .s("resume"), "id": .s(id)]) }
     /// v2: the phone's CallKit call connected (`true`) or ended (`false`).
     /// v3: a start asks for Parley's voice at 24 kHz (`down`); the mic stays 16 kHz.
-    static func call(started: Bool) -> String {
-        started ? encode(["t": .s("call"), "state": .s("start"), "down": .i(24_000)]) : encode(["t": .s("call"), "state": .s("end")])
+    /// v8 (`clips`, when the host speaks it): the voice comes as clips, the mic goes numbered.
+    static func call(started: Bool, clips: Bool = false) -> String {
+        guard started else { return encode(["t": .s("call"), "state": .s("end")]) }
+        var body: [String: Value] = ["t": .s("call"), "state": .s("start"), "down": .i(24_000)]
+        if clips { body["v"] = .i(8) }
+        return encode(body)
+    }
+    /// The Überwachungsmodus on or off (the host's `POST /supervisor`): its next `sessions` shows it.
+    static func supervisor(_ on: Bool) -> String { encode(["t": .s("supervisor"), "on": .b(on)]) }
+    /// v8: connected and in no call — a hang-up may never have reached the host (a dead zone).
+    static let callIdle = encode(["t": .s("call"), "state": .s("idle")])
+    /// v8: where this phone stands with a clip: after its end, once it played, after every break.
+    static func clip(id: Int, have: Int, played: Bool) -> String {
+        encode(["t": .s("clip"), "id": .i(id), "have": .i(have), "played": .b(played)])
     }
     /// v2: the wake word was heard while the host was idle.
     static let wake = encode(["t": .s("wake")])
@@ -561,10 +593,12 @@ extension ReminderRow: Decodable {
 }
 
 extension Snapshot: Decodable {
-    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor }
+    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor, call, missed }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         supervisor = c.lenient(.supervisor) ?? false
+        callVersion = c.lenient(.call) ?? 0
+        missed = c.lenient(.missed) ?? 0
         sessions = (c.lenient(.sessions) as Lossy<Session>?)?.items ?? []
         today = c.lenient(.today)
         reminders = (c.lenient(.reminders) as Lossy<ReminderRow>?)?.items ?? []

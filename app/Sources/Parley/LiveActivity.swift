@@ -92,6 +92,11 @@ enum LiveActivity {
             rows.append((row, (s["stats"] as? [String: Any])?["lastLine"] as? String))
         }
         rows.sort { rank($0.row) != rank($1.row) ? rank($0.row) < rank($1.row) : $0.row.since > $1.row.since }
+        // Sir didn't take the Zentrale's call: its row waits for his call back (the registry says
+        // so), and the line says how many updates wait.
+        if let n = (obj["missed"] as? NSNumber)?.intValue, n > 0, let z = rows.first(where: { $0.row.callback == 0 }) {
+            return Content(sessions: rows.prefix(maxRows).map(\.row), alive: alive, line: Missed.waiting(n), from: z.row.label, ask: ask)
+        }
         let spoken = rows.first { !($0.line ?? "").isEmpty }
         return Content(sessions: rows.prefix(maxRows).map(\.row), alive: alive,
                        line: spoken?.line.map { String($0.prefix(120)) }, from: spoken?.row.label, ask: ask)

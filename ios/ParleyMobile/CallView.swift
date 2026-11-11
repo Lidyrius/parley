@@ -95,6 +95,19 @@ struct CallView: View {
                         .padding(.bottom, typing ? 0 : 14)
                 } else {
                 topBar(call)
+                if call.lineLost {
+                    // v8: a dead zone — the call waits, what was loaded plays on, the mic is kept.
+                    Label("Kein Netz – Parley wartet. Was du sagst, geht nicht verloren.", systemImage: "wifi.slash")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Theme.card))
+                        .padding(.top, 8)
+                        .padding(.horizontal, 16)
+                        .transition(.opacity)
+                }
                 Spacer(minLength: 12)
                 // A slide (docs/CALL-SLIDES.md) takes the ring's place while Parley talks about it;
                 // the session's name stays on top, small.

@@ -74,6 +74,12 @@ final class ControlServer: @unchecked Sendable {
     private var reportsOut: String?
     // Creates the Zentrale's folder when it is missing (the app sets it; nothing in tests).
     var ensureZentrale: () -> Void = {}
+    // What Sir missed (Supervisor.swift, Missed): the Zentrale's lines since a call he didn't
+    // take, kept for his call back (nil file = not persisted, tests); and when to ring once more
+    // ("In 5 Min." on the phone).
+    var missedFile: URL?
+    private lazy var missed: [MissedLine] = Missed.load(missedFile)
+    private var ringAgainAt: Date?
 
     // POST /permission holds the hook at most this long, then answers "ask".
     var permissionHold: TimeInterval = 110
@@ -104,7 +110,9 @@ final class ControlServer: @unchecked Sendable {
     static let watchdogEvent = "watchdog"
     // A Wiedervorlage for Sir himself, spoken like an update.
     static let reminderEvent = "reminder"
-    static let dialogEvents: Set<String> = [resumeEvent, permissionEvent, wakeEvent, watchdogEvent, reminderEvent]
+    // Sir is back after a call he didn't take: what he missed goes to the Zentrale for one summary.
+    static let callbackEvent = "callback"
+    static let dialogEvents: Set<String> = [resumeEvent, permissionEvent, wakeEvent, watchdogEvent, reminderEvent, callbackEvent]
     private var lastResumable: [ParkedInfo] = []
 
     // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
@@ -249,6 +257,61 @@ final class ControlServer: @unchecked Sendable {
     private func syncSupervisor() {
         sessions.supervisor = supervisor.on
         sessions.zentraleCwd = Zentrale.normalize(zentraleDir())
+        sessions.missed = missed.count
+    }
+
+    // MARK: what Sir missed (a call of the Zentrale he didn't take)
+
+    func missedCount() -> Int { queue.sync { missed.count } }
+
+    /// Session `id` is the Zentrale; `supervised`: … and the Überwachungsmodus is on.
+    func isZentrale(_ id: String, supervised: Bool = false) -> Bool {
+        queue.sync {
+            guard !supervised || supervisor.on, let i = sessions.info(id) else { return false }
+            return Supervisor.isZentrale(label: i.label, cwd: i.cwd, zentrale: Zentrale.normalize(zentraleDir()))
+        }
+    }
+
+    /// The Zentrale's line is kept for Sir's call back; how many wait now. `ringAgain`: he asked
+    /// to be rung again in that many seconds.
+    @discardableResult
+    func addMissed(_ turn: TurnPayload, ringAgain: TimeInterval? = nil) -> Int {
+        queue.sync {
+            missed.append(MissedLine(at: now(), text: turn.speak, asks: turn.wantsListen))
+            if missed.count > Missed.most { missed.removeFirst(missed.count - Missed.most) }
+            Missed.save(missed, to: missedFile)
+            sessions.missed = missed.count
+            sessions.reported(id: Self.sessionKey(turn), speak: turn.speak)
+            if let ringAgain { ringAgainAt = now().addingTimeInterval(ringAgain) }
+            return missed.count
+        }
+    }
+
+    /// Sir is back: everything kept, as the one instruction for the Zentrale — and the list is
+    /// empty again. nil: nothing waited.
+    func takeMissed(said: String? = nil) -> String? {
+        queue.sync {
+            guard !missed.isEmpty else { return nil }
+            let text = Missed.instruction(missed, said: said)
+            missed = []
+            ringAgainAt = nil
+            Missed.save(missed, to: missedFile)
+            sessions.missed = 0
+            return text
+        }
+    }
+
+    /// The call-back dialog rides the queue like the wake dialog (never over a line being
+    /// voiced). `ring`: ring the phone first — the one ring Sir asked for.
+    func callBack(ring: Bool = false) {
+        queue.async { self.callBackOnQueue(ring: ring) }
+    }
+
+    private func callBackOnQueue(ring: Bool) {
+        guard !replyQueue.contains(where: { $0.turn.event == Self.callbackEvent }) else { return }
+        let turn = TurnPayload(event: Self.callbackEvent, session_id: "", cwd: "", project: "", tmux_pane: "",
+                               speak: ring ? "ring" : "", label: nil, listen: false)
+        _ = enqueue(turn) { _ in }
     }
 
     private func setSupervisorOnQueue(on: Bool?, exempt: [String]?) {
@@ -272,9 +335,10 @@ final class ControlServer: @unchecked Sendable {
     }
 
     private func supervisorJSON() -> String {
-        struct Wire: Encodable { let ok = true; let on: Bool; let exempt: [String]; let zentrale: String?; let waiting: Int }
+        struct Wire: Encodable { let ok = true; let on: Bool; let exempt: [String]; let zentrale: String?; let waiting: Int; let missed: Int }
         return Self.encode(Wire(on: supervisor.on, exempt: supervisor.exempt,
-                                zentrale: sessions.session(inFolder: sessions.zentraleCwd)?.id, waiting: reports.count))
+                                zentrale: sessions.session(inFolder: sessions.zentraleCwd)?.id, waiting: reports.count,
+                                missed: missed.count))
     }
 
     // A turn's way to Sir's ear — or, while the mode is on, to the Zentrale as a report: the
@@ -877,7 +941,7 @@ final class ControlServer: @unchecked Sendable {
         case Self.resumeEvent:
             sessions.resumeFinished(id: id, replied: !reply.transcript.isEmpty)
             deliver(id, reply.transcript.isEmpty ? Self.resumeInstruction : reply.transcript)
-        case Self.permissionEvent, Self.wakeEvent, Self.watchdogEvent:
+        case Self.permissionEvent, Self.wakeEvent, Self.watchdogEvent, Self.callbackEvent:
             sessions.dialogFinished(id: id)
         default:
             var reply = reply
@@ -1267,6 +1331,10 @@ extension ControlServer {
             self.syncSupervisor()
             self.fireReminders { Reminders.isDue($0, now: self.now(), state: self.sessions.stateSince) }
             self.flushReports(start: true)
+            if let at = self.ringAgainAt, at <= self.now() {   // "In 5 Min.": the one ring Sir asked for
+                self.ringAgainAt = nil
+                if !self.missed.isEmpty { self.callBackOnQueue(ring: true) }
+            }
         }
     }
 

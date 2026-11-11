@@ -408,3 +408,59 @@ the guest's phone dials it as `phone`. The relay needs nothing new.
   serves `/join` (a page with "In Parley öffnen" and a QR code; script hash-pinned) and
   `/.well-known/apple-app-site-association` (`/join` opens the iPhone app directly). The fragment
   never reaches the relay.
+
+## Protocol v8 — Funkloch: a call that gets through a dead zone
+
+Sir drives through forests. Until v7 a line was streamed in real time — the network went, the
+voice was cut; what he said without a line was gone; after 6 s of silence the host called the
+call over. v8 keeps the call across the gap, both ways. It is negotiated per call and leaves an
+older phone or host exactly as it was.
+
+- **Who speaks it:** the host's `sessions` frame carries `"call":8`. A phone that saw it starts
+  its call with `{"t":"call","state":"start","down":24000,"v":8}`. Without `v` the host streams
+  as before (PhoneVoice), with it the rest of this section applies.
+- **The voice comes as a clip.** `{"t":"clip","id":n,"from":k}` — the binary voice frames that
+  follow are frames k, k+1, … of clip n (20 ms each, as before) — then
+  `{"t":"clip","id":n,"frames":K,"play":true,"listen":bool}`: that was all of it. The host sends
+  them as fast as the line carries them, not in real time. The phone **plays a clip only once it
+  holds all K frames** (then from its own memory: a dead zone in the middle of a line no longer
+  matters) and answers `{"t":"clip","id":n,"have":K,"played":false}`, and `"played":true` once
+  the last frame came out of the speaker — the host goes on (listens, next line) only then.
+  `listen`: Parley listens after the clip; a phone without a line shows that by itself.
+- **After a break** the phone says where it stands — `{"t":"clip","id":<the newest clip it
+  knows, 0 = none>,"have":h,"played":bool}` — on every reconnect during a call, and at a clip's
+  end when frames are missing. The host sends the rest from frame h with a new header (`from:h`),
+  or the whole clip when the phone names another one. A header for a clip that already plays is
+  ignored by the phone (its frames are dropped). Captions and slides ride as before; their clock
+  counts played frames.
+- **The mic is numbered.** In a v8 call each mic frame is 4 bytes (a little-endian counter from
+  1) + the 640 bytes of PCM. The host drops a number it already has and says once a second how
+  far it got: `{"t":"mic","got":n}` — also at once as the answer to every clip status. The phone
+  keeps every frame until it is acknowledged (at most the newest 3 minutes). After a break it
+  sends nothing until the host said where it stands, then everything after that number in order,
+  then live again: **what Sir says in a dead zone arrives afterwards**, once, in order. (No word
+  from the host for 3 s after a break: the phone goes on anyway.)
+- **The call waits.** Host: nothing from the phone for 3 s = stalled (a listening's clocks stand
+  still, no "no speech"), for **180 s** = the call is over (v7: 6 s). Phone: the line to the host
+  down for 180 s = the call failed (v7: 25 s); meanwhile the call screen says "Kein Netz – Parley
+  wartet", the relay is redialled every ≤ 4 s, and a socket that looks open but brings no `mic`
+  word for 6 s is redialled at once. A phone that is connected and in no call says
+  `{"t":"call","state":"idle"}` — a hang-up that never reached the host ends the call there.
+- **The ring.** iOS shows an incoming call the moment its VoIP push arrives (PushKit's rule), so
+  a line cannot be on the phone *before* it rings. The host therefore has the line's voice
+  synthesized in full before it rings, sends it in one piece when Sir answers, and the phone
+  plays it only when complete; a host that is asked to speak while the clip is not played yet
+  waits (≤ the clip's length + 20 s with the phone on the line; a dead zone doesn't count).
+- The call ending before a clip was complete on the phone hands its speech back as before (the
+  Mac's speaker unless Unterwegs); one the phone held in full counts as played.
+- **Where a listening starts.** After a dead zone the kept mic arrives in one burst, the moment
+  the host answers the phone's clip status — before a listener exists, and with what the phone
+  recorded while the clip still played. The host therefore sorts it while it handles that
+  status: a clip the phone holds in full plays from the mic frame the host had then (its mic
+  runs along, one frame per frame played), so the clip is over at that number + the clip's
+  frames; mic frames up to there are dropped, those after it are kept and handed to the listener
+  first when it starts. Nothing of Sir's answer is lost, and the silence of the playback doesn't
+  end the listening as "no speech".
+- A mic count that starts over (a frame numbered ≤ 3 after more than 100) is a new call whose
+  `call start` the host took for a repeated one — its numbering is taken from there.
+

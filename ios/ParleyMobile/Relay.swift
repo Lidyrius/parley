@@ -32,6 +32,8 @@ final class Relay {
     @ObservationIgnored private var lastHeard = Date.distantPast
     @ObservationIgnored private var bestSkew: Double?
     @ObservationIgnored var onEvent: (RelayEvent) -> Void = { _ in }
+    /// A call waits out a dead zone (v8): redial every few seconds, not up to every half minute.
+    @ObservationIgnored var eager = false
     /// The mic thread's way to the open socket.
     let audioOut = AudioOut()
 
@@ -88,12 +90,24 @@ final class Relay {
         failure = nil
     }
 
-    /// `only`: a share's room — that one session, nothing else (no widget).
-    func startDemo(now: Date = .now, only: String? = nil) {
+    /// `only`: a share's room — that one session, nothing else (no widget). `supervisor`: the
+    /// Überwachungsmodus (nil: as launched, `-demoSupervisor`) — the demo's switch works too.
+    func startDemo(now: Date = .now, only: String? = nil, supervisor: Bool? = nil) {
         isDemo = true
         link = .connected
         hostOnline = true
-        if case .sessions(var s)? = Frame.decode(Demo.frame(now: now, supervisor: ProcessInfo.processInfo.arguments.contains("-demoSupervisor"))) {
+        let supervised = supervisor ?? ProcessInfo.processInfo.arguments.contains("-demoSupervisor")
+        if case .sessions(var s)? = Frame.decode(Demo.frame(now: now, supervisor: supervised)) {
+            s.callVersion = 8
+            if supervised, let i = ProcessInfo.processInfo.arguments.firstIndex(of: "-demoMissed"),
+               i + 1 < ProcessInfo.processInfo.arguments.count, let n = Int(ProcessInfo.processInfo.arguments[i + 1]) {
+                s.missed = n   // `-demoMissed 3`: a call not taken, three updates wait
+                if let z = s.sessions.firstIndex(where: \.zentrale) {
+                    s.sessions[z].callback = 0
+                    s.sessions[z].state = .parked
+                    s.sessions[z].voice = false
+                }
+            }
             if let only { s = Snapshot(sessions: s.sessions.filter { $0.id == only }) } else { WidgetFeed.publish(s) }
             snapshot = s
         }
@@ -127,7 +141,7 @@ final class Relay {
             if await connectOnce(pairing) { delay = 1 }
             guard !Task.isCancelled else { return }
             try? await Task.sleep(for: .seconds(delay))
-            delay = min(delay * 2, 30)
+            delay = min(delay * 2, eager ? 4 : 30)
         }
     }
 
@@ -210,7 +224,8 @@ final class Relay {
         case .peer(let host):
             hostOnline = host
         case .audio, .ring, .history, .image, .caption, .slides, .palette, .snapshotOpened,
-             .shareLink, .joinRequest, .shareMove, .shareEnd, .notice, .ask, .askEnd, .other:
+             .shareLink, .joinRequest, .shareMove, .shareEnd, .notice, .ask, .askEnd, .other,
+             .clipStart, .clipEnd, .micGot:
             break
         }
         onEvent(.frame(frame))

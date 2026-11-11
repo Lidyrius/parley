@@ -157,10 +157,16 @@ public sealed class MicCapture
         {
             // Wall clock for the cap and the call: frames may simply stop coming.
             var start = DateTime.UtcNow;
+            var last = start;
             while (!done.Task.IsCompleted)
             {
+                // v8: nothing comes from the phone (a dead zone) — its mic is kept there and follows
+                // once the line is back; until then the clock stands still.
+                var now = DateTime.UtcNow;
+                if (line.Stalled) start += now - last;
+                last = now;
                 if (!line.Active) done.TrySetResult("call-ended");
-                else if ((DateTime.UtcNow - start).TotalSeconds >= MaxListenSeconds) done.TrySetResult("max-cap");
+                else if ((now - start).TotalSeconds >= MaxListenSeconds) done.TrySetResult("max-cap");
                 else await Task.WhenAny(done.Task, Task.Delay(200));
             }
         }

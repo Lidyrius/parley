@@ -267,6 +267,12 @@ final class AppModel {
         relay.resume(id)
     }
 
+    /// The Überwachungsmodus, switched here: the host takes it (as `POST /supervisor`) and its next
+    /// `sessions` frame turns the overview.
+    func setSupervisor(_ on: Bool) {
+        if demo { relay.startDemo(supervisor: on) } else { relay.send(Outgoing.supervisor(on)) }
+    }
+
     func callParley() {
         Task {
             if !demo { await CallController.requestPermissions() }
@@ -483,7 +489,10 @@ final class AppModel {
             sendAlertToken()
             sendActivityTokens()
             // (Only a call on this line — a guest's call runs on his share's room, v7.)
-            if call.phase.isActive, call.line === relay { relay.send(Outgoing.call(started: true)) }
+            if call.phase.isActive, call.line === relay {
+                relay.send(call.startFrame)
+                call.relayOpened()
+            }
             call.relayChanged()
         case .closed:
             call.relayChanged()
@@ -506,6 +515,12 @@ final class AppModel {
             // A typed message shows as sent once the session has it (typed or as a reply).
             let seen = Set(items.filter { $0.kind == .user || $0.kind == .voice }.compactMap(\.text))
             pending[id]?.removeAll { seen.contains($0) }
+        case .frame(.clipStart(let id, let from)):
+            if call.line === relay { call.clipStarted(id: id, from: from) }
+        case .frame(.clipEnd(let id, let frames, let listen)):
+            if call.line === relay { call.clipEnded(id: id, frames: frames, listen: listen) }
+        case .frame(.micGot(let seq)):
+            if call.line === relay { call.micGot(seq) }
         case .frame(.caption(let c)):
             if call.line === relay { call.captionReceived(c) }
         case .frame(.slides(let s)):

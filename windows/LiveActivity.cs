@@ -133,6 +133,11 @@ public static class LiveActivity
                 rows.Add((new Row(id, label.Length > 32 ? label[..32] : label, state, Sec("since") ?? 0, Sec("until"), Sec("callback")), line));
             }
             rows.Sort((a, b) => Rank(a.Row) != Rank(b.Row) ? Rank(a.Row).CompareTo(Rank(b.Row)) : b.Row.Since.CompareTo(a.Row.Since));
+            // Sir didn't take the Zentrale's call: its row waits for his call back (the registry
+            // says so), and the line says how many updates wait.
+            if (doc.RootElement.TryGetProperty("missed", out var mi) && mi.ValueKind == JsonValueKind.Number && mi.TryGetInt32(out var missed)
+                && missed > 0 && rows.FindIndex(r => r.Row.Callback == 0) is var zi && zi >= 0)
+                return new Content(rows.Take(maxRows).Select(r => r.Row).ToList(), alive, Missed.Waiting(missed), rows[zi].Row.Label, ask);
             var spoken = rows.FirstOrDefault(r => !string.IsNullOrEmpty(r.Line));
             var text = spoken.Line is { } t ? (t.Length > 120 ? t[..120] : t) : null;
             return new Content(rows.Take(maxRows).Select(r => r.Row).ToList(), alive, text, text is null ? null : spoken.Row.Label, ask);

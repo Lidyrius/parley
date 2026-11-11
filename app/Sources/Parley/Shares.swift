@@ -446,7 +446,7 @@ final class ShareHub: @unchecked Sendable {
                 // Back online (e.g. opened from the push): the questions still open, again.
                 for (qid, a) in self.asks where a.share == id { client.sendText(Shares.askFrame(id: qid, s, a.turn)) }
                 if s.welcomed == false { self.welcome(id) }   // nil: let in before welcomes existed
-            case .call, .push, .later, .barge:
+            case .call, .push, .later, .barge, .clip, .callIdle:   // (.clip, .callIdle: his call speaks v8 too)
                 // His call line: answering, hanging up, his VoIP token, "not now", talking over Parley.
                 guard s.state == "active", let line = self.lines[id] else { return }
                 let was = line.callActive

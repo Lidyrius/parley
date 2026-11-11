@@ -9,7 +9,7 @@ namespace Parley;
 // Zentrale as a report, and the session parks (resumable, taking the Zentrale's POST /dispatch).
 // The Zentrale delegates, watches the sessions and alone gives Sir the updates.
 //
-// GET /supervisor → {"on","exempt","zentrale","waiting"} · POST /supervisor {"on":bool,"exempt":[…]}
+// GET /supervisor → {"on","exempt","zentrale","waiting","missed"} · POST /supervisor {"on":bool,"exempt":[…]}
 // Kept in supervisor.json (survives restarts and updates).
 public sealed class Supervisor
 {
@@ -89,4 +89,76 @@ public sealed class Supervisor
             : "";
         return $"[Auftrag von {who}] {text}{note}";
     }
+}
+
+/// A line of the Zentrale that Sir did not hear: he didn't take its call (Überwachungsmodus).
+/// Nothing waits for him — the Zentrale goes on working, its lines are kept here (missed.json,
+/// through restarts) without ringing again, and when he calls back the Zentrale gets them all
+/// as one instruction and makes one spoken summary of them. As macOS (Supervisor.swift, Missed).
+public sealed class MissedLine
+{
+    [JsonPropertyName("at")] public double At { get; set; }          // epoch ms
+    [JsonPropertyName("text")] public string Text { get; set; } = "";
+    [JsonPropertyName("asks")] public bool Asks { get; set; }        // a <speak>: it wanted an answer
+}
+
+public static class Missed
+{
+    public static string FilePath => Path.Combine(Config.Dir, "missed.json");
+    public const int Most = 40;                                             // the newest; older ones are long overtaken
+    public static readonly TimeSpan NoticeEvery = TimeSpan.FromMinutes(15);   // a notification with the count at most this often
+
+    public static List<MissedLine> Load(string? file)
+    {
+        try
+        {
+            if (file is null || !File.Exists(file)) return new();
+            return JsonSerializer.Deserialize<List<MissedLine>>(File.ReadAllText(file)) ?? new();
+        }
+        catch { return new(); }
+    }
+
+    public static void Save(List<MissedLine> list, string? file)
+    {
+        if (file is null) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            var tmp = file + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(list));
+            File.Move(tmp, file, overwrite: true);
+        }
+        catch (Exception e) { Log.Write($"missed: not saved ({e.Message})"); }
+    }
+
+    /// What the Zentrale reads in place of an answer to the line that rang unanswered.
+    public const string Note =
+        "[Parley] Sir hat den Anruf nicht angenommen. Deine Zeile ist für seinen Rückruf vorgemerkt; " +
+        "alles Weitere, was du ihm sagst, wird ebenfalls gesammelt, ohne erneut zu klingeln. Arbeite " +
+        "normal weiter (Berichte annehmen, delegieren, was nur Sir entscheiden kann, offen halten). " +
+        "Antworte hierauf nur mit <speak-end></speak-end>.";
+
+    private static string Clock(double at) =>
+        DateTime.UnixEpoch.AddMilliseconds(at).ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// Sir is back: everything he missed as one instruction — what is open first, then the rest,
+    /// each oldest first. `said`: what he says right now ("Hey Parley, …").
+    public static string Instruction(IReadOnlyList<MissedLine> list, string? said = null)
+    {
+        var open = list.Where(l => l.Asks).ToList();
+        var rest = list.Where(l => !l.Asks).ToList();
+        static string Lines(List<MissedLine> l) => string.Join("\n", l.Select(x => $"- ({Clock(x.At)} Uhr) {x.Text}"));
+        var since = list.Count > 0 ? Clock(list[0].At) : "?";
+        var which = list.Count == 1 ? "diese Zeile" : $"diese {list.Count} Zeilen";
+        var parts = new List<string> { $"[Parley] Sir ruft zurück. Seit dem nicht angenommenen Anruf ({since} Uhr) hat er {which} von dir nicht gehört." };
+        if (open.Count > 0) parts.Add("Offen — Fragen an ihn, älteste zuerst:\n" + Lines(open));
+        if (rest.Count > 0) parts.Add("Zur Kenntnis, älteste zuerst:\n" + Lines(rest));
+        parts.Add("Gib ihm jetzt EINE gesprochene Zusammenfassung: zuerst, was offen ist oder seine Entscheidung braucht, dann kurz das Erledigte. Was sich inzwischen überholt oder erledigt hat, lass weg oder sag es in einem Halbsatz. Danach geht es normal weiter.");
+        if (said?.Trim() is { Length: > 0 } now) parts.Add($"Außerdem sagt Sir gerade: „{now}“");
+        return string.Join("\n\n", parts);
+    }
+
+    /// The Live Activity's line and the notification: how many wait.
+    public static string Waiting(int n) =>
+        n == 1 ? "1 Update wartet auf deinen Rückruf" : $"{n} Updates warten auf deinen Rückruf";
 }

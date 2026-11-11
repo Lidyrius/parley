@@ -60,6 +60,21 @@ Do them by hand once before relying on Parley.
       recording lies in `~/Library/Application Support/Parley/failed-recordings/` (Windows:
       `%APPDATA%\Parley\failed-recordings`).
 
+## A call through a dead zone (protocol v8 — needs the iPhone build with "Funkloch")
+
+- [ ] Unterwegs on, let a session finish a turn: the phone rings, Sir answers, the line plays
+      (the host's log: `phone: call connected (voice at 24 kHz, clips)`).
+- [ ] While a long line plays, switch the phone to **flight mode**: the line plays to its end
+      (it was loaded whole); the call screen says "Kein Netz – Parley wartet".
+- [ ] Still in flight mode, answer by voice after the beep; flight mode off: within seconds the
+      host's log says `phone: the phone is back after N s`, the answer is transcribed in full and
+      the session goes on. Nothing rang twice, nothing was said twice.
+- [ ] Flight mode on *before* the line finished loading (right after answering): silence, then
+      after flight mode off the whole line plays (`phone: clip N — the phone holds k of K frames,
+      sending the rest`).
+- [ ] Flight mode for over three minutes: the call ends on both sides; the next update rings anew.
+- [ ] An iPhone build without v8 (or an Android phone): calls behave exactly as before.
+
 ## Überwachungsmodus (supervisor)
 
 Needs the Zentrale running (`/parley:voice` in its folder) and one other voice session ("Shirts").
@@ -79,6 +94,13 @@ Needs the Zentrale running (`/parley:voice` in its folder) and one other voice s
       Zentrale is woken each minute (not while it works); still listed after a Parley restart;
       `POST /remind/cancel` ends it
 - [ ] Quit and reopen Parley: the mode is still on. Switch it off: every session talks to Sir again
+- [ ] **A call not taken:** Unterwegs on, let the Zentrale speak, don't answer: after 45 s the log
+      says `missed: Zentrale — the call was not taken, 1 line(s) wait`; the Zentrale goes on (a
+      report from another session reaches it within seconds). Two more Zentrale lines: no ring,
+      `curl :8787/supervisor` → `"missed":3`, the Live Activity says "3 Updates warten auf
+      deinen Rückruf", one notification. Call Parley from the iPhone: "Einen Moment, Sir …",
+      then ONE summary with the open questions first; `"missed":0` after. Restart Parley while
+      lines wait: they are still there.
 
 ## No-pane fallback
 

@@ -539,6 +539,25 @@ public sealed class Delivery
             };
     }
 
+    // An instruction for the Zentrale itself (a wake's words, what Sir missed): alive (by name or
+    // folder) → straight to it; else it is started there, its folder made when missing.
+    public DispatchResult ToZentrale(string instruction, Config config)
+    {
+        var zentrale = Zentrale.Dir(config);
+        var live = _sessions.RouteTargets().FirstOrDefault(t => Zentrale.Is(t.Label, t.Cwd, zentrale));
+        if (live is not null)
+        {
+            _deliver(live.Id, instruction);
+            return DispatchResult.Delivered;
+        }
+        try { return Dispatch(Zentrale.Ensure(config), instruction, start: true); }
+        catch (Exception e)
+        {
+            Log.Write($"zentrale: could not prepare {zentrale} ({e.Message})");
+            return DispatchResult.Failed;
+        }
+    }
+
     // A wake utterance → a running session by name (Groq LLM, label substring fallback) or the
     // Zentrale. Returns the short line Parley confirms with.
     // `zentraleOnly` (Überwachungsmodus): Sir talks to the Zentrale only — it passes things on itself.
@@ -558,23 +577,7 @@ public sealed class Delivery
             return $"Verstanden, ich gebe das an {target.Label} weiter.";
         }
 
-        // The Zentrale: alive (by name or folder) → straight to it; else start it there.
-        DispatchResult result;
-        var live = all.FirstOrDefault(t => Zentrale.Is(t.Label, t.Cwd, zentrale));
-        if (live is not null)
-        {
-            _deliver(live.Id, choice.Instruction);
-            result = DispatchResult.Delivered;
-        }
-        else
-        {
-            try { result = Dispatch(Zentrale.Ensure(config), choice.Instruction, start: true); }
-            catch (Exception e)
-            {
-                Log.Write($"zentrale: could not prepare {zentrale} ({e.Message})");
-                result = DispatchResult.Failed;
-            }
-        }
+        var result = ToZentrale(choice.Instruction, config);
         Log.Write($"route: → Zentrale ({result.ToString().ToLowerInvariant()})");
         // The Zentrale is Parley itself — it takes the job on, it doesn't pass it on.
         return result == DispatchResult.Failed

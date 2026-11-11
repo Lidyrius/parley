@@ -146,7 +146,10 @@ extension AppModel {
             if guests[i].active { sendPushTokens(on: r) }   // so his questions ring / reach him as a push
             else { r.send(Outgoing.join(name: guests[i].name, device: UIDevice.current.name, pub: guests[i].pub, who: Self.guestWho)) }
             if call.line === r {
-                if call.phase.isActive { r.send(Outgoing.call(started: true)) }
+                if call.phase.isActive {
+                    r.send(call.startFrame)
+                    call.relayOpened()
+                }
                 call.relayChanged()
             }
         case .closed, .frame(.peer):
@@ -156,6 +159,12 @@ extension AppModel {
             if let r = guestRelays[id], call.line === r { call.play(frame) }
         case .frame(.audio(let state, let label)):
             if let r = guestRelays[id], call.line === r { call.hostAudioChanged(state, label: label) }
+        case .frame(.clipStart(let clip, let from)):   // v8: the line as a clip, the mic numbered (Funkloch.swift)
+            if let r = guestRelays[id], call.line === r { call.clipStarted(id: clip, from: from) }
+        case .frame(.clipEnd(let clip, let frames, let listen)):
+            if let r = guestRelays[id], call.line === r { call.clipEnded(id: clip, frames: frames, listen: listen) }
+        case .frame(.micGot(let seq)):
+            if let r = guestRelays[id], call.line === r { call.micGot(seq) }
         case .frame(.caption(let c)):
             if let r = guestRelays[id], call.line === r { call.captionReceived(c) }
         case .frame(.slides(let s)):

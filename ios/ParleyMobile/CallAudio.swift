@@ -32,6 +32,9 @@ final class CallAudio {
     /// False where voice processing is unavailable (e.g. the simulator): plain I/O, no AEC.
     private(set) var echoCancellation = false
     private(set) var hasMicrophone = false
+    /// The engine runs (again): after a route change what was scheduled is gone — a clip that
+    /// was playing goes on from where it stood.
+    var onRunning: () -> Void = {}
 
     init(meter: AudioMeter, speech: SpeechFeed, send: @escaping @Sendable (Data) -> Void) {
         self.meter = meter
@@ -64,6 +67,7 @@ final class CallAudio {
         echoCancellation = r.echoCancellation
         hasMicrophone = r.hasMicrophone
         isRunning = true
+        onRunning()
     }
 
     private nonisolated static func startIO(_ io: IO, mic: MicPipeline, usesMicrophone: Bool) throws

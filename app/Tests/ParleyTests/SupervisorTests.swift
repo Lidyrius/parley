@@ -335,6 +335,87 @@ final class SupervisorTests: XCTestCase {
         XCTAssertNil(Reminders.next(Reminder(id: "r", text: "x", label: "Z", at: Date(), created: Date()), after: Date()))
     }
 
+    // MARK: - a call Sir didn't take
+
+    func testMissedLinesAreKeptCountedAndComeBackAsOneInstruction() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("missed-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        server.missedFile = file
+        on()
+        presence("z", "Zentrale", zentrale)
+        presence("s1", "Shirts", shirts, "working")
+        XCTAssertTrue(server.isZentrale("z", supervised: true))
+        XCTAssertFalse(server.isZentrale("s1"))
+        XCTAssertNil(server.takeMissed())                                                // nothing waits
+        XCTAssertNil(try sessions()["missed"])
+
+        XCTAssertEqual(server.addMissed(turn("z", "Zentrale", zentrale, "Shirts ist fertig.", listen: false)), 1)   // the ring he didn't take
+        clock.t += 300
+        XCTAssertEqual(server.addMissed(turn("z", "Zentrale", zentrale, "Angebote fragt: Rabatt auch für Bestandskunden?")), 2)
+        clock.t += 300
+        XCTAssertEqual(server.addMissed(turn("z", "Zentrale", zentrale, "Der Export läuft.", listen: false)), 3)
+        XCTAssertEqual(server.missedCount(), 3)
+        XCTAssertEqual(try sessions()["missed"] as? Int, 3)
+        XCTAssertEqual(try row("z")?["callback"] as? Int, 0)                             // "wartet auf Rückruf" — the tile offers Rückrufen
+        XCTAssertNil(try row("s1")?["callback"])
+        XCTAssertEqual((try row("z")?["stats"] as? [String: Any])?["lastLine"] as? String, "Der Export läuft.")
+        XCTAssertTrue(get("/supervisor").contains(#""missed":3"#))
+        presence("z", "Zentrale", zentrale)                                              // (ten minutes on: it still runs)
+        let live = LiveActivity.content(fromSessions: reg.json())
+        XCTAssertEqual(live.line, "3 Updates warten auf deinen Rückruf")                 // the Live Activity counts them
+        XCTAssertEqual(live.from, "Zentrale")
+        XCTAssertEqual(live.sessions.first?.callback, 0)
+
+        let again = restarted()                                                          // a restart keeps them
+        again.missedFile = file
+        XCTAssertEqual(again.missedCount(), 3)
+
+        let all = try XCTUnwrap(server.takeMissed(said: "Was gibt es Neues?"))
+        let open = try XCTUnwrap(all.range(of: "Rabatt auch für Bestandskunden?"))
+        let done = try XCTUnwrap(all.range(of: "Shirts ist fertig."))
+        XCTAssertTrue(open.lowerBound < done.lowerBound)                                 // what is open comes first
+        XCTAssertTrue(try XCTUnwrap(all.range(of: "Shirts ist fertig.")).lowerBound < (try XCTUnwrap(all.range(of: "Der Export läuft."))).lowerBound)
+        XCTAssertTrue(all.contains("diese 3 Zeilen") && all.contains("EINE gesprochene Zusammenfassung"), all)
+        XCTAssertTrue(all.hasSuffix("Außerdem sagt Sir gerade: „Was gibt es Neues?“"), all)
+        XCTAssertEqual(server.missedCount(), 0)
+        XCTAssertNil(try sessions()["missed"])
+        XCTAssertNil(try row("z")?["callback"])
+        XCTAssertEqual(Missed.load(file), [])                                            // … and gone for good
+        XCTAssertEqual(LiveActivity.content(fromSessions: reg.json()).line, "Der Export läuft.")   // its own last line again
+    }
+
+    func testTheRingSirAskedForComesOnceAndACallBackIsOneDialog() {
+        on()
+        presence("z", "Zentrale", zentrale)
+        var held: [(TurnReply) -> Void] = []
+        server.replyProvider = { [unowned self] turn, done in self.voiced.append(turn); held.append(done) }
+        server.addMissed(turn("z", "Zentrale", zentrale, "Bitte Rückruf.", listen: false), ringAgain: 300)   // "In 5 Min."
+        tick()
+        XCTAssertTrue(voiced.isEmpty)                                                    // not yet
+        clock.t += 301
+        tick()
+        XCTAssertEqual(voiced.map(\.event), [ControlServer.callbackEvent])
+        XCTAssertEqual(voiced.first?.speak, "ring")
+        tick()
+        XCTAssertEqual(voiced.count, 1)                                                  // once
+        held.removeFirst()(TurnReply(transcript: "", park: false))
+        settle()
+
+        server.callBack(); server.callBack()                                             // Sir calls in (twice in a hurry)
+        settle()
+        server.callBack()
+        settle()
+        XCTAssertEqual(voiced.map(\.speak), ["ring", ""])                                // one is at it, one more may wait — not three
+        XCTAssertEqual(server.queuedCount(), 1)
+    }
+
+    func testANoteForTheFirstMissAndNoneWithoutMissedLines() {
+        XCTAssertTrue(Missed.note.contains("nicht angenommen") && Missed.note.contains("<speak-end></speak-end>"))
+        XCTAssertEqual(Missed.waiting(1), "1 Update wartet auf deinen Rückruf")
+        let one = Missed.instruction([MissedLine(at: Date(timeIntervalSince1970: 1_760_000_000), text: "Nur das.", asks: false)])
+        XCTAssertTrue(one.contains("diese Zeile") && one.contains("Zur Kenntnis") && !one.contains("Offen —") && !one.contains("Außerdem"), one)
+    }
+
     // MARK: - the Live Activity
 
     func testTheLiveActivityShowsTheZentraleAlone() {

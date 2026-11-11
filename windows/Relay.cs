@@ -136,9 +136,25 @@ public static class RelayFrame
         var body = json.Trim();
         if (!body.StartsWith('{') || !body.EndsWith('}')) return null;
         var rest = body[1..].Trim();
-        var head = "{\"t\":\"sessions\",\"at\":" + atMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        // `call`: the call protocol this host speaks (8: clips and a numbered mic, "Funkloch").
+        var head = "{\"t\":\"sessions\",\"at\":" + Num(atMs) + ",\"call\":" + Num(CallVersion);
         return head + (rest == "}" ? "" : ",") + rest;
     }
+
+    public const int CallVersion = 8;
+
+    // v8: a clip's frames follow (from frame `start` on) …
+    public static string Clip(int id, int start) => "{\"t\":\"clip\",\"id\":" + Num(id) + ",\"from\":" + Num(start) + "}";
+
+    // … and that was all of it: `frames` in total; play it once they are all there. `listen`:
+    // Parley listens after it (the phone shows so even without a line to the host).
+    public static string ClipEnd(int id, int frames, bool listen) =>
+        "{\"t\":\"clip\",\"id\":" + Num(id) + ",\"frames\":" + Num(frames) + ",\"play\":true,\"listen\":" + (listen ? "true" : "false") + "}";
+
+    // v8: the host has the phone's mic up to frame `seq`.
+    public static string MicGot(uint seq) => "{\"t\":\"mic\",\"got\":" + Num(seq) + "}";
+
+    private static string Num(long n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     // A phone's frame → its message; `hello`, the relay's `pong`, unknown types and malformed
     // bodies → null, ignored (forward compatible).
@@ -162,10 +178,17 @@ public static class RelayFrame
                     {
                         "start" => new PhoneCallState(true,
                             root.TryGetProperty("down", out var down) && down.ValueKind == JsonValueKind.Number
-                                && down.TryGetInt32(out var rate) && rate == PhoneAudio.HiFiRate ? PhoneAudio.HiFiRate : PhoneAudio.SampleRate),
+                                && down.TryGetInt32(out var rate) && rate == PhoneAudio.HiFiRate ? PhoneAudio.HiFiRate : PhoneAudio.SampleRate,
+                            root.TryGetProperty("v", out var ver) && ver.ValueKind == JsonValueKind.Number
+                                && ver.TryGetInt32(out var speaks) && speaks >= CallVersion),
                         "end" => new PhoneCallState(false),
+                        "idle" => new PhoneCallIdle(),
                         _ => null,
                     };
+                case "clip":    // v8: how far it got with a clip
+                    return root.TryGetProperty("id", out var cid) && cid.ValueKind == JsonValueKind.Number && cid.TryGetInt32(out var clip) && clip >= 0
+                        && root.TryGetProperty("have", out var ch) && ch.ValueKind == JsonValueKind.Number && ch.TryGetInt32(out var have) && have >= 0
+                        ? new PhoneClipStatus(clip, have, Flag("played")) : null;
                 case "hello":   // its name (for the setup's "Verbunden mit …"), at most 60 characters
                 {
                     var device = new System.Globalization.StringInfo(Str("device") ?? "");
@@ -186,6 +209,9 @@ public static class RelayFrame
                 case "brief":
                     return root.TryGetProperty("on", out var bf) && (bf.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         ? new PhoneBrief(bf.ValueKind == JsonValueKind.True) : null;
+                case "supervisor":   // the Überwachungsmodus, switched in the phone's app
+                    return root.TryGetProperty("on", out var sv) && (sv.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                        ? new PhoneSupervisor(sv.ValueKind == JsonValueKind.True) : null;
                 case "round":
                     return root.TryGetProperty("seconds", out var rs) && rs.TryGetInt32(out var secs) ? new PhoneRound(secs) : null;
                 case "history":
@@ -257,13 +283,17 @@ public static class RelayFrame
 // A phone's message (protocol v1 + v2).
 public abstract record PhoneMessage { }
 public sealed record PhoneResume(string Id) : PhoneMessage;          // resume a session (POST /resume)
-public sealed record PhoneCallState(bool Started, int Down = PhoneAudio.SampleRate) : PhoneMessage;    // `call` start / end; the voice's rate (v3: 24 kHz on request)
+// `call` start / end; the voice's rate (v3: 24 kHz on request); v8: it takes clips and numbers its mic
+public sealed record PhoneCallState(bool Started, int Down = PhoneAudio.SampleRate, bool Clips = false) : PhoneMessage;
+public sealed record PhoneCallIdle : PhoneMessage { }                 // v8: the phone is connected and in no call (a hang-up may have got lost)
+public sealed record PhoneClipStatus(int Id, int Have, bool Played) : PhoneMessage;   // v8: how far it got with a clip (`Id` 0: it knows of none)
 public sealed record PhoneWake : PhoneMessage { }                     // "Hey Parley" while the host was idle
 public sealed record PhonePush(string Token, string Env) : PhoneMessage;   // VoIP token, production | development
 public sealed record PhoneAway(bool On) : PhoneMessage;              // Unterwegs-Modus
 // v3: Stumm, the notification push token, a session's history / image, a typed message.
 public sealed record PhoneSilent(bool On) : PhoneMessage;
 public sealed record PhoneBrief(bool On) : PhoneMessage;     // Ohne Floskeln (the phone's setting)
+public sealed record PhoneSupervisor(bool On) : PhoneMessage;   // the Überwachungsmodus, switched in the phone's app (Sir's own line only)
 public sealed record PhoneRound(int Seconds) : PhoneMessage;   // Fragerunde: how long an update waits (0 = never)
 public sealed record PhoneAlert(string Token, string Env) : PhoneMessage;
 public sealed record PhoneHistory(string Id, string? Before) : PhoneMessage;   // newest page, or the one before an item

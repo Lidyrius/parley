@@ -18,6 +18,8 @@ public sealed class TurnPipeline
     public Action<string, DateTime?>? SetCallback;
     private static readonly TimeSpan CallBackWait = TimeSpan.FromMinutes(30);   // "Ich rufe zurück"
     public Func<string, Config, Task<string>>? Route;
+    // The server — what Sir missed is kept there (Supervisor.cs, Missed). Set once at startup.
+    public Server? Host;
     private readonly MicCapture _mic = new();
     private readonly Func<int> _queuedTurns;
     private readonly PillOverlay? _pill;
@@ -59,6 +61,7 @@ public sealed class TurnPipeline
             if (turn.Event == Server.WakeEvent) return await RunWake(turn);
             if (turn.Event is Server.PermissionEvent or Server.WatchdogEvent) return await RunPermission(turn);
             if (turn.Event == Server.ReminderEvent) return await RunReminder(turn);
+            if (turn.Event == Server.CallbackEvent) return await RunCallBack(turn);
             return await RunTurn(turn);
         }
         finally { LiveStatus.Set("idle"); _abandoned = false; }
@@ -102,9 +105,9 @@ public sealed class TurnPipeline
         // Cached line, or synthesized live + cached; null → no TTS, just the beep.
         var line = await Clips.ResumeClip(turn.SpokenLabel, config);
         await PauseMediaIfPlaying();
-        if (line is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(line, config.SpeakingRate));
+        var beeped = line is not null && await AudioOut.PlayPcm(AudioOut.ApplyRate(line, config.SpeakingRate), beep: true);
 
-        var (_, text) = await ListenOnce(config);
+        var (_, text) = await ListenOnce(config, beeped: beeped);
         Log.Write($"resume dialog done chars={text.Length}");
         StartAck(Groq.Intent.Other, text.Length > 0, config);
         return (text, false, 0, "");
@@ -125,15 +128,25 @@ public sealed class TurnPipeline
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
 
         var greeting = config.Brief ? null : await Clips.GreetClip(config);
-        if (greeting is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(greeting, config.SpeakingRate));
-        var (_, text) = await ListenOnce(config);
+        var beeped = greeting is not null && await AudioOut.PlayPcm(AudioOut.ApplyRate(greeting, config.SpeakingRate), beep: true);
+        var (_, text) = await ListenOnce(config, beeped: beeped);
         if (text.Length == 0)
         {
             Log.Write("wake: nothing said");
             return ("", false, 0, "");
         }
         string line;
-        try { line = Route is null ? "" : await Route(text, config); }
+        try
+        {
+            // "Hey Parley" after a call he didn't take: what he missed and what he says now go
+            // to the Zentrale together.
+            if (Host is { } host && host.TakeMissed(text) is { } all)
+            {
+                host.Delivery.ToZentrale(all, config);
+                line = Zentrale.TakeOver[Random.Shared.Next(Zentrale.TakeOver.Length)];
+            }
+            else line = Route is null ? "" : await Route(text, config);
+        }
         catch (Exception e)
         {
             Log.Write($"wake: routing failed ({e.Message})");
@@ -200,8 +213,8 @@ public sealed class TurnPipeline
             return ("", false, 0, "");
         }
         await PauseMediaIfPlaying();
-        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak);
-        var (_, text) = await ListenOnce(config);
+        var beeped = await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak, beep: true);
+        var (_, text) = await ListenOnce(config, beeped: beeped);
         ScheduleResume();
         Log.Write($"permission answer chars={text.Length}");
         return (text, false, 0, "");
@@ -239,6 +252,22 @@ public sealed class TurnPipeline
             return ("", false, 0, "");
         }
 
+        // Überwachungsmodus: a call Sir didn't take must not hold the Zentrale. While lines of it
+        // wait for his call back, a new one joins them — no new ring. And once he can hear again
+        // (he is in a call, or back at the PC) all of them come as one summary, not this line alone.
+        var session = Server.SessionKey(turn);
+        var ringing = ShouldRing;
+        if (Host is { MissedCount: > 0 } waits && waits.IsZentrale(session))
+        {
+            if (ringing) return MissedTurn(turn, first: false);
+            if (PhoneCall.Active || !PhoneCall.Away)
+            {
+                waits.AddMissed(turn);
+                waits.CallBack();
+                return ("", true, 0, "");
+            }
+        }
+
         // Prefetch the sentence synthesis immediately; observed duration feeds TtsTiming.
         var synthStart = DateTime.UtcNow;
         var prefetch = Task.Run(async () =>
@@ -259,9 +288,21 @@ public sealed class TurnPipeline
         // "Not now" on the phone puts the line off: ring again in a minute or five, or wait for
         // Sir's call back (the phone's tile offers "Rückrufen") — then thank him first.
         // Fragerunde: right after a call, gather for a few minutes, then ring once for all.
-        var ringing = PhoneCall.Away && !PhoneCall.Silent && !PhoneCall.Active;
-        if (ringing) await GatherRound(Server.SessionKey(turn));
-        var (_, calledBack) = await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
+        if (ringing) await GatherRound(session);
+        var rang = ringing && !PhoneCall.Active;
+        // The line's voice is ready before the phone rings: once Sir answers it goes out in one
+        // piece (a phone that takes clips plays it only when it holds all of it).
+        if (rang) await prefetch;
+        var calledBack = false;
+        if (rang && Ring is { } ringOnce && Host?.IsZentrale(session, supervised: true) == true)
+        {
+            // One ring. Not taken (or "not now"): the line is kept for his call back and the
+            // Zentrale goes on — no waiting half an hour with everything behind it.
+            var rung = await ringOnce(turn.SpokenLabel);
+            if (rung.Kind == RingKind.Later) return MissedTurn(turn, first: true, ringAgain: rung.After);
+            if (rung.Kind == RingKind.Missed) return MissedTurn(turn, first: true);
+        }
+        else (_, calledBack) = await ReachPhone(turn.SpokenLabel, session);
         if (ringing && PhoneCall.Active && !config.Brief) await AnnounceRound(config);
         // Unterwegs and not on the phone: the PC stays silent — the line waits as a notification.
         if (PhoneCall.Away && !PhoneCall.Active)
@@ -304,13 +345,14 @@ public sealed class TurnPipeline
         var pcm = await prefetch;
         // Barge-in at the PC: talking over the line cuts it (in a call the phone watches itself).
         var watch = pcm is not null && config.BargeIn && !PhoneCall.Active && !PhoneCall.Away ? new BargeWatch(turn.Speak) : null;
+        var beeped = false;   // the beep went with the line (a phone that takes clips, v8)
         if (pcm is not null)
         {
             Log.Write($"speak start ({pcm.Length} bytes, rate {config.SpeakingRate:0.00})");
-            await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak,
-                                   slides: turn.Slides, session: Server.SessionKey(turn),
-                                   last: !turn.WantsListen && _queuedTurns() == 0,
-                                   cancellationToken: watch?.Heard ?? default);
+            beeped = await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: turn.Speak,
+                                            slides: turn.Slides, session: Server.SessionKey(turn),
+                                            last: !turn.WantsListen && _queuedTurns() == 0,
+                                            cancellationToken: watch?.Heard ?? default, beep: turn.WantsListen);
         }
         else Log.Write("no TTS audio (missing key or synth failed)");
         var localPreroll = watch is null ? null : await watch.Stop();
@@ -334,7 +376,7 @@ public sealed class TurnPipeline
         var text = "";
         for (var hop = 0; hop < 4; hop++)
         {
-            (wav, text) = await ListenOnce(config, barged && hop == 0, watch?.Barged == true ? localPreroll : null);
+            (wav, text) = await ListenOnce(config, barged && hop == 0, watch?.Barged == true ? localPreroll : null, beeped);
 
             var parked = _resumableList?.Invoke() ?? new List<Server.ParkedInfo>();
             if (text.Length == 0 || parked.Count == 0 || hop >= 3) break;
@@ -346,7 +388,7 @@ public sealed class TurnPipeline
             var instruction = string.IsNullOrWhiteSpace(cmd.Value.Instruction) ? Server.ResumeInstruction : cmd.Value.Instruction;
             _resume?.Invoke(target.Value.Id, instruction);
             Log.Write($"control: resume {target.Value.Label} → \"{instruction}\"");
-            await SpeakLine($"Verstanden, Sir — ich nehme {target.Value.Label} wieder auf. Und für dieses Projekt?", config);
+            beeped = await SpeakLine($"Verstanden, Sir — ich nehme {target.Value.Label} wieder auf. Und für dieses Projekt?", config, beep: true);
             // loop: listen again for the current session's actual reply
         }
 
@@ -396,8 +438,8 @@ public sealed class TurnPipeline
             Log.Write($"reply: {r.On} → \"{r.Say}\" (rendered={clip is not null})");
             if (r.Listen == true)
             {
-                await SpeakLine(r.Say, config, clip);
-                var (_, more) = await ListenOnce(config);
+                var asked = await SpeakLine(r.Say, config, clip, beep: true);
+                var (_, more) = await ListenOnce(config, beeped: asked);
                 text += $"\n\n[Parley hat nachgefragt: „{r.Say}“]" + (more.Length == 0 ? "" : "\n" + more);
                 intent = more.Length == 0 ? Groq.Intent.Other : await Groq.Classify(more, config);
             }
@@ -431,6 +473,63 @@ public sealed class TurnPipeline
         return (text, false, 0, "");
     }
 
+    // ---- a call Sir didn't take (Überwachungsmodus; Supervisor.cs, Missed) — as macOS -------
+
+    // Ring only in Unterwegs-Modus with no call yet, and when the phone can be reached at all.
+    private static bool ShouldRing => Ringer.CanRing && !PhoneCall.Active;
+
+    private DateTime _missedNoticeAt = DateTime.MinValue;
+    private static readonly TimeSpan SummaryWait = TimeSpan.FromSeconds(60);
+
+    /// The Zentrale's line is kept for Sir's call back; its turn ends now — nothing waits for him.
+    /// `first`: this is the line that rang: the Zentrale learns that he didn't answer.
+    private (string transcript, bool park, int wait, string resume) MissedTurn(TurnPayload turn, bool first, double? ringAgain = null)
+    {
+        var n = Host!.AddMissed(turn, ringAgain);
+        Log.Write($"missed: {turn.SpokenLabel} — {(first ? "the call was not taken" : "no new ring")}, {n} line(s) wait for Sir's call back"
+            + (ringAgain is double again ? $", ringing once more in {(int)again} s" : ""));
+        // One notification, then at most one every quarter of an hour with the count — the Live
+        // Activity shows it all the time (LiveActivity.FromSessions reads `missed`).
+        if ((first || DateTime.UtcNow - _missedNoticeAt >= Missed.NoticeEvery) && PhoneCall.Alert.Token.Length > 0)
+        {
+            _missedNoticeAt = DateTime.UtcNow;
+            _ = Apns.SendAlert($"Parley · {turn.SpokenLabel}", Missed.Waiting(n) + ". Zuletzt: " + turn.Speak, Server.SessionKey(turn));
+        }
+        return (first ? Missed.Note : "", true, 0, "");
+    }
+
+    /// Sir is back — he called, pressed "Anrufen", or the ring he asked for was taken: everything
+    /// he missed goes to the Zentrale as one instruction, and the gate is held until its summary
+    /// waits there (no hang-up in between, no second ring).
+    private async Task<(string transcript, bool park, int wait, string resume)> RunCallBack(TurnPayload turn)
+    {
+        var none = ("", false, 0, "");
+        if (Host is not { } host) return none;
+        if (turn.Speak == "ring")   // "In 5 Min.": the one ring he asked for
+        {
+            if (!ShouldRing || host.MissedCount == 0 || Ring is not { } ringOnce) return none;
+            if ((await ringOnce(Routing.ZentraleName)).Kind != RingKind.Answered)
+            {
+                Log.Write("missed: the ring Sir asked for was not taken either — the lines keep waiting");
+                return none;
+            }
+        }
+        if ((PhoneCall.Away && !PhoneCall.Active) || host.TakeMissed() is not { } all) return none;
+        Log.Write("missed: Sir is back — what he missed goes to the Zentrale for one summary");
+        var config = Config.Load();
+        host.Delivery.ToZentrale(all, config);
+        if (_ackTask is not null) { await _ackTask; _ackTask = null; }
+        if (!config.Brief)
+        {
+            var de = config.Language.StartsWith("de", StringComparison.OrdinalIgnoreCase);
+            await SpeakLine(de ? "Einen Moment, Sir, ich fasse zusammen, was Sie verpasst haben."
+                               : "One moment, Sir, I'll sum up what you missed.", config);
+        }
+        var until = DateTime.UtcNow + SummaryWait;
+        while (DateTime.UtcNow < until && _queuedTurns() == 0 && (PhoneCall.Active || !PhoneCall.Away)) await Task.Delay(100);
+        return none;
+    }
+
     // Beep → record (pill + VAD) → transcribe (min-audio guard): one listening pass.
     /// Rings (Unterwegs), and follows the phone's "not now": rings again after the delay, or
     /// waits up to 30 min for Sir's own call (the tile offers "Rückrufen").
@@ -438,7 +537,10 @@ public sealed class TurnPipeline
     /// prompt — its hook gives up after two minutes). As macOS.
     private async Task<(bool reached, bool calledBack)> ReachPhone(string label, string session, bool callBack = true)
     {
-        if (Ring is null) return (PhoneCall.Active, false);
+        if (Ring is null || PhoneCall.Active) return (PhoneCall.Active, false);
+        // Nothing to ring (at the PC, Stumm, or no way to the phone): no ring and no waiting for
+        // a call back — the turn is voiced here, or waits as a notification.
+        if (!Ringer.CanRing) return (false, false);
         async Task<RingOutcome> RingOnce()
         {
             var o = await Ring!(label);
@@ -529,14 +631,16 @@ public sealed class TurnPipeline
     private bool _sttFailed;
 
     /// `preroll`: a barge-in at the PC's mic; a phone barge-in brings the phone's own.
-    private async Task<(byte[] wav, string text)> ListenOnce(Config config, bool barged = false, IReadOnlyList<byte[]>? preroll = null)
+    /// `beeped`: the beep went with the line before (a phone that takes clips, v8).
+    private async Task<(byte[] wav, string text)> ListenOnce(Config config, bool barged = false, IReadOnlyList<byte[]>? preroll = null,
+                                                             bool beeped = false)
     {
         _sttFailed = false;
         if (_abandoned) return (Array.Empty<byte>(), "");
-        if (!barged)   // after a barge-in Sir is already talking: no beep
+        if (!barged && !beeped)   // after a barge-in Sir is already talking: no beep
         {
-            await AudioOut.PlayBeep();
-            await Task.Delay(100);
+            // A clip's beep has been played when it returns: nothing to wait out.
+            if (!await AudioOut.PlayBeep()) await Task.Delay(100);
         }
 
         LiveStatus.Set("listening");
@@ -594,14 +698,15 @@ public sealed class TurnPipeline
     }
 
     // Speak a short dynamic line (no mic) — used to confirm a resume before re-listening.
-    private static async Task SpeakLine(string text, Config config, byte[]? prefetched = null)
+    // `beep`: Parley listens after it; true = the beep went with the line (as AudioOut.PlayPcm).
+    private static async Task<bool> SpeakLine(string text, Config config, byte[]? prefetched = null, bool beep = false)
     {
         var pcm = prefetched ?? await GoogleTts.Synthesize(text, config);
-        if (pcm is null) return;
+        if (pcm is null) return false;
         // Settle after the mic teardown + wait for hi-fi output, else it renders silent.
         await Task.Delay(300);
         await AudioOut.WaitForHiFiOutput();
-        await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: text);
+        return await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: text, beep: beep);
     }
 
     // Fuzzy-match a spoken project name to a parked session (either contains the other).

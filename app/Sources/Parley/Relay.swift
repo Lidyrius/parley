@@ -121,9 +121,22 @@ enum RelayFrame {
         let body = json.trimmingCharacters(in: .whitespacesAndNewlines)
         guard body.hasPrefix("{"), body.hasSuffix("}") else { return nil }
         let rest = body.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
-        let head = #"{"t":"sessions","at":\#(Int64((at.timeIntervalSince1970 * 1000).rounded()))"#
+        // `call`: the call protocol this host speaks (8: clips and a numbered mic, "Funkloch").
+        let head = #"{"t":"sessions","at":\#(Int64((at.timeIntervalSince1970 * 1000).rounded())),"call":\#(callVersion)"#
         return head + (rest == "}" ? "" : ",") + rest
     }
+
+    static let callVersion = 8
+
+    // v8: a clip's frames follow (from frame `from` on) …
+    static func clip(id: Int, from: Int) -> String { #"{"t":"clip","id":\#(id),"from":\#(from)}"# }
+    // … and that was all of it: `frames` in total; play it once they are all there. `listen`:
+    // Parley listens after it (the phone shows so even without a line to the host).
+    static func clipEnd(id: Int, frames: Int, listen: Bool) -> String {
+        #"{"t":"clip","id":\#(id),"frames":\#(frames),"play":true,"listen":\#(listen)}"#
+    }
+    // v8: the host has the phone's mic up to frame `seq`.
+    static func micGot(_ seq: UInt32) -> String { #"{"t":"mic","got":\#(seq)}"# }
 
     // A phone's frame as an event; `hello`, the relay's `pong`, malformed and unknown frames are
     // nil (ignored — forward compatible).
@@ -136,10 +149,18 @@ enum RelayFrame {
             return .resume(id)
         case "call":
             switch f["state"] as? String {
-            case "start": return .call(true, down: f["down"] as? Int == PhoneAudioFormat.hiFiRate ? PhoneAudioFormat.hiFiRate : PhoneAudioFormat.sampleRate)
+            case "start": return .call(true, down: f["down"] as? Int == PhoneAudioFormat.hiFiRate ? PhoneAudioFormat.hiFiRate : PhoneAudioFormat.sampleRate,
+                                       clips: (f["v"] as? Int ?? 0) >= callVersion)
             case "end": return .call(false)
+            case "idle": return .callIdle
             default: return nil
             }
+        case "supervisor":
+            guard let on = f["on"] as? Bool else { return nil }
+            return .supervisor(on)
+        case "clip":
+            guard let id = f["id"] as? Int, let have = f["have"] as? Int, id >= 0, have >= 0 else { return nil }
+            return .clip(ClipStatus(id: id, have: have, played: f["played"] as? Bool ?? false))
         case "wake":
             return .wake
         case "push":
@@ -247,7 +268,11 @@ enum RelayFrame {
 // A phone's text frame (protocol v2 adds everything but `resume`).
 enum PhoneEvent: Equatable, Sendable {
     case resume(String)
-    case call(Bool, down: Int = PhoneAudioFormat.sampleRate)   // connected / ended; the voice's rate (v3: 24 kHz on request)
+    // connected / ended; the voice's rate (v3: 24 kHz on request); v8: it takes clips and numbers its mic
+    case call(Bool, down: Int = PhoneAudioFormat.sampleRate, clips: Bool = false)
+    case supervisor(Bool)                     // the Überwachungsmodus, switched in the phone's app
+    case callIdle                             // v8: the phone is connected and in no call (a hang-up may have got lost)
+    case clip(ClipStatus)                     // v8: how far it got with a clip
     case wake                                 // "Hey Parley" while the host was idle
     case push(token: String, env: String)     // VoIP push token (hex), "production" | "development"
     case away(Bool)                           // Unterwegs-Modus
