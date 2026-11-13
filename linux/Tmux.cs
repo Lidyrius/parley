@@ -112,11 +112,16 @@ public static class Tmux
         Run("send-keys", "-t", pane, "-l", "--", "/remote-control");
         Thread.Sleep(300);
         Run("send-keys", "-t", pane, "Enter");
-        Thread.Sleep(1500);
-        if (RemoteControl.Of(id)?.Connected == true)   // no dialog: Claude Code connected at once
+        // Connecting without a dialog can take several seconds: wait for the bridge before reading the screen.
+        for (var i = 0; i < 16; i++)
         {
-            Log.Write($"remote control: {label} — /remote-control typed into {pane}, connected");
-            return;
+            Thread.Sleep(500);
+            if (RemoteControl.Of(id)?.Connected == true)
+            {
+                Log.Write($"remote control: {label} — /remote-control typed into {pane}, connected");
+                return;
+            }
+            if (RemoteControl.EnableSelected(Run("capture-pane", "-p", "-t", pane).Output)) break;
         }
         var screen = Run("capture-pane", "-p", "-t", pane).Output;
         if (RemoteControl.EnableSelected(screen))
@@ -126,9 +131,9 @@ public static class Tmux
         }
         else
         {
-            Run("send-keys", "-t", pane, "Escape");
+            // No keys sent (like the Mac, where an Escape arrives with a newline).
             var tail = string.Join(" | ", screen.Split('\n').Select(l => l.Trim()).Where(l => l.Trim('─', ' ').Length > 0).TakeLast(4));
-            Log.Write($"remote control: {label} — no \"Enable Remote Control\" on screen, Escape ({tail})");
+            Log.Write($"remote control: {label} — no \"Enable Remote Control\" on screen, left as is ({tail})");
         }
         Thread.Sleep(15_000);
         Log.Write($"remote control: {label} — {(RemoteControl.Of(id)?.Connected == true ? "connected" : "not connected after 15 s — given up")}");

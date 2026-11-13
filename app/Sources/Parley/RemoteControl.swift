@@ -66,17 +66,19 @@ enum RemoteControl {
             return Log.write("remote control: \(label) runs outside Terminal.app — not turned on (start it with \(flag))")
         }
         guard TerminalTabs.type("/remote-control", tty: tty) else { return Log.write("remote control: \(label) — could not type into \(tty)") }
-        Thread.sleep(forTimeInterval: 1.5)
-        if state(of: id)?.connected == true {   // no dialog: Claude Code connected at once
-            return Log.write("remote control: \(label) — /remote-control typed, connected")
+        // Connecting without a dialog can take several seconds: wait for the bridge before reading the screen.
+        for _ in 0..<16 {
+            Thread.sleep(forTimeInterval: 0.5)
+            if state(of: id)?.connected == true { return Log.write("remote control: \(label) — /remote-control typed, connected") }
+            if enableSelected(TerminalTabs.screen(tty: tty) ?? "") { break }
         }
         let screen = TerminalTabs.screen(tty: tty) ?? ""
         if enableSelected(screen) {
             _ = TerminalTabs.type("", tty: tty)   // Enter: "1. Enable Remote Control"
             Log.write("remote control: \(label) — /remote-control typed, enabling")
         } else {
-            _ = TerminalTabs.type("\u{1b}", tty: tty)
-            Log.write("remote control: \(label) — no \"Enable Remote Control\" on screen, Escape:\n\(StartWatch.tail(screen, lines: 4))")
+            // No keys sent: an Escape typed into a Terminal tab arrives with a newline.
+            Log.write("remote control: \(label) — no \"Enable Remote Control\" on screen, left as is:\n\(StartWatch.tail(screen, lines: 4))")
         }
         Thread.sleep(forTimeInterval: 15)
         let on = state(of: id)?.connected == true
