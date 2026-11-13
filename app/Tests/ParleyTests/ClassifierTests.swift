@@ -15,6 +15,20 @@ final class ClassifierTests: XCTestCase {
         XCTAssertTrue(body.contains("1. Zustimmung") && body.contains("2. Ablehnung"))
     }
 
+    // 13.11.: an answer to the Zentrale that named a parked session was taken as "resume it" —
+    // she got nothing, the session one English sentence for 750 characters of German.
+    func testAnAnswerToTheZentraleIsNoVoiceCommandAndHisWordsGoAlong() {
+        XCTAssertTrue(ControlCommand.considered("Shirts, mach weiter", hop: 0, toZentrale: false))
+        XCTAssertFalse(ControlCommand.considered("Sag Parley, der Rückruf …", hop: 0, toZentrale: true))
+        XCTAssertFalse(ControlCommand.considered("", hop: 0, toZentrale: false))
+        XCTAssertFalse(ControlCommand.considered("Shirts, mach weiter", hop: 3, toZentrale: false))
+
+        XCTAssertEqual(ControlCommand.instruction("Fix the callback bug", said: "Beim Rückruf soll sofort …"),
+                       "Fix the callback bug\n\nSir wörtlich:\nBeim Rückruf soll sofort …")
+        // Just "go on": the plain resume, which the server swaps for an instruction that waited.
+        XCTAssertEqual(ControlCommand.instruction(" ", said: "Shirts, mach weiter"), ControlServer.resumeInstruction)
+    }
+
     func testDecodesTurnReplies() throws {
         let t = try JSONDecoder().decode(TurnPayload.self, from: Data(#"{"event":"turn","session_id":"s","cwd":"/p","project":"p","tmux_pane":"","speak":"x","replies":[{"on":"Ja","say":"Sehr wohl.","listen":false}]}"#.utf8))
         XCTAssertEqual(t.replies, [Reply(on: "Ja", say: "Sehr wohl.", listen: false)])

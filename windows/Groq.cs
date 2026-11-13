@@ -366,6 +366,17 @@ public static class Groq
 
     public readonly record struct ControlResult(bool Resume, string Target, string Instruction);
 
+    /// Whether a reply is looked at as a command at all. Never an answer to the Zentrale while
+    /// she supervises: she hands work on herself, with Sir's own words — taken here, his answer
+    /// reached her not at all and the session only as the model's summary.
+    public static bool ControlConsidered(string text, int hop, bool toZentrale) =>
+        text.Length > 0 && hop < 3 && !toZentrale;
+
+    /// What the resumed session reads: the model's summary of the order, then what Sir said —
+    /// a summary drops things and may come in another language.
+    public static string ControlInstruction(string? summary, string said) =>
+        string.IsNullOrWhiteSpace(summary) ? Server.ResumeInstruction : $"{summary.Trim()}\n\nSir wörtlich:\n{said}";
+
     // Detects whether a spoken reply is a Parley CONTROL command (resume a paused project
     // by voice) rather than a normal reply. Only called when paused sessions exist.
     public static async Task<ControlResult?> DetectControlCommand(string text, IReadOnlyList<string> labels, Config config)

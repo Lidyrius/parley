@@ -629,12 +629,13 @@ final class AppController: ObservableObject {
             Log.write("transcribe done chars=\(text.count)\(sttFailed ? " (failed)" : "")")
 
             // Resumable = parked: its hook polls /wake, or the mod gets it via /presence.
-            let targets = text.isEmpty || hop >= 3 ? [] : server.resumableList()
+            let targets = ControlCommand.considered(text, hop: hop, toZentrale: server.isZentrale(session, supervised: true))
+                ? server.resumableList() : []
             guard !targets.isEmpty,
                   let cmd = await ControlCommand.detect(text, labels: targets.map { $0.label }, config: config),
                   cmd.resume, let target = matchParked(cmd.target, in: targets) else { break }
 
-            let instruction = cmd.instruction.isEmpty ? ControlServer.resumeInstruction : cmd.instruction
+            let instruction = ControlCommand.instruction(cmd.instruction, said: text)
             server.resume(id: target.id, instruction: instruction)
             Log.write("control: resume \(target.label) → \"\(instruction)\"")
             await speakAndBeep("Verstanden, Sir — ich nehme \(target.label) wieder auf. Und für dieses Projekt?",

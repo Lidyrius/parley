@@ -6,6 +6,20 @@ import Foundation
 enum ControlCommand {
     struct Result { let resume: Bool; let target: String; let instruction: String }
 
+    /// Whether a reply is looked at as a command at all. Never an answer to the Zentrale while
+    /// she supervises: she hands work on herself, with Sir's own words — taken here, his answer
+    /// reached her not at all and the session only as the model's summary.
+    static func considered(_ text: String, hop: Int, toZentrale: Bool) -> Bool {
+        !text.isEmpty && hop < 3 && !toZentrale
+    }
+
+    /// What the resumed session reads: the model's summary of the order, then what Sir said —
+    /// a summary drops things and may come in another language.
+    static func instruction(_ summary: String, said: String) -> String {
+        let order = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return order.isEmpty ? ControlServer.resumeInstruction : "\(order)\n\nSir wörtlich:\n\(said)"
+    }
+
     static func detect(_ text: String, labels: [String], config: AppConfig) async -> Result? {
         guard !config.groqKey.isEmpty, !labels.isEmpty else { return nil }
         let sys = """

@@ -381,14 +381,15 @@ public sealed class TurnPipeline
         {
             (wav, text) = await ListenOnce(config, barged && hop == 0, watch?.Barged == true ? localPreroll : null, beeped);
 
+            if (!Groq.ControlConsidered(text, hop, toZentrale: Host?.IsZentrale(session, supervised: true) == true)) break;
             var parked = _resumableList?.Invoke() ?? new List<Server.ParkedInfo>();
-            if (text.Length == 0 || parked.Count == 0 || hop >= 3) break;
+            if (parked.Count == 0) break;
             var cmd = await Groq.DetectControlCommand(text, parked.Select(p => p.Label).ToList(), config);
             if (cmd is not { Resume: true }) break;
             var target = MatchParked(cmd.Value.Target, parked);
             if (target is null) break;
 
-            var instruction = string.IsNullOrWhiteSpace(cmd.Value.Instruction) ? Server.ResumeInstruction : cmd.Value.Instruction;
+            var instruction = Groq.ControlInstruction(cmd.Value.Instruction, text);
             _resume?.Invoke(target.Value.Id, instruction);
             Log.Write($"control: resume {target.Value.Label} → \"{instruction}\"");
             beeped = await SpeakLine($"Verstanden, Sir — ich nehme {target.Value.Label} wieder auf. Und für dieses Projekt?", config, beep: true);

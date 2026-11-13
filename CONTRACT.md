@@ -119,7 +119,9 @@ Sir right now), several at once joined by a blank line; none is dropped — a Ze
 running is started. `after` reminders fire as always. The Zentrale answers a session with
 `POST /dispatch` (`resume: <its id>` or `cwd`, plus `from: "Zentrale"`); while the mode is on the
 dispatched instruction also says that the answer goes to the Zentrale. "Hey Parley" goes straight
-to the Zentrale.
+to the Zentrale. What Sir answers the Zentrale reaches her in full: no voice command ("Shirts, mach
+weiter") is read out of it. In an answer to any other session such a command resumes the parked
+session it names, with the model's summary of the order and then his own words ("Sir wörtlich: …").
 ```json
 POST /supervisor  { "on": true, "exempt": ["Shirts"] }   // either or both; exempt: names or ids that keep talking to Sir
 → { "ok": true, "on": true, "exempt": ["Shirts"], "zentrale": "<its session id, when it runs>", "waiting": 0 }
