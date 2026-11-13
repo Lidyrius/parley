@@ -346,6 +346,18 @@ einem Profil träfe alle.
 | Not-Aus | Container stoppen, Volume schließen; beim Anbieter „überall abmelden" |
 | Pflege | Chrome altert im Image: wöchentlich neu bauen. Schriften für CJK nachinstallieren, sonst Kästchen |
 
+**Gebaut (13.11.):** drei Container nach diesem Muster — Agentur, ein Kunde, privat. Jeder hat
+ein eigenes LUKS-Volume (Schlüssel nur auf dem Mac), einen eigenen Web-Desktop-Port und ein eigenes
+Passwort. Sessions auf dem Server erreichen sie über je einen Playwright-MCP (`browser-<profil>`),
+Sir meldet sich in jedem selbst an. Ein Keep-Alive ruft alle 2–4 Stunden je Profil die Dienste
+lesend auf und legt `~/keepalive/ALERT` an, sobald ein Login fehlt; die Zentrale liest das in ihrer
+Runde (`linux/pilot/keepalive.sh status`). Welche Dienste in welchem Profil sind, steht nur auf dem
+Server und im privaten Anhang.
+
+Gelernt dabei: Manche Dienste leiten erst nach Sekunden zur Anmeldung um; die Prüfung wartet darum
+8 Sekunden und wertet bekannte Login-Seiten (Microsoft, Atlassian, Google) immer als „Login nötig".
+Systeme mit IP-Freigabeliste sind vom Server aus nicht erreichbar, auch wenn sie es vom Mac sind.
+
 Offen: Claude in Chrome (die Erweiterung) im Container ist ungeprüft; Playwright-MCP ist geprüft.
 Wer eine härtere Grenze will als einen Container, nimmt je Profil eine kleine VM oder den eigenen Host.
 

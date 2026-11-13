@@ -1,6 +1,8 @@
 #!/bin/bash
-# Keeps the server browser's logins warm: every 2–4 h (random), the read-only access check
-# opens Gmail, Kalender, monday and Sanity in a new tab and closes it again — no clicks, no input.
+# Keeps the server browsers' logins warm: every 2–4 h (random), the read-only access check
+# opens each profile's services in a new tab and closes it again — no clicks, no input.
+# Profiles: ~/keepalive/profiles, one per line "<name> <cdp url> <services.json>" (on the
+# server only — the lists name customer systems); without it the agency browser's defaults.
 # Result: ~/keepalive/status.txt (last run), ~/keepalive/log (history), ~/keepalive/ALERT while
 # a login is gone (removed again once all are back). The Zentrale reads status.txt in its rounds.
 #   keepalive.sh run      loop forever (start it in tmux session `keepalive`)
@@ -10,8 +12,14 @@ set -u
 D="$HOME/keepalive"; mkdir -p "$D"
 CDP="${PARLEY_BROWSER_CDP:-http://10.252.0.10:9223}"
 check() {
-  local out rc=0
-  out="$(cd "$HOME/pilot" && timeout 300 node access-check.js "$CDP" 2>&1)" || rc=$?
+  local out="" rc=0 name cdp svc o
+  local profiles="$D/profiles"; [ -s "$profiles" ] || profiles=<(echo "dev $CDP")
+  while read -r name cdp svc; do
+    [ -n "$name" ] || continue
+    o="$(cd "$HOME/pilot" && timeout 300 node access-check.js "$cdp" ${svc:+"$svc"} 2>&1)" || rc=$?
+    out+="[$name]"$'\n'"$o"$'\n'
+  done < "$profiles"
+  out="${out%$'\n'}"
   { echo "checked $(date '+%Y-%m-%d %H:%M %Z')"; echo "$out"; } > "$D/status.txt"
   sed "s/^/$(date '+%F %T') /" <<<"$out" >> "$D/log"
   if [ $rc -ne 0 ] || grep -qE 'LOGIN NÖTIG|FEHLER' <<<"$out"; then

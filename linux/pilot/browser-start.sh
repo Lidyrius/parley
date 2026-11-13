@@ -15,6 +15,6 @@ socat TCP-LISTEN:9223,bind="$IP",fork,reuseaddr TCP:127.0.0.1:9222 &
 while true; do
   google-chrome --user-data-dir=/profile/chrome --no-first-run --no-default-browser-check \
     --remote-debugging-port=9222 --disable-sync --window-size=1440,900 \
-    --window-position=0,0 https://mail.google.com/
+    --window-position=0,0 "${START_URL:-about:blank}"
   sleep 3   # closed by hand → back up
 done
