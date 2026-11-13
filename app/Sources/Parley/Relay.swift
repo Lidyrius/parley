@@ -73,15 +73,17 @@ enum RelayLink {
     // The relay everyone can use (end-to-end encrypted); `relayUrl` points at your own instead.
     static let publicRelay = "https://parley-relay.sydney-d51.workers.dev"
 
-    // parley://pair?u=<relay>&r=<room>&k=<secret>&e=<key> — what the phone scans.
-    static func pairing(_ c: RelayConfig) -> String {
+    // parley://pair?u=<relay>&r=<room>&k=<secret>&e=<key>&h=<this Mac's name> — what the phone
+    // scans. `h` is the name a phone with several hosts lists this one under; older phones ignore it.
+    static func pairing(_ c: RelayConfig, host: String = Host.current().localizedName ?? "") -> String {
         "parley://pair?u=\(encode(c.url))&r=\(encode(c.room))&k=\(encode(c.secret))" + (c.key.isEmpty ? "" : "&e=\(encode(c.key))")
+            + (host.isEmpty ? "" : "&h=\(encode(host))")
     }
 
     // <relay>/pair#<pairing link>: the relay's page draws the QR code from the fragment, which
     // the browser never sends — the secret never reaches the relay in a request.
-    static func pairPage(_ c: RelayConfig) -> URL? {
-        URL(string: "\(c.url)/pair#\(encode(pairing(c)))")
+    static func pairPage(_ c: RelayConfig, host: String = Host.current().localizedName ?? "") -> URL? {
+        URL(string: "\(c.url)/pair#\(encode(pairing(c, host: host)))")
     }
 
     // wss://<relay>/v1/room/<room>?role=host (ws:// for a plain-http dev relay).

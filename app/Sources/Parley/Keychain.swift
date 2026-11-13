@@ -50,6 +50,7 @@ enum Keychain {
         case zentraleDir    // the Zentrale's folder; empty = ~/workspace/privat/parley-zentrale
         case guests         // shares of OTHER people's sessions this Mac joined (Guest.swift), JSON
         case projectsDir    // where the Zentrale creates projects; empty = ~/workspace/privat
+        case remoteControl  // "0" = sessions without Remote Control (default on: RemoteControl.swift)
     }
 
     static var fileURL: URL {

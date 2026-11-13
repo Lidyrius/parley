@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 }
 
-/// Owns the pairing (Keychain), the relay connection, the call and the push registration.
+/// Owns the pairings (Keychain), the relay connection, the call and the push registration.
 @MainActor @Observable
 final class AppModel {
     static let shared = AppModel()
@@ -63,7 +63,11 @@ final class AppModel {
     let demo: Bool
     let relay = Relay()
     let call: CallController
-    private(set) var pairing: Pairing?
+    /// The hosts this phone is paired with. It talks to one at a time, the active one (`activate`).
+    private(set) var hosts = HostList()
+    var pairing: Pairing? { hosts.active?.pairing }
+    /// A host just added beside the others: the overview asks what to call it (Hosts.swift).
+    var naming: HostPairing?
     /// Just paired from the scanner: it shows "Verbunden, Sir." a moment before the overview.
     var welcoming = false
     /// Fragerunde (Einstellungen): after a call, how long a new update waits while other sessions
@@ -189,7 +193,16 @@ final class AppModel {
             if let i = arguments.firstIndex(of: "-demoPalette"), i + 1 < arguments.count {
                 Appearance.shared.paletteID = arguments[i + 1]
             }
-            if arguments.contains("-demoGuest") { startDemoGuest() }
+            if arguments.contains("-demoGuest") { startDemoGuest() } else {
+                // One paired host, "Mac" — `-demoHosts`: two, "MacBook" and "Server". In memory
+                // only, nothing is dialled. `-demoNaming`: the last one was just added.
+                let names = arguments.contains("-demoHosts") ? ["MacBook", "Server"] : ["Mac"]
+                for (i, name) in names.enumerated() {
+                    hosts.add(Pairing(relay: URL(string: "https://relay.example")!, room: "demo-host-\(i)-0000000",
+                                      secret: "demo-secret-00000", key: nil), name: name)
+                }
+                if arguments.contains("-demoNaming") { naming = hosts.active } else { hosts.activate(hosts.hosts[0].id) }
+            }
             if arguments.contains("-demoAsk") {   // `-demoAsk`: a question as a guest
                 guestAsks = [GuestAsk(id: "demo-ask", session: "demo-shirts", label: "Shirts",
                                       text: "Max, für die Überschrift habe ich zwei Varianten. Welche passt zur Kampagne?",
@@ -218,10 +231,8 @@ final class AppModel {
             }
             return
         }
-        if let saved = PairingStore.load() {
-            pairing = saved
-            relay.use(saved)  // dialled once the scene is active (or a call needs it)
-        }
+        hosts = PairingStore.loadHosts()
+        if let saved = pairing { relay.use(saved) }  // dialled once the scene is active (or a call needs it)
         startGuests()
         // A push-to-start token or a new activity's update token: to the host now — the app may
         // have been woken in the background just for that.
@@ -343,19 +354,78 @@ final class AppModel {
         ControlCenter.shared.reloadControls(ofKind: SharedState.silentKind)
     }
 
+    /// A pairing link — scanned, pasted, opened: its host joins the list and becomes the active
+    /// one (a host that is in it already is paired anew). Not during a call.
     func pair(_ link: String) throws(PairingError) {
         let p = try Pairing.parse(link)
-        try PairingStore.save(p)
-        pairing = p
-        relay.use(p)
-        relay.reconnect()
+        guard !call.isBusy else { throw .inCall }
+        var list = hosts
+        let host = list.add(p, name: Pairing.hostName(in: link))
+        if !demo { try PairingStore.saveHosts(list) }
+        let beside = !hosts.hosts.isEmpty && !hosts.hosts.contains { $0.id == host.id }
+        hosts = list
+        hostChanged()
+        if beside { naming = host }
     }
 
+    /// Another host becomes the active one. Not during a call: it runs on the active host's line.
+    func activate(_ id: String) {
+        guard !call.isBusy, id != hosts.active?.id, hosts.hosts.contains(where: { $0.id == id }) else { return }
+        hosts.activate(id)
+        saveHosts()
+        hostChanged()
+    }
+
+    func renameHost(_ id: String, to name: String) {
+        hosts.rename(id, to: name)
+        saveHosts()
+    }
+
+    /// A host leaves the list and its key this iPhone. The active one: its call ends and the
+    /// first of the others takes over — none left: the pairing screen.
+    func removeHost(_ id: String) {
+        let wasActive = hosts.active?.id == id
+        if wasActive { call.hangUp() }
+        hosts.remove(id)
+        saveHosts()
+        if wasActive { hostChanged() }
+    }
+
+    /// "Verbindung trennen": the active host.
     func unpair() {
-        call.hangUp()
-        relay.forget()
-        PairingStore.remove()
-        pairing = nil
+        if let host = hosts.active { removeHost(host.id) }
+    }
+
+    private func saveHosts() {
+        if !demo { try? PairingStore.saveHosts(hosts) }
+    }
+
+    /// The active host is another one (or none): what this phone held of the one before goes —
+    /// its sessions' histories and typed messages, opened snapshots, share links, guests asking
+    /// to join — and the new one is dialled; `use` drops the relay's picture of the old one
+    /// (sessions, the Zentrale, today's totals, reminders, snapshots). The new host's `opened`
+    /// then sends it the switches and the push tokens, as on every connect. Shares this phone
+    /// joined as a guest have their own rooms and stay as they are.
+    private func hostChanged() {
+        if demo { relay.startDemo(); return }   // the same sample sessions under every name
+        let guest = Set(guestSessions.map(\.id))
+        histories = histories.filter { guest.contains($0.key) }
+        pending = pending.filter { guest.contains($0.key) }
+        hasOlder.formIntersection(guest)
+        loadingOlder.formIntersection(guest)
+        images = [:]   // kept by item, not by session: a guest's are asked for again
+        requestedImages = []
+        opened = [:]
+        shareLinks = [:]
+        joinRequests = []
+        resumeOnConnect = nil
+        if let open = path.first, !guest.contains(open) { path = []; compose = nil }
+        if let p = pairing {
+            relay.use(p)
+            relay.reconnect()
+        } else {
+            relay.forget()
+        }
     }
 
     /// iOS suspends sockets in the background anyway; close cleanly and redial on return.

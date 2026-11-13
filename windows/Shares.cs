@@ -89,6 +89,11 @@ public static class Shares
     {
         try
         {
+            if (!OperatingSystem.IsWindows())   // the Linux host: 0600, as macOS
+            {
+                System.IO.File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                return;
+            }
             if (WindowsIdentity.GetCurrent().User is not { } user) return;
             var security = new FileSecurity();
             security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);

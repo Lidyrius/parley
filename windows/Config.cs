@@ -42,6 +42,7 @@ public sealed class Config
     public bool Brief { get; init; }   // ohne Floskeln: no "N Updates", "Update zu X", thanks or ack line
     public bool PlainCalls { get; init; }   // calls as before v8: streamed, no clips, no numbered mic ("Funkloch" off)
     public string AppIcon { get; init; } = "graphit";   // tray → App-Symbol (AppIcon.Choices id)
+    public bool RemoteControl { get; init; } = true;    // "0" = sessions without Remote Control (RemoteControl.cs)
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
@@ -52,8 +53,15 @@ public sealed class Config
         return legacy == "0" ? "system" : "pill";
     }
 
-    public static string Dir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Parley");
+    public static string Dir => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Parley")
+        : Path.Combine(UnixConfigRoot, "Parley");
+
+    // Linux (the headless host, linux/): $XDG_CONFIG_HOME, else ~/.config — asked for directly,
+    // since GetFolderPath answers "" there while ~/.config does not exist yet.
+    private static string UnixConfigRoot =>
+        Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") is { Length: > 0 } xdg && Path.IsPathRooted(xdg)
+            ? xdg : Path.Combine(Home, ".config");
 
     public static string CredentialsPath => Path.Combine(Dir, "credentials.json");
 
@@ -119,6 +127,7 @@ public sealed class Config
                 Brief = S("brief") == "1",
                 PlainCalls = S("plainCalls") == "1",
                 AppIcon = S("appIcon", "graphit"),
+                RemoteControl = S("remoteControl") != "0",
             };
         }
         catch
@@ -145,6 +154,8 @@ public sealed class Config
         foreach (var kv in values) d[kv.Key] = JsonSerializer.SerializeToElement(kv.Value);
         Directory.CreateDirectory(Dir);
         File.WriteAllText(CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
+        // Linux: the keys are the user's alone (0600, as on macOS); Windows keeps the profile's ACL.
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(CredentialsPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         return true;
     }
 }
@@ -180,6 +191,8 @@ public static class Log
 {
     private static readonly object Gate = new();
     private static string PathFor => System.IO.Path.Combine(Config.Dir, "debug.log");
+    // The Linux daemon (`parley run`, linux/) also prints every line (tmux, journald). Unset on Windows.
+    public static Action<string>? Echo;
 
     public static void Write(string message)
     {
@@ -187,8 +200,10 @@ public static class Log
         {
             lock (Gate)
             {
+                var line = $"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss.fffZ} {message}";
                 Directory.CreateDirectory(Config.Dir);
-                File.AppendAllText(PathFor, $"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss.fffZ} {message}\r\n");
+                File.AppendAllText(PathFor, line + (OperatingSystem.IsWindows() ? "\r\n" : "\n"));
+                Echo?.Invoke(line);
             }
         }
         catch { /* logging must never throw */ }

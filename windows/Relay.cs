@@ -97,9 +97,11 @@ public static class RelayLink
     // The relay everyone can use (end-to-end encrypted); `relayUrl` points at your own instead.
     public const string PublicRelay = "https://parley-relay.sydney-d51.workers.dev";
 
-    // parley://pair?u=<relay>&r=<room>&k=<secret>&e=<key> — what the phone scans.
-    public static string Pairing(RelayConfig c) =>
-        $"parley://pair?u={Encode(c.Url)}&r={Encode(c.Room)}&k={Encode(c.Secret)}" + (c.Key.Length > 0 ? $"&e={Encode(c.Key)}" : "");
+    // parley://pair?u=<relay>&r=<room>&k=<secret>&e=<key>&h=<this machine's name> — what the phone
+    // scans. `h` is the name a phone with several hosts lists this one under; older phones ignore it.
+    public static string Pairing(RelayConfig c, string? host = null) =>
+        $"parley://pair?u={Encode(c.Url)}&r={Encode(c.Room)}&k={Encode(c.Secret)}" + (c.Key.Length > 0 ? $"&e={Encode(c.Key)}" : "")
+        + ((host ?? Environment.MachineName) is { Length: > 0 } h ? $"&h={Encode(h)}" : "");
 
     // <relay>/pair#<pairing link>: the relay's page draws the QR code from the fragment, which
     // the browser never sends — the secret never reaches the relay in a request. A plain string

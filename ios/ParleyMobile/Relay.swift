@@ -59,6 +59,7 @@ final class Relay {
         seal = pairing.key.flatMap { RelaySeal(key: $0) }
         outdatedPairing = false
         snapshot = nil
+        skew = 0
         failure = nil
     }
 

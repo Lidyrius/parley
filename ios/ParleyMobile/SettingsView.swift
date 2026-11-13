@@ -22,7 +22,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Verbindung") {
-                    LabeledContent("Status", value: model.relay.status.label)
+                    LabeledContent("Status", value: model.relay.status.label(host: model.hosts.active?.name ?? "Mac"))
                     if let p = model.pairing {
                         LabeledContent("Relay", value: p.relay.host(percentEncoded: false) ?? p.relay.absoluteString)
                         LabeledContent("Raum", value: String(p.room.prefix(8)) + "…")
@@ -174,7 +174,9 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } }
             }
-            .confirmationDialog("Verbindung trennen?", isPresented: $confirmsUnpair, titleVisibility: .visible) {
+            // Several hosts: the one that goes (the active one) is named.
+            .confirmationDialog(model.hosts.hosts.count > 1 ? "Verbindung zu „\(model.hosts.active?.name ?? "")“ trennen?" : "Verbindung trennen?",
+                                isPresented: $confirmsUnpair, titleVisibility: .visible) {
                 Button("Verbindung trennen", role: .destructive) {
                     model.unpair()
                     dismiss()

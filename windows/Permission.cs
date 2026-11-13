@@ -58,7 +58,8 @@ public static class Permission
 
     private static string OnFile(string path, string verb)
     {
-        var file = Path.GetFileName(path.Replace('/', '\\').TrimEnd('\\'));
+        // (Linux: "/" is the separator there — GetFileName splits at nothing else.)
+        var file = OperatingSystem.IsWindows() ? Path.GetFileName(path.Replace('/', '\\').TrimEnd('\\')) : Path.GetFileName(path.TrimEnd('/'));
         return file.Length > 0 ? $"die Datei {file} {verb}" : $"eine Datei {verb}";
     }
 

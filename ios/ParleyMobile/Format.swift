@@ -100,10 +100,21 @@ enum Fmt {
 enum ConnectionStatus: Equatable, Sendable {
     case connected, hostOffline, connecting, unknownRoom, rejected, unreachable
 
-    var label: String {
+    var label: String { label(host: "Mac") }
+
+    /// About a host by its name: "Server verbunden", "Server offline".
+    func label(host: String) -> String {
         switch self {
-        case .connected: "Mac verbunden"
-        case .hostOffline, .unknownRoom: "Mac offline"
+        case .connected, .hostOffline, .unknownRoom: host + " " + word.lowercased()
+        case .connecting, .rejected, .unreachable: word
+        }
+    }
+
+    /// Beside a host's name: "Verbunden", "Offline".
+    var word: String {
+        switch self {
+        case .connected: "Verbunden"
+        case .hostOffline, .unknownRoom: "Offline"
         case .connecting: "Verbinde…"
         case .rejected: "Kopplung abgelehnt"
         case .unreachable: "Keine Verbindung"

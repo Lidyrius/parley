@@ -35,8 +35,13 @@ and an encryption key (32 random bytes), all base64url without padding, and keep
 settings. The pairing link is
 
 ```
-parley://pair?u=<relay base URL, percent-encoded>&r=<room>&k=<secret>&e=<key>
+parley://pair?u=<relay base URL, percent-encoded>&r=<room>&k=<secret>&e=<key>&h=<host name, percent-encoded>
 ```
+
+`h` is optional and additive: what the host calls itself (macOS: the computer's name; Windows and
+Linux: the machine name) — the name a phone that keeps several hosts lists it under. A phone that
+doesn't know `h` ignores it, like every unknown parameter; a link without it (an older host)
+still pairs.
 
 Without a `relayUrl` setting the host uses the public relay `https://parley-relay.sydney-d51.workers.dev`.
 
@@ -44,6 +49,42 @@ Without a `relayUrl` setting the host uses the public relay `https://parley-rela
 in the browser: the relay serves a static page that draws the link as a QR code **from the URL
 fragment**, so the secret never reaches the relay in a request. The iPhone app scans it (or the
 system camera opens it through the `parley://` URL scheme) and stores it in the Keychain.
+
+### Several hosts (iPhone)
+
+The iPhone keeps a **list** of pairings — "MacBook", "Server" — and talks to **one at a time**,
+the active host. (Android still keeps one.)
+
+- **Storage:** one Keychain item (`hosts`): `[{id, name, pairing}]` plus the active host's id. The
+  single pairing older builds kept (`relay`) becomes the first host, "Mac", on the first launch;
+  it is removed only after the list is written.
+- **Adding:** every pairing link — scanned, pasted, opened — adds its host and makes it the active
+  one; the phone asks for its name (the link's `h`, else "Host 2", … stands in the field). A room
+  that is in the list already is that host paired anew: it keeps its place and its name. The
+  first host is named without a question (`h`, else "Mac").
+- **Switching** (the host's name at the top of the overview → "Hosts"): the phone closes the
+  active host's socket, drops what it held of it (its sessions and their histories, the Zentrale's
+  card, today's totals, reminders, snapshots, share links, guests asking to join) and dials the
+  chosen host's room. That connect is like any other: `hello`, then `away`, `silent`, `round`,
+  the VoIP and notification tokens (`push`) and the Live Activity tokens (`activity`). Not during
+  a call — it runs on the active host's line. Shares the phone joined as a guest (v7) have their
+  own rooms and stay connected.
+- **Removing** a host deletes its room, secret and key from the phone; the active one gone, the
+  first of the others takes over — the last one gone, the phone shows the pairing screen.
+- The hosts know nothing of each other, and the relay needs nothing new.
+
+**Open: a host that isn't the active one can still ring.** The push tokens belong to the phone,
+not to a pairing, and every host the phone was ever connected to keeps them, with the phone's
+Unterwegs / Stumm as it last heard them. So a host the phone has switched away from still sends
+its VoIP push (and its notification, Live Activity and widget pushes) — and the VoIP payload
+(`{"label":…}`) doesn't say which host it is from: the phone takes the call on the **active**
+host's room, where nothing rang (that host greets Sir as if he had called in; the host that rang
+gets no `call start` and treats the ring as not answered). Until that is fixed, turn Unterwegs
+off before switching away from a host whose sessions still run, or accept the stray ring.
+The fix is additive: a host id in the push payloads (`{"label":…,"host":<id>}`, the id told to
+the host on connect or taken from the pairing), so the phone can put the call on that host's
+room — as it does for a guest's call with `share` (v7) — or tell a host it left to forget its
+tokens.
 
 ## Relay protocol (v1)
 

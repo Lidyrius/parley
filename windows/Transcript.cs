@@ -301,6 +301,10 @@ public static class Transcript
     // Downscaled JPEG (≤ 1280 px, smaller until it fits a frame as base64).
     public static byte[]? Jpeg(byte[] raw)
     {
+        // ponytail: System.Drawing is Windows-only — the Linux host (linux/) sends no images yet;
+        // give it a managed JPEG encoder when it ships. (Asked by version, 6.1 = what GDI+ needs, so
+        // the platform analyzer follows; true on every Windows that runs .NET 8.)
+        if (!OperatingSystem.IsWindowsVersionAtLeast(6, 1)) return null;
         using var input = new MemoryStream(raw);
         using var src = System.Drawing.Image.FromStream(input);
         var codec = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);

@@ -9,3 +9,7 @@ app/Sources/Parley/Resources/ready/*.pcm
 secrets*
 .claude/ralph-loop.local.md
 app/Sources/Parley/Resources/lines/**/*.pcm
+
+# Linux host build output
+linux/bin/
+linux/obj/

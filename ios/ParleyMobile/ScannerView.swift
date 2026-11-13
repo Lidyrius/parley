@@ -141,10 +141,12 @@ struct ScannerSheet: View {
         }
     }
 
-    /// The Mac's name and how many sessions came with it — once its first list is here.
+    /// The Mac's name (a further host's: the one in the list) and how many sessions came with
+    /// it — once its first list is here.
     private var connectedDetail: String {
         let sessions = model.relay.snapshot?.sessions ?? []
-        let mac = sessions.lazy.compactMap(\.host).first ?? "Ihr Mac"
+        let added = model.hosts.hosts.count > 1 ? model.hosts.active?.name : nil
+        let mac = sessions.lazy.compactMap(\.host).first ?? added ?? "Ihr Mac"
         return sessions.isEmpty ? mac : "\(mac) · \(sessions.count) \(sessions.count == 1 ? "Session" : "Sessions")"
     }
 
@@ -193,7 +195,10 @@ struct ScannerSheet: View {
     private func handle(_ code: String) {
         guard code != lastCode, !found else { return }  // the scanner reports the same code repeatedly
         lastCode = code
-        model.welcoming = true   // keeps this screen up for "Verbunden, Sir."
+        // The first host: the pairing screen stays up for "Verbunden, Sir." A further one, over
+        // the overview: this screen says it and then closes itself.
+        let first = !model.isPaired
+        model.welcoming = first
         do {
             try model.pair(code)
         } catch {
@@ -207,11 +212,14 @@ struct ScannerSheet: View {
         Task {
             try? await Task.sleep(for: .seconds(1.5))
             model.welcoming = false
+            if !first { dismiss() }
         }
     }
 
     private func paste() {
+        let first = !model.isPaired
         error = pasteAndPair(model)
+        if error == nil, !first { dismiss() }
     }
 
     private static var hasTorch: Bool { AVCaptureDevice.default(for: .video)?.hasTorch ?? false }

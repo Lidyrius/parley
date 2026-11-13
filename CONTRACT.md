@@ -86,6 +86,21 @@ Zentrale as an instruction with the tab's last lines.
 - `POST /starting/answer` `{"cwd","text"}` → types the one-line `text` and Enter into that start's
   tab: `200 {"ok":true}` · `404` no start on the way there · `409` tab gone · `501` Windows.
 
+### Remote Control
+Every session Parley starts runs with Claude Code's Remote Control (reachable from the Claude app
+and claude.ai/code): `claude [--resume <id>] '/parley:voice' --remote-control` — the flag last, as
+`--remote-control [name]` would take the prompt as its name (Linux: only when the command is plain
+`claude`, not a `PARLEY_CLAUDE_CMD` wrapper). A session that registers without it (its
+`~/.claude/sessions/<pid>.json` has no `bridgeSessionId`) gets one catch-up, once per session id, on
+a presence or `/wake` while Claude Code says `status: "idle"` and Parley holds nothing for it
+(registry state `parked`): `/remote-control` + Enter typed in, after 1.5 s Enter only if the screen
+shows `❯ … Enable Remote Control`, else Escape; the state file is checked again after 15 s and the
+result logged (`remote control: …`). Typing needs a terminal Parley can reach: macOS a Terminal.app
+tab (by the process's tty — iTerm, Warp, VS Code are logged and skipped), Linux tmux. **Windows**
+can't type into another console: only Parley's own starts get it ("Remote Control: nur bei Starts
+durch Parley" in the log). `credentials.json` `"remoteControl": "0"` turns both off. (Claude Code's
+own `remoteControlAtStartup: true` in its settings.json does it for every interactive session.)
+
 ### Überwachungsmodus: `GET /supervisor`, `POST /supervisor` (local, the Zentrale)
 Only the Zentrale talks to Sir. While it is on, a `POST /turn` of any other session is **not
 voiced**: the host answers it empty at once (`{"transcript":"","park":true}` — the hook parks and

@@ -55,6 +55,14 @@ final class ControlServer: @unchecked Sendable {
     // Ends a session's process (POST /close; a stub in tests): nil = closing, else why not.
     var closer: (_ id: String, _ cwd: String) -> String? = { SessionCloser.close(id: $0, cwd: $1) }
     var zentraleDir: () -> String = { ZentraleSettings.load().zentraleDir }
+    // Remote Control's catch-up (RemoteControl.swift): one try per session id; stubs in tests.
+    private var remoteTried = Set<String>()
+    var remoteOn: () -> Bool = { RemoteControl.on }
+    var remoteState: (String) -> RemoteControl.State? = { RemoteControl.state(of: $0) }
+    var remoteCatchUp: (_ id: String, _ label: String, _ pid: Int32) -> Void = { id, label, pid in
+        guard NSClassFromString("XCTestCase") == nil else { return }   // never types from a unit test
+        DispatchQueue.global().async { RemoteControl.catchUp(id: id, label: label, pid: pid) }
+    }
     // A palette for the phone (POST /palette): its `palette` frame, to send and keep until confirmed.
     var onPalette: ((_ name: String, _ frame: String) -> Void)?
     // Wiedervorlagen (Reminders.swift): kept here, on the queue; nil file = not persisted (tests).
@@ -820,6 +828,20 @@ final class ControlServer: @unchecked Sendable {
         }
     }
 
+    // A session sent presence or polled /wake: without Remote Control and idle, it gets its one
+    // `/remote-control` (RemoteControl.decide) — a turn that waits or is voiced holds it off.
+    private func remoteControl(_ id: String) {
+        guard !id.isEmpty, !remoteTried.contains(id), remoteOn() else { return }
+        let info = sessions.info(id)
+        switch RemoteControl.decide(remoteState(id), parley: info?.state) {
+        case .later: return
+        case .done: remoteTried.insert(id)
+        case .type(let pid):
+            remoteTried.insert(id)
+            remoteCatchUp(id, info?.label ?? id, pid)
+        }
+    }
+
     // /wake — a parked session's Stop hook short-polls this. Answer immediately with any
     // pending resume instruction (consuming it), else empty; either way (re)register so the
     // session stays listed as resumable.
@@ -846,6 +868,7 @@ final class ControlServer: @unchecked Sendable {
         sessions.wakePoll(id: key, label: w?.label ?? "", project: w?.project ?? "", resumed: pending != nil,
                           cwd: w?.cwd ?? "")
         claimName(key, cwd: w?.cwd)
+        remoteControl(key)
         notifyParked()
         return Self.turnJSON(TurnReply(transcript: pending ?? "", park: false))
     }
@@ -1124,6 +1147,7 @@ final class ControlServer: @unchecked Sendable {
                 Log.write("dispatch: handing the waiting instruction to \(p.label ?? project) (presence)")
                 delivery = sessions.handOver(id: p.session_id, text)
             }
+            remoteControl(p.session_id)
             notifyParked()
             flushReports()   // the Zentrale may take its reports now (they go out with its next presence)
             struct Wire: Encodable { var instruction: String?; var delivery_id: String?; var unknown_turn: Bool? }

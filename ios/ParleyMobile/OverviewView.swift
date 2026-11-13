@@ -8,6 +8,7 @@ struct OverviewView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showsSettings = ProcessInfo.processInfo.arguments.contains("-demoSettings")   // screenshots
     @State private var showsSnapshots = false
+    @State private var showsHosts = ProcessInfo.processInfo.arguments.contains("-demoHostSheet")   // screenshots
     /// The session whose sheet is open.
     @State private var detail: Session?
     /// Raster (default) or Liste, remembered.
@@ -23,7 +24,7 @@ struct OverviewView: View {
         NavigationStack(path: $model.path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    StatusHeader(relay: relay, away: $model.away, silent: $model.silent)
+                    StatusHeader(relay: relay, host: model.hosts.active?.name ?? "Mac", away: $model.away, silent: $model.silent)
                     if let failure = model.call.failure {
                         CallFailureBanner(text: failure) { model.call.failure = nil }
                             .transition(.move(edge: .top).combined(with: .opacity))
@@ -49,6 +50,15 @@ struct OverviewView: View {
             .background(Theme.background)
             .navigationTitle("Parley")
             .toolbar {
+                // The host this phone talks to, at the very top — and the way to another (Hosts.swift).
+                if let host = model.hosts.active {
+                    ToolbarItem(placement: .topBarLeading) {
+                        HostChip(name: host.name, status: relay.status) { showsHosts = true }
+                    }
+                    // Scrolled, the bar has no room for "Parley" between the host and "Snapshots"
+                    // ("Pa…"): nothing stands in the small title's place; the large one stays.
+                    ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
+                }
                 // Snapshots (docs/design/screens/ios/50-snapshots): a labelled pill beside the gear.
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showsSnapshots = true } label: {
@@ -73,6 +83,15 @@ struct OverviewView: View {
             }
             .sheet(isPresented: $showsSettings) { SettingsView() }
             .sheet(isPresented: $showsSnapshots) { SnapshotsSheet() }
+            .sheet(isPresented: $showsHosts) { HostsSheet() }
+            // A host was just added (a link opened): the hosts come up and ask its name.
+            .onChange(of: model.naming?.id, initial: true) { _, id in
+                guard id != nil else { return }
+                detail = nil
+                showsSettings = false
+                showsSnapshots = false
+                showsHosts = true
+            }
             // A guest asks to join: whatever sheet is up (the session, its "Teilen") makes way first —
             // a sheet can't come up over another one, and the ask would wait unseen.
             .sheet(item: Binding(get: { otherSheet || model.call.showsScreen ? nil : model.joinRequests.first }, set: { _ in })) {
@@ -83,6 +102,7 @@ struct OverviewView: View {
                 detail = nil
                 showsSettings = false
                 showsSnapshots = false
+                showsHosts = false
             }
             .alert("Parley", isPresented: Binding(get: { model.guestNotice != nil }, set: { if !$0 { model.guestNotice = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -102,13 +122,14 @@ struct OverviewView: View {
 
     @ViewBuilder
     private func content(_ relay: Relay) -> some View {
+        let host = model.hosts.active?.name ?? "Mac"   // a Mac, a PC, a server
         switch relay.status {
         case .hostOffline:
-            Notice(title: "Mac offline", symbol: "laptopcomputer",
-                   text: "Parley auf dem Mac ist gerade nicht mit dem Relay verbunden. Sobald er wieder online ist, erscheinen hier deine Sessions.")
+            Notice(title: "\(host) offline", symbol: "laptopcomputer",
+                   text: "Parley ist dort gerade nicht mit dem Relay verbunden. Sobald es wieder online ist, erscheinen hier deine Sessions.")
         case .unknownRoom:
-            Notice(title: "Mac noch nicht verbunden", symbol: "laptopcomputer",
-                   text: "Parley auf dem Mac hat sich noch nicht beim Relay gemeldet. Öffne Parley auf dem Mac – die Verbindung entsteht dann von selbst.")
+            Notice(title: "\(host) noch nicht verbunden", symbol: "laptopcomputer",
+                   text: "Parley hat sich dort noch nicht beim Relay gemeldet. Starte Parley dort – die Verbindung entsteht dann von selbst.")
         case .rejected:
             Notice(title: "Bitte neu koppeln", symbol: "lock.slash",
                    text: "Das Relay hat die Kopplung abgelehnt, oder sie stammt aus einer älteren Version. Wähle in Parley auf dem Mac „Handy verbinden…“ und koppele neu.") {
@@ -255,7 +276,7 @@ struct OverviewView: View {
         }
     }
 
-    private var otherSheet: Bool { detail != nil || showsSettings || showsSnapshots }
+    private var otherSheet: Bool { detail != nil || showsSettings || showsSnapshots || showsHosts }
 
     /// The sheet's "Verlauf öffnen" / "Nachricht": the session view (with the keyboard for a message).
     private func show(_ id: String, compose: Bool) {
@@ -463,6 +484,7 @@ struct RemindersCard: View {
 /// The connection pill ("Verbunden") and the Unterwegs / Stumm switches, in one row.
 private struct StatusHeader: View {
     let relay: Relay
+    let host: String
     @Binding var away: Bool
     @Binding var silent: Bool
 
@@ -495,7 +517,7 @@ private struct StatusHeader: View {
     private func pill(_ status: ConnectionStatus) -> some View {
         HStack(spacing: 7) {
             Circle().fill(status.color).frame(width: 8, height: 8)
-            Text(status == .connected ? "Verbunden" : status.label).font(.subheadline.weight(.semibold))
+            Text(status == .connected ? "Verbunden" : status.label(host: host)).font(.subheadline.weight(.semibold))
         }
         .fixedSize()   // never squeezed: too narrow → the second row
         .padding(.horizontal, 11)

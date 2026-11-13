@@ -95,14 +95,20 @@ public sealed class Server
     // Routing, POST /dispatch and instructions waiting for a session's first presence.
     public Delivery Delivery { get; }
 
+    // Label and registry state for Remote Control's catch-up (RemoteControl.Seen).
+    private (string Label, string State)? RemoteInfo(string id) => Sessions.Info(id) is { } i ? (i.Label, i.State) : null;
+
     // Sessions are keyed by the agent's session_id; the tmux pane only as a fallback.
     public static string SessionKey(TurnPayload t) => string.IsNullOrEmpty(t.SessionId) ? t.TmuxPane : t.SessionId;
 
-    public Server(Func<TurnPayload, Task<(string, bool, int, string)>> runTurn, Action onReady)
+    // `startSession`: how a session is started in a folder (folder, resume id → started); null =
+    // SessionStarter (a terminal window). The Linux host starts them in tmux (linux/Tmux.cs).
+    public Server(Func<TurnPayload, Task<(string, bool, int, string)>> runTurn, Action onReady,
+                  Func<string, string?, bool>? startSession = null)
     {
         _runTurn = runTurn;
         _onReady = onReady;
-        Delivery = new Delivery(Sessions, (id, instruction) => Deliver(id, instruction));
+        Delivery = new Delivery(Sessions, (id, instruction) => Deliver(id, instruction), startSession);
         Sessions.Waiting = id => _atGate.TryGetValue(id, out var n) && n > 0;
         Sessions.ReminderRows = () => Reminders.Rows();
         Sessions.SnapshotRows = () => Snapshots.Rows();
@@ -265,7 +271,7 @@ public sealed class Server
                         }
                     }
                     if (end) Log.Write($"wake: {turn.SpokenLabel} — end");
-                    else Delivery.ClaimName(key, turn.Cwd);
+                    else { Delivery.ClaimName(key, turn.Cwd); RemoteControl.Seen(key, () => RemoteInfo(key)); }
                     NotifyParked();
                 }
                 await Respond(ctx, 200, TurnJson(pending, false, 0, "", end));
@@ -304,6 +310,7 @@ public sealed class Server
                     // Hookless: the turn it waits for is gone (a restart, or it ended without a reply).
                     unknown = presence.Awaiting is { Length: > 0 } awaiting && !Open(presence.SessionId, awaiting);
                 }
+                RemoteControl.Seen(presence.SessionId, () => RemoteInfo(presence.SessionId));
                 NotifyParked();
                 FlushReports();   // the Zentrale may take its reports now (they go out with its next presence)
                 await Respond(ctx, 200, delivery is { } d ? JsonSerializer.Serialize(new { instruction = d.Text, delivery_id = d.Id })
@@ -402,6 +409,12 @@ public sealed class Server
             }
             if (req.HttpMethod == "POST" && path == "/starting/answer")
             {
+                if (Delivery.StartAnswer is not null)   // the Linux host types into its tmux sessions
+                {
+                    var (status, answer) = Delivery.AnswerStart(body);
+                    await Respond(ctx, status, answer);
+                    return;
+                }
                 await Respond(ctx, 501, JsonSerializer.Serialize(new { ok = false, error = "not on Windows — answer in the session's window" }));
                 return;
             }
@@ -1351,6 +1364,10 @@ public sealed class Server
         });
     }
 
+    // No answer by voice: on Windows the on-screen prompt decides ("ask"). The Linux host is
+    // headless — nobody sits at that screen and the session would hang at it — so there it is a no.
+    private static string Unanswered => OperatingSystem.IsWindows() ? Permission.Ask : Permission.Deny;
+
     private async Task<string> AskPermission(PermissionPayload p)
     {
         var id = p.SessionId ?? "";
@@ -1407,11 +1424,12 @@ public sealed class Server
         var left = deadline - DateTime.UtcNow;
         if (await Task.WhenAny(job, Task.Delay(left > TimeSpan.Zero ? left : TimeSpan.Zero)) != job)
         {
-            Log.Write($"permission: {tool} for {spoken} → ask (no answer within {(int)PermissionHold.TotalSeconds} s)");
-            return Permission.Ask;
+            Log.Write($"permission: {tool} for {spoken} → {Unanswered} (no answer within {(int)PermissionHold.TotalSeconds} s)");
+            return Unanswered;
         }
         var transcript = await job;
         var decision = transcript is null ? Permission.Ask : Permission.Decide(transcript);
+        if (decision == Permission.Ask) decision = Unanswered;
         Log.Write($"permission: {tool} for {spoken} → {decision}");
         return decision;
     }

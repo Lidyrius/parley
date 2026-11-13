@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The headless Linux host (pilot): the Windows app's sources without its windows, plus
+       linux/*.cs. Run it with `parley run`; `parley selftest` checks the Unix-specific parts. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>parley</AssemblyName>
+    <RootNamespace>Parley</RootNamespace>
+    <Version>0.1.0</Version>
+    <!-- de-DE dates ("Wiedervorlage … gesprochen Montag 09:00") need ICU: never invariant. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- Everything in windows/ except what needs a desktop: the tray, its forms, the PC as a
+       guest (Guest.cs), and the platform services linux/Stubs.cs and linux/Tmux.cs stand in for. -->
+  <ItemGroup>
+    <Compile Include="..\windows\*.cs" Link="shared\%(Filename)%(Extension)"
+             Exclude="..\windows\Program.cs;..\windows\OnboardingForm.cs;..\windows\TrayPanel.cs;..\windows\StatsForm.cs;..\windows\SettingsForm.cs;..\windows\NotificationPill.cs;..\windows\PillOverlay.cs;..\windows\WinUI.cs;..\windows\AppIcon.cs;..\windows\DevTools.cs;..\windows\VoicePreview.cs;..\windows\Guest.cs;..\windows\QrCode.cs;..\windows\RelaySetup.cs;..\windows\TutorialClips.cs;..\windows\Notifier.cs;..\windows\MediaControl.cs;..\windows\Barge.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The voice's speed (AudioOut.ApplyRate) — also on a call. -->
+    <PackageReference Include="SoundTouch.Net" Version="2.3.2" />
+    <!-- ponytail: only so AudioOut.cs / MicCapture.cs / Transcript.cs compile unchanged. Their
+         device and GDI+ code is never reached here (always Unterwegs; Transcript.Jpeg returns
+         early). Split those files and drop these three when Linux ships. -->
+    <PackageReference Include="NAudio.Core" Version="2.2.1" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

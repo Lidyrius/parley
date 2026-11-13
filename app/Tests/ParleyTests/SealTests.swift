@@ -40,7 +40,7 @@ final class SealTests: XCTestCase {
 
     func testPairingLinkCarriesTheKey() {
         let c = RelayConfig(url: "https://r.example.dev", room: "room", secret: "sec", key: "kk")
-        XCTAssertTrue(RelayLink.pairing(c).hasSuffix("&k=sec&e=kk"))
+        XCTAssertTrue(RelayLink.pairing(c, host: "").hasSuffix("&k=sec&e=kk"))
     }
 }
 

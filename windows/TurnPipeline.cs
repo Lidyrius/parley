@@ -16,7 +16,10 @@ public sealed class TurnPipeline
     public Func<string, Task<RingOutcome>>? Ring;
     // The phone's tile for a session whose call was put off (see Sessions.SetCallback).
     public Action<string, DateTime?>? SetCallback;
-    private static readonly TimeSpan CallBackWait = TimeSpan.FromMinutes(30);   // "Ich rufe zurück"
+    // "Ich rufe zurück". The Linux host is always Unterwegs and may shorten it (PARLEY_CALLBACK_WAIT_SECONDS).
+    private static readonly TimeSpan CallBackWait = !OperatingSystem.IsWindows()
+        && int.TryParse(Environment.GetEnvironmentVariable("PARLEY_CALLBACK_WAIT_SECONDS"), out var seconds) && seconds >= 0
+        ? TimeSpan.FromSeconds(seconds) : TimeSpan.FromMinutes(30);
     public Func<string, Config, Task<string>>? Route;
     // The server — what Sir missed is kept there (Supervisor.cs, Missed). Set once at startup.
     public Server? Host;
@@ -570,7 +573,7 @@ public sealed class TurnPipeline
                 SetCallback?.Invoke(session, DateTime.MaxValue);
                 calledBack = await PhoneCall.WaitForCall(CallBackWait);
                 SetCallback?.Invoke(session, null);
-                Log.Write(calledBack ? "phone: Sir called back" : "phone: no call back in 30 min");
+                Log.Write(calledBack ? "phone: Sir called back" : $"phone: no call back in {(int)CallBackWait.TotalMinutes} min");
                 outcome = new RingOutcome(calledBack ? RingKind.Answered : RingKind.Missed);
             }
         }

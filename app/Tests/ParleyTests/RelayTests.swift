@@ -7,17 +7,24 @@ final class RelayLinkTests: XCTestCase {
     private let config = RelayConfig(url: "https://parley-relay.x.workers.dev", room: "AbC-_1", secret: "s3cr3t-_")
 
     func testPairingLinkPercentEncodesTheRelayURL() {
-        XCTAssertEqual(RelayLink.pairing(config),
+        XCTAssertEqual(RelayLink.pairing(config, host: ""),
                        "parley://pair?u=https%3A%2F%2Fparley-relay.x.workers.dev&r=AbC-_1&k=s3cr3t-_")
     }
 
+    // `h`: this Mac's name, for a phone that keeps several hosts (additive — older phones ignore it).
+    func testPairingLinkNamesTheHost() throws {
+        XCTAssertTrue(RelayLink.pairing(config, host: "Sydneys MacBook Pro").hasSuffix("&k=s3cr3t-_&h=Sydneys%20MacBook%20Pro"))
+        let items = try XCTUnwrap(URLComponents(string: RelayLink.pairing(config))?.queryItems)
+        XCTAssertEqual(items.first { $0.name == "h" }?.value, Host.current().localizedName)
+    }
+
     func testPairPageCarriesTheEncodedLinkInTheFragment() throws {
-        let page = try XCTUnwrap(RelayLink.pairPage(config))
+        let page = try XCTUnwrap(RelayLink.pairPage(config, host: ""))
         XCTAssertEqual(page.absoluteString, "https://parley-relay.x.workers.dev/pair#parley%3A%2F%2Fpair%3Fu%3Dhttps%253A%252F%252Fparley-relay.x.workers.dev%26r%3DAbC-_1%26k%3Ds3cr3t-_")
         XCTAssertNil(page.query)   // the secret rides only in the fragment
         // The page decodes the fragment once → the pairing link → its query items.
         let link = try XCTUnwrap(page.fragment?.removingPercentEncoding)
-        XCTAssertEqual(link, RelayLink.pairing(config))
+        XCTAssertEqual(link, RelayLink.pairing(config, host: ""))
         let items = try XCTUnwrap(URLComponents(string: link)?.queryItems)
         XCTAssertEqual(items.map(\.name), ["u", "r", "k"])
         XCTAssertEqual(items.map(\.value), ["https://parley-relay.x.workers.dev", "AbC-_1", "s3cr3t-_"])

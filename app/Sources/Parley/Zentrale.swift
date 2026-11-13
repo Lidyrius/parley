@@ -93,15 +93,17 @@ enum SessionStarter {
     static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: #"'\''"#) + "'" }
 
     // `resume`: a past session (checked by Transcript.isSessionID) continued with its history.
-    static func command(folder: String, resume: String? = nil) -> String {
+    // `remote`: with Remote Control (RemoteControl.swift) — last, since `--remote-control [name]`
+    // would take the prompt after it as the session's name.
+    static func command(folder: String, resume: String? = nil, remote: Bool) -> String {
         let r = resume.map { " --resume \(shellQuote($0))" } ?? ""
-        return "\(quietHooks)cd \(shellQuote(folder)) && claude\(r) \(shellQuote(firstPrompt))"
+        return "\(quietHooks)cd \(shellQuote(folder)) && claude\(r) \(shellQuote(firstPrompt))\(remote ? " " + RemoteControl.flag : "")"
     }
 
     // Returns the new tab's tty, so the start check (StartWatch) finds the tab again.
-    static func osascriptArguments(folder: String, resume: String? = nil) -> [String] {
+    static func osascriptArguments(folder: String, resume: String? = nil, remote: Bool) -> [String] {
         ["-e", "on run argv", "-e", #"tell application "Terminal" to return tty of (do script (item 1 of argv))"#, "-e", "end run",
-         command(folder: folder, resume: resume)]
+         command(folder: folder, resume: resume, remote: remote)]
     }
 
     // `tab`: the new tab's tty once Terminal has it (nil if it couldn't be read).
@@ -111,7 +113,7 @@ enum SessionStarter {
         ClaudeTrust.accept(folder)   // no "trust this folder?" in Parley's starts (Sir's rule)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        p.arguments = osascriptArguments(folder: folder, resume: resume)
+        p.arguments = osascriptArguments(folder: folder, resume: resume, remote: RemoteControl.on)
         let out = Pipe()
         p.standardOutput = out
         let err = Pipe()

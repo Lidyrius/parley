@@ -1,0 +1,12 @@
+# One Chrome profile per container: virtual display, a plain window manager, Chrome with its
+# sandbox (run with the seccomp profile next to this file — never --no-sandbox), and a
+# password-protected web VNC for logging in by hand. CDP is forwarded only on the private
+# docker network (socat), never published.
+FROM parley-pilot:local
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends openbox x11vnc novnc websockify \
+      fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
+COPY browser-start.sh /usr/local/bin/browser-start
+RUN chmod 755 /usr/local/bin/browser-start
+USER sydney
+CMD ["/usr/local/bin/browser-start"]

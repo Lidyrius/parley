@@ -19,6 +19,7 @@ public static class CwdPath
     {
         var p = (path ?? "").Trim();
         if (p.Length == 0) return "";
+        if (!OperatingSystem.IsWindows()) return NormalizeUnix(p);
         if (p == "~" || p.StartsWith("~/", StringComparison.Ordinal) || p.StartsWith("~\\", StringComparison.Ordinal))
             p = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + p[1..];
         var msys = Regex.Match(p, @"^/([A-Za-z])(/.*)?$");
@@ -33,11 +34,28 @@ public static class CwdPath
         return p.Length > 3 ? p.TrimEnd('\\') : p;   // keep a drive root as "C:\"
     }
 
-    // Windows paths compare case-insensitively.
+    // The Linux host (linux/): "/" is the separator and a "\" an ordinary character — "~"
+    // expanded, ".." resolved, no trailing "/" (the root stays "/").
+    private static string NormalizeUnix(string p)
+    {
+        if (p == "~" || p.StartsWith("~/", StringComparison.Ordinal))
+            p = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + p[1..];
+        try
+        {
+            if (Path.IsPathFullyQualified(p)) p = Path.GetFullPath(p);
+        }
+        catch (Exception) { /* odd characters: compare it as written */ }
+        return p.Length > 1 ? p.TrimEnd('/') : p;
+    }
+
+    // Windows paths compare case-insensitively; on Linux a folder is its exact spelling.
+    public static StringComparison Compare => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+    public static StringComparer Comparer => StringComparer.FromComparison(Compare);
+
     public static bool Same(string? a, string? b)
     {
         var x = Normalize(a);
-        return x.Length > 0 && string.Equals(x, Normalize(b), StringComparison.OrdinalIgnoreCase);
+        return x.Length > 0 && string.Equals(x, Normalize(b), Compare);
     }
 
     // A /dispatch cwd: absolute as is; a bare name/relative path lives under projectsDir. null =
@@ -104,7 +122,7 @@ public sealed class PendingByCwd
             var dir = CwdPath.Normalize(cwd);
             if (dir.Length == 0) return null;
             var seen = firstSeen ?? DateTime.MinValue;
-            var i = _items.FindIndex(x => string.Equals(x.Dir, dir, StringComparison.OrdinalIgnoreCase) && (!x.ForNew || seen > x.At));
+            var i = _items.FindIndex(x => string.Equals(x.Dir, dir, CwdPath.Compare) && (!x.ForNew || seen > x.At));
             if (i < 0) return null;
             var found = _items[i].Instruction;
             _items.RemoveAt(i);
@@ -120,7 +138,7 @@ public sealed class PendingByCwd
             if (_names.Count == 0) return null;
             Prune();
             var dir = CwdPath.Normalize(cwd);
-            var i = _names.FindIndex(x => string.Equals(x.Dir, dir, StringComparison.OrdinalIgnoreCase) && firstSeen > x.At);
+            var i = _names.FindIndex(x => string.Equals(x.Dir, dir, CwdPath.Compare) && firstSeen > x.At);
             if (i < 0) return null;
             var found = _names[i].Name;
             _names.RemoveAt(i);
@@ -257,8 +275,14 @@ public static class Zentrale
 public static class SessionStarter
 {
     // `resume`: a past session (checked by Transcript.IsSessionId) continued with its history.
-    public static string[] ClaudeArgs(string? resume) =>
-        resume is null ? new[] { "claude", Zentrale.FirstPrompt } : new[] { "claude", "--resume", resume, Zentrale.FirstPrompt };
+    // `remote`: with Remote Control (RemoteControl.cs) — last, since `--remote-control [name]`
+    // would take the prompt after it as the session's name.
+    public static string[] ClaudeArgs(string? resume, bool remote)
+    {
+        var args = resume is null ? new List<string> { "claude", Zentrale.FirstPrompt } : new List<string> { "claude", "--resume", resume, Zentrale.FirstPrompt };
+        if (remote) args.Add(RemoteControl.Flag);
+        return args.ToArray();
+    }
 
     public static bool Start(string dir, string? resume = null)
     {
@@ -267,7 +291,7 @@ public static class SessionStarter
         {
             var wt = new ProcessStartInfo("wt.exe") { UseShellExecute = false };
             // Through cmd /k: an npm install is claude.cmd, which Windows Terminal cannot start directly.
-            foreach (var a in new[] { "-d", dir, "cmd", "/k" }.Concat(ClaudeArgs(resume))) wt.ArgumentList.Add(a);
+            foreach (var a in new[] { "-d", dir, "cmd", "/k" }.Concat(ClaudeArgs(resume, RemoteControl.On))) wt.ArgumentList.Add(a);
             Process.Start(wt)?.Dispose();
             Log.Write($"session: starting one in {dir} (Windows Terminal)");
             return true;
@@ -278,7 +302,7 @@ public static class SessionStarter
             // cmd /c start "" /D <dir> cmd /k claude /parley:voice — `start` opens the new window;
             // the empty argument is its window title.
             var cmd = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true };
-            foreach (var a in new[] { "/c", "start", "", "/D", dir, "cmd", "/k" }.Concat(ClaudeArgs(resume))) cmd.ArgumentList.Add(a);
+            foreach (var a in new[] { "/c", "start", "", "/D", dir, "cmd", "/k" }.Concat(ClaudeArgs(resume, RemoteControl.On))) cmd.ArgumentList.Add(a);
             Process.Start(cmd)?.Dispose();
             Log.Write($"session: starting one in {dir} (cmd)");
             return true;
@@ -359,7 +383,7 @@ public static class SessionCloser
     }
 
     // ~/.claude/sessions/<pid>.json: Claude Code's own pid → session id.
-    private static Dictionary<int, string> Claimed()
+    internal static Dictionary<int, string> Claimed()   // (also read by the Linux host: linux/Tmux.cs)
     {
         var map = new Dictionary<int, string>();
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "sessions");
@@ -395,13 +419,17 @@ public sealed class Delivery
     private readonly Action<string, string> _deliver;   // (session id, instruction)
     private readonly Func<string, string?, bool> _start; // folder, resume id → started
     private readonly PendingByCwd _pending = new();
-    private readonly Dictionary<string, DateTime> _started = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _started = new(CwdPath.Comparer);
     // Start check (as macOS StartWatch.swift): the starts still on the way. ponytail: Windows can't
     // read or type into another console window, so a start that hangs is only shown to the
     // Zentrale after 90 s (no "n" to [y/N] questions — and no Gas Town-like cd hooks start here).
-    private readonly Dictionary<string, (DateTime Since, bool Reported)> _starting = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (DateTime Since, bool Reported)> _starting = new(CwdPath.Comparer);
     private System.Threading.Timer? _startTimer;
     private static readonly TimeSpan ReportAfter = TimeSpan.FromSeconds(90), GiveUp = TimeSpan.FromMinutes(10);
+    // Where the host can read and type into a start's terminal (the Linux host's tmux sessions,
+    // linux/Tmux.cs), the start check is the macOS one (StartWatch.swift). Both unset on Windows.
+    public Func<string, string?>? StartScreen;        // folder → its screen's last lines; null = the terminal is gone
+    public Func<string, string, bool>? StartAnswer;   // folder, one line → typed with Enter; false = gone
 
     public Delivery(SessionRegistry sessions, Action<string, string> deliver, Func<string, string?, bool>? start = null)
     {
@@ -503,23 +531,69 @@ public sealed class Delivery
     public void CheckStarts()
     {
         var now = DateTime.UtcNow;
-        List<string> report = new();
+        List<string> report = new(), waiting = new();
         lock (_starting)
         {
             foreach (var (dir, s) in _starting.ToList())
             {
                 if (_sessions.SeenSince(dir, s.Since)) { _starting.Remove(dir); Log.Write($"start: the session in {dir} is up"); }
                 else if (now - s.Since > GiveUp) _starting.Remove(dir);
-                else if (!s.Reported && now - s.Since >= ReportAfter) { _starting[dir] = (s.Since, true); report.Add(dir); }
+                else
+                {
+                    waiting.Add(dir);
+                    if (!s.Reported && now - s.Since >= ReportAfter) { _starting[dir] = (s.Since, true); report.Add(dir); }
+                }
             }
         }
+        // A question whose default is No ("[y/N]") gets "n" at once — as macOS, Sir's rule for Parley's starts.
+        if (StartScreen is { } read && StartAnswer is { } type)
+            foreach (var dir in waiting)
+                if (DefaultNo(read(dir)) is { } question && type(dir, "n")) Log.Write($"start: answered \"n\" in {dir} ({question})");
         foreach (var dir in report)
         {
             var zentrale = CwdPath.Normalize(Zentrale.Dir(Config.Load()));
             Log.Write($"start: the session in {dir} isn't up after {(int)ReportAfter.TotalSeconds} s — shown to the Zentrale");
             if (CwdPath.Same(dir, zentrale)) continue;   // the Zentrale itself hangs: nobody to show it to
-            Dispatch(zentrale, Note(dir, (int)ReportAfter.TotalSeconds), start: true);
+            var note = StartScreen is { } screen ? Note(dir, screen(dir) ?? "", (int)ReportAfter.TotalSeconds) : Note(dir, (int)ReportAfter.TotalSeconds);
+            Dispatch(zentrale, note, start: true);
         }
+    }
+
+    // The question on the screen's last line if its default is No — "[y/N]", "(y/N)", "[y/N/never]"; else null.
+    public static string? DefaultNo(string? screen) =>
+        (screen ?? "").Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.Length > 0) is { } last
+            && Regex.IsMatch(last, @"[\[(]y/N(/[A-Za-z]+)*[\])]\s*:?$") ? last : null;
+
+    // What the Zentrale gets about a start that hangs, with its screen (as macOS StartWatch.note).
+    public static string Note(string dir, string screen, int seconds) =>
+        $"[Parley · Start-Check] Die neue Session in {dir} ist nach {seconds} s noch nicht da. Im Terminal steht zuletzt:\n" +
+        $"```\n{(screen.Length == 0 ? "(nichts lesbar)" : screen)}\n```\n" +
+        "Ist das eine harmlose Rückfrage (z. B. ein Hinweis, ein Update-Angebot, ja/nein mit offensichtlicher Antwort), " +
+        $"beantworte sie selbst: POST /starting/answer mit {{\"cwd\": \"{dir}\", \"text\": \"<Antwort>\"}} (Text + Enter). " +
+        "Ist es etwas anderes — Login, Fehler, eine echte Entscheidung —, sag es Sir kurz.";
+
+    // POST /starting/answer {"cwd","text"} (only with StartAnswer set): the line + Enter typed into
+    // that start's terminal. Same answers as macOS.
+    public (int Status, string Json) AnswerStart(string body)
+    {
+        string? cwd = null, text = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
+            string? S(string k) => doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty(k, out var v)
+                && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            (cwd, text) = (S("cwd"), S("text"));
+        }
+        catch (JsonException) { }
+        if (cwd is null || text is null || text.Length > 200 || text.Contains('\n') || text.Contains('\r'))
+            return (400, "{\"ok\":false,\"error\":\"give cwd and a one-line text\"}");
+        var dir = CwdPath.Normalize(cwd);
+        bool known;
+        lock (_starting) known = _starting.ContainsKey(dir);
+        if (!known) return (404, "{\"ok\":false,\"error\":\"no start on the way there\"}");
+        if (StartAnswer?.Invoke(dir, text) != true) return (409, "{\"ok\":false,\"error\":\"the tab is gone\"}");
+        Log.Write($"start: the Zentrale answered \"{(text.Length > 40 ? text[..40] : text)}\" in {dir}");
+        return (200, "{\"ok\":true}");
     }
 
     public static string Note(string dir, int seconds) =>
@@ -529,14 +603,19 @@ public sealed class Delivery
     // GET /starting: the starts still on the way (macOS also shows each tab's last lines).
     public object Starting()
     {
-        lock (_starting)
-            return new
+        List<KeyValuePair<string, (DateTime Since, bool Reported)>> starts;
+        lock (_starting) starts = _starting.ToList();
+        return new
+        {
+            starting = starts.Select(kv =>
             {
-                starting = _starting.Select(kv => new
+                var screen = StartScreen?.Invoke(kv.Key);   // Windows: unset → "" and not readable, as before
+                return new
                 {
-                    cwd = kv.Key, seconds = (int)(DateTime.UtcNow - kv.Value.Since).TotalSeconds, screen = "", readable = false,
-                }).ToList(),
-            };
+                    cwd = kv.Key, seconds = (int)(DateTime.UtcNow - kv.Value.Since).TotalSeconds, screen = screen ?? "", readable = screen is not null,
+                };
+            }).ToList(),
+        };
     }
 
     // An instruction for the Zentrale itself (a wake's words, what Sir missed): alive (by name or
