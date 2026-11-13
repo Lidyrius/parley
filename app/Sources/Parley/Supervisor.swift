@@ -68,18 +68,31 @@ struct Supervisor: Codable, Equatable {
 
 /// A line of the Zentrale that Sir did not hear: he didn't take its call (Überwachungsmodus).
 /// Nothing waits for him — the Zentrale goes on working, its lines are kept here (missed.json,
-/// through restarts) without ringing again, and when he calls back the Zentrale gets them all
-/// as one instruction and makes one spoken summary of them. Keep in step with windows/Supervisor.cs.
+/// through restarts) without ringing again. What he hears when he calls back is ready before he
+/// does (`ready`): the one line that waits, or — once there are more — the one summary the
+/// Zentrale is asked for as each joins. It plays the moment his call connects; the Zentrale
+/// then learns what he heard and what he said. Keep in step with windows/Supervisor.cs.
 struct MissedLine: Codable, Equatable, Sendable {
     var at: Date
     var text: String
     var asks: Bool          // a <speak>: it wanted an answer
+    var sum: Bool? = nil    // the Zentrale's summary of the lines before it (not a line he missed)
 }
 
 enum Missed {
     static let file = Reminders.file.deletingLastPathComponent().appendingPathComponent("missed.json")
     static let most = 40                             // the newest; older ones are long overtaken
     static let noticeEvery: TimeInterval = 15 * 60   // a notification with the count at most this often
+    static let summaryWithin: TimeInterval = 180     // the Zentrale's next line is the summary asked for, this long
+
+    /// The lines he missed (without a summary made of them).
+    static func lines(_ list: [MissedLine]) -> [MissedLine] { list.filter { $0.sum != true } }
+
+    /// What he hears first when he calls back, if it is ready: the one line that waits, or the
+    /// summary of all of them. nil: more than one waits and the newest is not in a summary yet.
+    static func ready(_ list: [MissedLine]) -> MissedLine? {
+        list.count == 1 ? list[0] : list.last.flatMap { $0.sum == true ? $0 : nil }
+    }
 
     static func load(_ url: URL?) -> [MissedLine] {
         guard let url, let data = try? Data(contentsOf: url) else { return [] }
@@ -98,28 +111,60 @@ enum Missed {
 
     /// What the Zentrale reads in place of an answer to the line that rang unanswered.
     static let note = """
-    [Parley] Sir hat den Anruf nicht angenommen. Deine Zeile ist für seinen Rückruf vorgemerkt; \
-    alles Weitere, was du ihm sagst, wird ebenfalls gesammelt, ohne erneut zu klingeln. Arbeite \
-    normal weiter (Berichte annehmen, delegieren, was nur Sir entscheiden kann, offen halten). \
-    Antworte hierauf nur mit <speak-end></speak-end>.
+    [Parley] Sir hat den Anruf nicht angenommen. Deine Zeile ist für seinen Rückruf vorgemerkt: \
+    Ruft er zurück, hört er sie sofort, und du erfährst, was er geantwortet hat. Alles Weitere, \
+    was du ihm sagst, wird ebenfalls gesammelt, ohne erneut zu klingeln; dann bitte ich dich um \
+    EINE Zusammenfassung, die er stattdessen hört. Arbeite normal weiter (Berichte annehmen, \
+    delegieren, was nur Sir entscheiden kann, offen halten). Antworte hierauf nur mit \
+    <speak-end></speak-end>.
     """
 
     private static func clock(_ d: Date) -> String {
         d.formatted(.dateTime.hour().minute().locale(Locale(identifier: "de_DE")))
     }
 
-    /// Sir is back: everything he missed as one instruction — what is open first, then the rest,
-    /// each oldest first. `said`: what he says right now ("Hey Parley, …").
-    static func instruction(_ list: [MissedLine], said: String? = nil) -> String {
+    // The lines he missed: what is open first, then the rest, each oldest first.
+    private static func listing(_ list: [MissedLine]) -> [String] {
         let open = list.filter(\.asks), rest = list.filter { !$0.asks }
         func lines(_ l: [MissedLine]) -> String { l.map { "- (\(clock($0.at)) Uhr) \($0.text)" }.joined(separator: "\n") }
+        return (open.isEmpty ? [] : ["Offen — Fragen an ihn, älteste zuerst:\n" + lines(open)])
+            + (rest.isEmpty ? [] : ["Zur Kenntnis, älteste zuerst:\n" + lines(rest)])
+    }
+
+    private static let how = "zuerst, was offen ist oder seine Entscheidung braucht, dann kurz das Erledigte. Was sich inzwischen überholt oder erledigt hat, lass weg oder sag es in einem Halbsatz."
+
+    /// Sir is back and nothing was ready for him (or he says something right now — `said`, "Hey
+    /// Parley, …"): everything he missed as one instruction, for a summary made now.
+    static func instruction(_ all: [MissedLine], said: String? = nil) -> String {
+        let list = lines(all)
         var out = ["[Parley] Sir ruft zurück. Seit dem nicht angenommenen Anruf (\(list.first.map { clock($0.at) } ?? "?") Uhr) hat er \(list.count == 1 ? "diese Zeile" : "diese \(list.count) Zeilen") von dir nicht gehört."]
-        if !open.isEmpty { out.append("Offen — Fragen an ihn, älteste zuerst:\n" + lines(open)) }
-        if !rest.isEmpty { out.append("Zur Kenntnis, älteste zuerst:\n" + lines(rest)) }
-        out.append("Gib ihm jetzt EINE gesprochene Zusammenfassung: zuerst, was offen ist oder seine Entscheidung braucht, dann kurz das Erledigte. Was sich inzwischen überholt oder erledigt hat, lass weg oder sag es in einem Halbsatz. Danach geht es normal weiter.")
+        out += listing(list)
+        out.append("Gib ihm jetzt EINE gesprochene Zusammenfassung: \(how) Danach geht es normal weiter.")
         if let said = said?.trimmingCharacters(in: .whitespacesAndNewlines), !said.isEmpty {
             out.append("Außerdem sagt Sir gerade: „\(said)“")
         }
+        return out.joined(separator: "\n\n")
+    }
+
+    /// More than one line waits: what the Zentrale reads in place of an answer to the newest —
+    /// its next line is the summary he hears the moment he calls back.
+    static func summaryRequest(_ all: [MissedLine]) -> String {
+        let list = lines(all)
+        return (["[Parley] Sir hat noch nicht zurückgerufen; auch diese Zeile ist vorgemerkt. Es warten jetzt \(list.count) Zeilen von dir auf ihn."]
+            + listing(list)
+            + ["Schreib jetzt die EINE gesprochene Zusammenfassung, die er beim Rückruf sofort hört, ohne Wartezeit: \(how) Antworte nur mit ihr — als <speak>, wenn etwas offen ist, sonst als <speak-end>. Es klingelt dabei nicht; danach arbeitest du normal weiter."])
+            .joined(separator: "\n\n")
+    }
+
+    /// He called back and heard `line` at once (of `all` that waited): what the Zentrale reads now.
+    static func heard(_ line: MissedLine, of all: [MissedLine], answer: String) -> String {
+        let list = lines(all)
+        var out = ["[Parley] Sir hat zurückgerufen und sofort gehört: „\(line.text)“"]
+        if line.sum == true { out.append("Das war deine Zusammenfassung dieser \(list.count) Zeilen:\n" + listing(list).joined(separator: "\n\n")) }
+        let said = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        out.append(said.isEmpty
+            ? "Er hat darauf nichts gesagt. Liegt nichts Neues an, antworte nur mit <speak-end></speak-end>."
+            : "Seine Antwort: „\(said)“")
         return out.joined(separator: "\n\n")
     }
 

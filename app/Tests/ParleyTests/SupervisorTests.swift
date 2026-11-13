@@ -384,6 +384,69 @@ final class SupervisorTests: XCTestCase {
         XCTAssertEqual(LiveActivity.content(fromSessions: reg.json()).line, "Der Export läuft.")   // its own last line again
     }
 
+    // 13.11., Sir: "eine ewige Pause zwischen ich drücke auf Rückrufen, bis das Audio abspielt" —
+    // 7–11 s, the Zentrale wrote its summary only then. What he hears is ready before he calls.
+    func testWhatSirHearsAtHisCallBackIsReadyBeforeHeCalls() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("missed-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        server.missedFile = file
+        on()
+        presence("z", "Zentrale", zentrale)
+        XCTAssertNil(server.missedReady())
+        XCTAssertNil(server.takeMissedReady())
+
+        server.addMissed(turn("z", "Zentrale", zentrale, "Shirts ist fertig.", listen: false))   // the ring he didn't take
+        XCTAssertEqual(server.missedReady()?.text, "Shirts ist fertig.")                 // one line: it is what he hears
+        XCTAssertNil(server.missedSummaryRequest())                                      // … no summary to ask for
+        XCTAssertFalse(server.summaryAwaited())
+
+        clock.t += 300
+        XCTAssertEqual(server.addMissed(turn("z", "Zentrale", zentrale, "Rabatt auch für Bestandskunden?")), 2)
+        XCTAssertNil(server.missedReady())                                               // two lines: nothing ready …
+        let request = try XCTUnwrap(server.missedSummaryRequest())                       // … so the Zentrale is asked, now
+        XCTAssertTrue(request.contains("2 Zeilen") && request.contains("Shirts ist fertig.") && request.contains("beim Rückruf sofort hört"), request)
+        XCTAssertTrue(server.summaryAwaited())
+        clock.t += 8
+        XCTAssertEqual(server.addMissed(turn("z", "Zentrale", zentrale, "Offen ist der Rabatt, Sir; Shirts ist fertig. Wie entscheiden Sie?")), 2)
+        XCTAssertFalse(server.summaryAwaited())
+        XCTAssertEqual(server.missedCount(), 2)                                          // the summary is no third update
+        XCTAssertEqual(try sessions()["missed"] as? Int, 2)
+        XCTAssertEqual(server.missedReady()?.sum, true)
+        XCTAssertNil(server.missedSummaryRequest())
+
+        clock.t += 300
+        XCTAssertEqual(server.addMissed(turn("z", "Zentrale", zentrale, "Der Export läuft.", listen: false)), 3)
+        XCTAssertNil(server.missedReady())                                               // a newer line: that summary is overtaken
+        XCTAssertNotNil(server.missedSummaryRequest())
+        server.addMissed(turn("z", "Zentrale", zentrale, "Offen ist der Rabatt, Sir. Shirts ist fertig, der Export läuft. Wie entscheiden Sie?"))
+        XCTAssertEqual(server.missedCount(), 3)
+        XCTAssertEqual(Missed.load(file).filter { $0.sum == true }.count, 1)             // one summary, the newest
+
+        let again = restarted()                                                          // a restart keeps what is ready
+        again.missedFile = file
+        XCTAssertEqual(again.missedReady()?.text, server.missedReady()?.text)
+
+        let ready = try XCTUnwrap(server.takeMissedReady())                              // he calls back: it plays at once
+        XCTAssertTrue(ready.line.asks && ready.line.text.hasPrefix("Offen ist der Rabatt"))
+        XCTAssertEqual(Missed.lines(ready.all).count, 3)
+        XCTAssertEqual(server.missedCount(), 0)
+        XCTAssertNil(server.takeMissed())
+        XCTAssertEqual(Missed.load(file), [])
+        let heard = Missed.heard(ready.line, of: ready.all, answer: " Zehn Prozent. ")
+        XCTAssertTrue(heard.contains("sofort gehört: „Offen ist der Rabatt") && heard.contains("dieser 3 Zeilen") && heard.hasSuffix("Seine Antwort: „Zehn Prozent.“"), heard)
+        let one = MissedLine(at: clock.t, text: "Nur das.", asks: false)
+        XCTAssertTrue(Missed.heard(one, of: [one], answer: "").contains("nichts gesagt") && !Missed.heard(one, of: [one], answer: "").contains("Zusammenfassung"))
+
+        // A summary asked for and never written is not waited for for ever: the next line is a line.
+        server.addMissed(turn("z", "Zentrale", zentrale, "Eins.", listen: false))
+        server.addMissed(turn("z", "Zentrale", zentrale, "Zwei.", listen: false))
+        XCTAssertNotNil(server.missedSummaryRequest())
+        clock.t += Missed.summaryWithin + 1
+        XCTAssertEqual(server.addMissed(turn("z", "Zentrale", zentrale, "Drei.", listen: false)), 3)
+        XCTAssertNil(server.missedReady())
+        XCTAssertTrue(try XCTUnwrap(server.takeMissed()).contains("diese 3 Zeilen"))     // the old way stays: a summary made then
+    }
+
     func testTheRingSirAskedForComesOnceAndACallBackIsOneDialog() {
         on()
         presence("z", "Zentrale", zentrale)

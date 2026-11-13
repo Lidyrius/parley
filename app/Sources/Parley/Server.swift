@@ -88,6 +88,7 @@ final class ControlServer: @unchecked Sendable {
     var missedFile: URL?
     private lazy var missed: [MissedLine] = Missed.load(missedFile)
     private var ringAgainAt: Date?
+    private var summaryAskedAt: Date?   // the Zentrale was asked for the summary: its next line is it
 
     // POST /permission holds the hook at most this long, then answers "ask".
     var permissionHold: TimeInterval = 110
@@ -265,12 +266,12 @@ final class ControlServer: @unchecked Sendable {
     private func syncSupervisor() {
         sessions.supervisor = supervisor.on
         sessions.zentraleCwd = Zentrale.normalize(zentraleDir())
-        sessions.missed = missed.count
+        sessions.missed = Missed.lines(missed).count
     }
 
     // MARK: what Sir missed (a call of the Zentrale he didn't take)
 
-    func missedCount() -> Int { queue.sync { missed.count } }
+    func missedCount() -> Int { queue.sync { Missed.lines(missed).count } }
 
     /// Session `id` is the Zentrale; `supervised`: … and the Überwachungsmodus is on.
     func isZentrale(_ id: String, supervised: Bool = false) -> Bool {
@@ -281,17 +282,62 @@ final class ControlServer: @unchecked Sendable {
     }
 
     /// The Zentrale's line is kept for Sir's call back; how many wait now. `ringAgain`: he asked
-    /// to be rung again in that many seconds.
+    /// to be rung again in that many seconds. The line that follows `missedSummaryRequest` is
+    /// the summary asked for: it stands for the others and takes an older summary's place.
     @discardableResult
     func addMissed(_ turn: TurnPayload, ringAgain: TimeInterval? = nil) -> Int {
         queue.sync {
-            missed.append(MissedLine(at: now(), text: turn.speak, asks: turn.wantsListen))
+            let summary = !missed.isEmpty && summaryAwaitedOnQueue
+            summaryAskedAt = nil
+            if summary { missed.removeAll { $0.sum == true } }
+            missed.append(MissedLine(at: now(), text: turn.speak, asks: turn.wantsListen, sum: summary ? true : nil))
             if missed.count > Missed.most { missed.removeFirst(missed.count - Missed.most) }
             Missed.save(missed, to: missedFile)
-            sessions.missed = missed.count
+            let n = Missed.lines(missed).count
+            sessions.missed = n
             sessions.reported(id: Self.sessionKey(turn), speak: turn.speak)
             if let ringAgain { ringAgainAt = now().addingTimeInterval(ringAgain) }
-            return missed.count
+            return n
+        }
+    }
+
+    private var summaryAwaitedOnQueue: Bool {
+        summaryAskedAt.map { now().timeIntervalSince($0) < Missed.summaryWithin } ?? false
+    }
+
+    /// The Zentrale writes the summary Sir is to hear at his call back (asked a moment ago).
+    func summaryAwaited() -> Bool { queue.sync { !missed.isEmpty && summaryAwaitedOnQueue } }
+
+    /// What Sir hears first when he calls back, if it is ready (Missed.ready).
+    func missedReady() -> MissedLine? { queue.sync { Missed.ready(missed) } }
+
+    /// Nothing is ready for his call back (more than one line waits, the newest in no summary):
+    /// the request for the summary, which the Zentrale reads in place of an answer. nil: ready.
+    func missedSummaryRequest() -> String? {
+        queue.sync {
+            guard !missed.isEmpty, Missed.ready(missed) == nil else { return nil }
+            summaryAskedAt = now()
+            return Missed.summaryRequest(missed)
+        }
+    }
+
+    // On `queue`: nothing waits any more.
+    private func clearMissed() {
+        missed = []
+        ringAgainAt = nil
+        summaryAskedAt = nil
+        Missed.save(missed, to: missedFile)
+        sessions.missed = 0
+    }
+
+    /// Sir is back and a line is ready for him: it, and everything that waited — the list is
+    /// empty again. nil: nothing waits, or nothing is ready (`takeMissed` then).
+    func takeMissedReady() -> (line: MissedLine, all: [MissedLine])? {
+        queue.sync {
+            guard let line = Missed.ready(missed) else { return nil }
+            let all = missed
+            clearMissed()
+            return (line, all)
         }
     }
 
@@ -301,10 +347,7 @@ final class ControlServer: @unchecked Sendable {
         queue.sync {
             guard !missed.isEmpty else { return nil }
             let text = Missed.instruction(missed, said: said)
-            missed = []
-            ringAgainAt = nil
-            Missed.save(missed, to: missedFile)
-            sessions.missed = 0
+            clearMissed()
             return text
         }
     }
@@ -346,7 +389,7 @@ final class ControlServer: @unchecked Sendable {
         struct Wire: Encodable { let ok = true; let on: Bool; let exempt: [String]; let zentrale: String?; let waiting: Int; let missed: Int }
         return Self.encode(Wire(on: supervisor.on, exempt: supervisor.exempt,
                                 zentrale: sessions.session(inFolder: sessions.zentraleCwd)?.id, waiting: reports.count,
-                                missed: missed.count))
+                                missed: Missed.lines(missed).count))
     }
 
     // A turn's way to Sir's ear — or, while the mode is on, to the Zentrale as a report: the

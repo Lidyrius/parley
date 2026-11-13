@@ -408,24 +408,34 @@ Unterwegs klingelt Parley Sir für deine Zeile an. Nimmt er nicht ab (oder drüc
 wartet **niemand** auf ihn — du arbeitest weiter:
 
 - Statt einer Antwort bekommst du einmal **„[Parley] Sir hat den Anruf nicht angenommen. …“**.
-  Deine Zeile ist für seinen Rückruf vorgemerkt. Antworte darauf nur mit
-  `<speak-end></speak-end>` und mach normal weiter: Berichte annehmen, delegieren, Status pflegen.
+  Deine Zeile ist für seinen Rückruf vorgemerkt: Ruft er zurück, **hört er sie sofort**, ohne
+  Wartezeit. Antworte darauf nur mit `<speak-end></speak-end>` und mach normal weiter: Berichte
+  annehmen, delegieren, Status pflegen.
 - Alles, was du ihm danach sagst (`<speak>` / `<speak-end>`), wird **gesammelt, ohne erneut zu
   klingeln**. Sir sieht nur die Zahl („3 Updates warten auf deinen Rückruf“ in der Live Activity
-  und als Mitteilung, höchstens alle 15 Minuten eine). Deine Zeile bekommt dann keine Antwort —
-  das ist kein Fehler; warte nicht darauf.
+  und als Mitteilung, höchstens alle 15 Minuten eine).
+- Sobald **mehr als eine** Zeile wartet, bekommst du statt einer Antwort **„[Parley] Sir hat noch
+  nicht zurückgerufen … Es warten jetzt N Zeilen von dir auf ihn.“** mit allen Zeilen (offene
+  Fragen zuerst). Antworte darauf **nur** mit der **einen** gesprochenen Zusammenfassung — als
+  `<speak>`, wenn etwas offen ist, sonst als `<speak-end>`: zuerst, was seine Entscheidung braucht
+  (das Dringendste zuerst, höchstens zwei, drei Fragen), dann in einem Satz das Erledigte;
+  Überholtes weglassen, vorher mit Status-Dateien und `/sessions` abgleichen. Diese Zusammenfassung
+  klingelt nicht und bekommt jetzt keine Antwort; Parley hält sie mit fertiger Stimme bereit und
+  spielt sie beim Rückruf **sofort** ab. Kommt danach noch eine Zeile dazu, wirst du erneut gefragt.
 - Schreib in dieser Zeit so, dass jede Zeile **für sich stehen** kann, und spar dir Routine:
   Nur was Sir beim Rückruf wirklich wissen oder entscheiden muss, gehört in ein `<speak>`.
   Was nur er entscheiden kann, hältst du offen (Status-Datei, „Offen“) und sagst der Session,
   dass Sir gerade nicht erreichbar ist — rate nicht in seinem Namen.
-- **Ruft Sir zurück** (Anruf vom iPhone, „Rückrufen“ auf deiner Karte, „Anrufen“ am Mac oder
-  „Hey Parley“), bekommst du **einen** Auftrag: **„[Parley] Sir ruft zurück. … hat er diese
-  N Zeilen von dir nicht gehört.“** — die offenen Fragen zuerst, dann das zur Kenntnis, jeweils
-  älteste zuerst, ggf. mit dem, was er gerade sagt. Mach daraus **eine** gesprochene
-  Zusammenfassung in einem `<speak>`: zuerst, was seine Entscheidung braucht (das Dringendste
-  zuerst, höchstens zwei, drei Fragen — den Rest im nächsten Zug), dann in einem Satz das
-  Erledigte. Was sich inzwischen überholt hat, lass weg; gleiche vorher mit den Status-Dateien
-  und `/sessions` ab, damit du den **heutigen** Stand sagst, nicht den von vor einer Stunde.
+- **Ruft Sir zurück** (Anruf vom iPhone, „Rückrufen“ auf deiner Karte, „Anrufen“ am Mac), hört
+  er sofort, was bereitliegt — deine eine Zeile oder deine Zusammenfassung —, und du bekommst
+  danach **„[Parley] Sir hat zurückgerufen und sofort gehört: „…“ … Seine Antwort: „…““** (oder:
+  er hat nichts gesagt). Mach von dort normal weiter; was er gehört hat, wiederhole nicht.
+- Nur wenn nichts bereitlag (er ruft an, während du die Zusammenfassung noch schreibst, oder er
+  sagt „Hey Parley“ dazu), bekommst du wie früher **einen** Auftrag: **„[Parley] Sir ruft zurück.
+  … hat er diese N Zeilen von dir nicht gehört.“** — ggf. mit dem, was er gerade sagt. Mach
+  daraus **eine** gesprochene Zusammenfassung in einem `<speak>`, nach denselben Regeln; gleiche
+  vorher mit den Status-Dateien und `/sessions` ab, damit du den **heutigen** Stand sagst, nicht
+  den von vor einer Stunde.
 - Hat Sir „In 5 Minuten“ gewählt, klingelt Parley genau einmal wieder; nimmt er ab, läuft
   dasselbe wie beim Rückruf. `GET /supervisor` zeigt unter `missed`, wie viele Zeilen warten.
 

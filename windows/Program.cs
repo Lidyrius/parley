@@ -259,7 +259,9 @@ internal sealed class TrayApp : ApplicationContext
     // Fortsetzen sends its resume right after the call starts). As macOS.
     private async Task GreetCaller()
     {
-        await Task.Delay(1200);
+        // He calls back after a call he didn't take: what waits for him plays at once — only a
+        // Fortsetzen's `resume` gets its moment (the phone sends it right behind `call start`).
+        await Task.Delay(_server.MissedCount > 0 ? 250 : 1200);
         if (!PhoneCall.Active || _server.ResumedRecently()) return;
         // He calls back after a call he didn't take: first what he missed, as one summary.
         if (_server.MissedCount > 0) _server.CallBack(); else _server.StartWake();

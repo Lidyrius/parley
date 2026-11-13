@@ -109,7 +109,9 @@ internal sealed class Host
     // Sir called in: Parley greets him at once and listens — no "Hey Parley" needed. As TrayApp.
     private async Task GreetCaller()
     {
-        await Task.Delay(1200);
+        // He calls back after a call he didn't take: what waits for him plays at once — only a
+        // Fortsetzen's `resume` gets its moment (the phone sends it right behind `call start`).
+        await Task.Delay(_server.MissedCount > 0 ? 250 : 1200);
         if (!PhoneCall.Active || _server.ResumedRecently()) return;
         if (_server.MissedCount > 0) _server.CallBack(); else _server.StartWake();
     }

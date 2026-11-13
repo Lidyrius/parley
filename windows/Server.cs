@@ -690,7 +690,7 @@ public sealed class Server
     private void SyncSupervisor()
     {
         Sessions.SetSupervised(_supervisor.On, ZentraleDir());
-        lock (_lock) Sessions.SetMissed(_missed.Count);
+        lock (_lock) Sessions.SetMissed(Missed.Lines(_missed).Count);
     }
 
     // {"ok":true,"on","exempt","zentrale" (its session, when it runs),"waiting" (reports in the
@@ -703,7 +703,7 @@ public sealed class Server
         lock (_lock)
         {
             json["waiting"] = _reports.Count;
-            json["missed"] = _missed.Count;
+            json["missed"] = Missed.Lines(_missed).Count;
         }
         return JsonSerializer.Serialize(json);
     }
@@ -712,7 +712,7 @@ public sealed class Server
 
     public int MissedCount
     {
-        get { lock (_lock) return _missed.Count; }
+        get { lock (_lock) return Missed.Lines(_missed).Count; }
     }
 
     /// Session `id` is the Zentrale; `supervised`: … and the Überwachungsmodus is on.
@@ -720,21 +720,81 @@ public sealed class Server
         (!supervised || _supervisor.On) && Sessions.Info(id) is { } i && Supervisor.IsZentrale(i.Label, i.Cwd, ZentraleDir());
 
     /// The Zentrale's line is kept for Sir's call back; how many wait now. `ringAgain`: he asked
-    /// to be rung again in that many seconds.
+    /// to be rung again in that many seconds. The line that follows MissedSummaryRequest is the
+    /// summary asked for: it stands for the others and takes an older summary's place.
     public int AddMissed(TurnPayload turn, double? ringAgain = null)
     {
         int n;
         lock (_lock)
         {
-            _missed.Add(new MissedLine { At = (DateTime.UtcNow - DateTime.UnixEpoch).TotalMilliseconds, Text = turn.Speak, Asks = turn.WantsListen });
+            var summary = _missed.Count > 0 && SummaryAwaitedLocked;
+            _summaryAskedAt = null;
+            if (summary) _missed.RemoveAll(l => l.Sum == true);
+            _missed.Add(new MissedLine
+            {
+                At = (DateTime.UtcNow - DateTime.UnixEpoch).TotalMilliseconds, Text = turn.Speak, Asks = turn.WantsListen,
+                Sum = summary ? true : (bool?)null,
+            });
             if (_missed.Count > Missed.Most) _missed.RemoveRange(0, _missed.Count - Missed.Most);
             Missed.Save(_missed, Missed.FilePath);
-            n = _missed.Count;
+            n = Missed.Lines(_missed).Count;
             Sessions.SetMissed(n);
             if (ringAgain is { } seconds) _ringAgainAt = DateTime.UtcNow.AddSeconds(seconds);
         }
         Sessions.Reported(SessionKey(turn), turn.Speak);
         return n;
+    }
+
+    private DateTime? _summaryAskedAt;   // the Zentrale was asked for the summary: its next line is it
+
+    // Under _lock.
+    private bool SummaryAwaitedLocked => _summaryAskedAt is { } at && DateTime.UtcNow - at < Missed.SummaryWithin;
+
+    /// The Zentrale writes the summary Sir is to hear at his call back (asked a moment ago).
+    public bool SummaryAwaited
+    {
+        get { lock (_lock) return _missed.Count > 0 && SummaryAwaitedLocked; }
+    }
+
+    /// What Sir hears first when he calls back, if it is ready (Missed.Ready).
+    public MissedLine? MissedReady
+    {
+        get { lock (_lock) return Missed.Ready(_missed); }
+    }
+
+    /// Nothing is ready for his call back (more than one line waits, the newest in no summary):
+    /// the request for the summary, which the Zentrale reads in place of an answer. null: ready.
+    public string? MissedSummaryRequest()
+    {
+        lock (_lock)
+        {
+            if (_missed.Count == 0 || Missed.Ready(_missed) is not null) return null;
+            _summaryAskedAt = DateTime.UtcNow;
+            return Missed.SummaryRequest(_missed);
+        }
+    }
+
+    // Under _lock: nothing waits any more.
+    private void ClearMissed()
+    {
+        _missed.Clear();
+        _ringAgainAt = null;
+        _summaryAskedAt = null;
+        Missed.Save(_missed, Missed.FilePath);
+        Sessions.SetMissed(0);
+    }
+
+    /// Sir is back and a line is ready for him: it, and everything that waited — the list is
+    /// empty again. null: nothing waits, or nothing is ready (TakeMissed then).
+    public (MissedLine Line, List<MissedLine> All)? TakeMissedReady()
+    {
+        lock (_lock)
+        {
+            if (Missed.Ready(_missed) is not { } line) return null;
+            var all = _missed.ToList();
+            ClearMissed();
+            return (line, all);
+        }
     }
 
     /// Sir is back: everything kept, as the one instruction for the Zentrale — and the list is
@@ -745,10 +805,7 @@ public sealed class Server
         {
             if (_missed.Count == 0) return null;
             var text = Missed.Instruction(_missed, said);
-            _missed.Clear();
-            _ringAgainAt = null;
-            Missed.Save(_missed, Missed.FilePath);
-            Sessions.SetMissed(0);
+            ClearMissed();
             return text;
         }
     }

@@ -377,13 +377,16 @@ final class AppController: ObservableObject {
     // calls back a waiting line has its turn, and Fortsetzen sends its resume right after the
     // call starts (a dialog, or Sir's timer ending — then the session reports by itself).
     private func greetCaller() {
+        // He calls back after a call he didn't take: what waits for him plays at once — only a
+        // Fortsetzen's `resume` gets its moment (the phone sends it right behind `call start`).
+        let wait = server.missedCount() > 0 ? Self.callBackGrace : 1.2
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1.2))
+            try? await Task.sleep(for: .seconds(wait))
             guard let self, phone.callActive, !server.resumedRecently() else { return }
-            // He calls back after a call he didn't take: first what he missed, as one summary.
             if server.missedCount() > 0 { server.callBack() } else { server.wakeFromPhone() }
         }
     }
+    static let callBackGrace = 0.25
 
     // MARK: - Fragerunde
 
@@ -498,9 +501,14 @@ final class AppController: ObservableObject {
         if server.missedCount() > 0, server.isZentrale(session) {
             if ringing { return missedTurn(turn, key: key, first: false) }
             if phone.callActive || !phone.away {
-                server.addMissed(turn)
-                server.callBack()
-                return TurnReply(transcript: "", park: true)
+                if server.summaryAwaited() {
+                    // The summary for his call back — and he is here already: it is voiced as it comes.
+                    _ = server.takeMissed()
+                } else {
+                    server.addMissed(turn)
+                    server.callBack()
+                    return TurnReply(transcript: "", park: true)
+                }
             }
         }
 
@@ -544,8 +552,8 @@ final class AppController: ObservableObject {
             // Zentrale goes on — no waiting half an hour with everything behind it.
             switch await ringPhone(label: turn.spokenLabel) {
             case .answered: break
-            case .later(let after): prefetch?.cancel(); return missedTurn(turn, key: key, first: true, ringAgain: after)
-            case .missed: prefetch?.cancel(); return missedTurn(turn, key: key, first: true)
+            case .later(let after): return missedTurn(turn, key: key, first: true, ringAgain: after, voice: prefetch)
+            case .missed: return missedTurn(turn, key: key, first: true, voice: prefetch)
             }
         } else if rang, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: session, key: key) {
             calledBack = back
@@ -848,9 +856,14 @@ final class AppController: ObservableObject {
     private var missedNoticeAt = Date.distantPast
 
     /// The Zentrale's line is kept for Sir's call back; its turn ends now — nothing waits for him.
-    /// `first`: this is the line that rang: the Zentrale learns that he didn't answer.
-    private func missedTurn(_ turn: TurnPayload, key: String, first: Bool, ringAgain: TimeInterval? = nil) -> TurnReply {
+    /// `first`: this is the line that rang: the Zentrale learns that he didn't answer. A later
+    /// one is answered with the request for the one summary he is to hear (unless it is that).
+    /// `voice`: the line's synthesis, already made for the ring.
+    private func missedTurn(_ turn: TurnPayload, key: String, first: Bool, ringAgain: TimeInterval? = nil,
+                            voice: Task<Data?, Never>? = nil) -> TurnReply {
         let n = server.addMissed(turn, ringAgain: ringAgain)
+        let request = server.missedSummaryRequest()
+        prepareCallBack(voice: voice)
         setStatus(key, "waiting")
         Log.write("missed: \(turn.spokenLabel) — \(first ? "the call was not taken" : "no new ring"), \(n) line(s) wait for Sir's call back"
                   + (ringAgain.map { ", ringing once more in \(Int($0)) s" } ?? ""))
@@ -862,10 +875,78 @@ final class AppController: ObservableObject {
             let body = Missed.waiting(n) + ". Zuletzt: " + turn.speak
             Task.detached { await apns.notify(token: target.token, env: target.env, title: "Parley · \(turn.spokenLabel)", body: body, session: session) }
         }
-        return TurnReply(transcript: first ? Missed.note : "", park: true)
+        if request != nil { Log.write("missed: the Zentrale is asked for the summary Sir hears at his call back") }
+        return TurnReply(transcript: first ? Missed.note : request ?? "", park: true)
+    }
+
+    // The voice of what Sir hears first when he calls back, made while he is away: his call
+    // then starts with it, not with a wait for the synthesis.
+    private var callBackVoice: (text: String, pcm: Task<Data?, Never>)?
+
+    private func prepareCallBack(voice: Task<Data?, Never>? = nil) {
+        let config = AppConfig.load()
+        if holdVoice == nil {
+            let text = Self.holdLine(config)
+            holdVoice = (text, Task { config.useGoogle ? await GoogleTTS.synth(text, config: config) : nil })
+        }
+        guard let line = server.missedReady() else { callBackVoice = nil; return }
+        guard callBackVoice?.text != line.text else { return }
+        callBackVoice = (line.text, voice ?? Task { config.useGoogle ? await GoogleTTS.synth(line.text, config: config) : nil })
+    }
+
+    // Nothing is ready for his call back (the Zentrale still writes its summary, or writes it
+    // only now): he hears this at once — no silence after "Rückrufen", "Ohne Floskeln" or not.
+    // Its voice is made with the first line he misses.
+    private var holdVoice: (text: String, pcm: Task<Data?, Never>)?
+
+    private static func holdLine(_ config: AppConfig) -> String {
+        config.language.lowercased().hasPrefix("de") ? "Einen Moment, Sir, ich fasse zusammen, was Sie verpasst haben."
+                                                     : "One moment, Sir, I'll sum up what you missed."
+    }
+
+    private func sayHold(_ config: AppConfig) async {
+        let text = Self.holdLine(config)
+        phone.setSpeaker(Zentrale.label)
+        if let made = holdVoice, made.text == text, let pcm = await made.pcm.value {
+            await speakAndBeep(text, config: config, prefetched: pcm, beep: false)
+        } else {
+            await speakLine(text, config: config)
+        }
+    }
+
+    /// Sir is back and what he is to hear is ready: it plays at once — no summary to wait for —
+    /// and the Zentrale learns what he heard and what he said to it.
+    private func voiceCallBack(_ line: MissedLine, of all: [MissedLine]) async -> TurnReply {
+        Log.write("missed: Sir is back — the line kept ready for him plays at once (\(Missed.lines(all).count) waited)")
+        let config = AppConfig.load()
+        resumeGen += 1
+        phone.setSpeaker(Zentrale.label)   // it is the Zentrale's line: the call screen says so from the start
+        var pcm: Data?
+        if let made = callBackVoice, made.text == line.text { pcm = await made.pcm.value }
+        callBackVoice = nil
+        await ackTask?.value
+        ackTask = nil
+        await pauseMediaIfPlaying()
+        await speakAndBeep(line.text, config: config, prefetched: pcm, beep: line.asks,
+                           last: !line.asks && server.nothingQueued())
+        let barged = phone.takeBarge() || takeLocalBarge()
+        var answer = ""
+        if line.asks || barged {
+            LiveStatus.set(phase: "listening")
+            let wav = await record(preroll: barged)
+            LiveStatus.set(phase: "transcribing")
+            answer = await transcribe(wav, config: config)
+            startAck(intent: .other, hasText: !answer.isEmpty, config: config)
+        } else {
+            scheduleResume()
+        }
+        Log.write("missed: heard, \(answer.isEmpty ? "nothing said" : "answered (\(answer.count) chars)") → the Zentrale")
+        _ = deliverToZentrale(Missed.heard(line, of: all, answer: answer))
+        return TurnReply(transcript: "", park: false)
     }
 
     static let summaryWait: TimeInterval = 60
+    static let summaryHold: TimeInterval = 15
 
     /// Sir is back — he called, pressed "Anrufen", or the ring he asked for was taken: everything
     /// he missed goes to the Zentrale as one instruction, and the line is held until its summary
@@ -879,15 +960,27 @@ final class AppController: ObservableObject {
                 return none
             }
         }
-        guard phone.callActive || !phone.away, let all = server.takeMissed() else { return none }
+        guard phone.callActive || !phone.away else { return none }
+        let config = AppConfig.load()
+        var held = false
+        if server.summaryAwaited() {
+            // He calls while the Zentrale writes that summary: the line is held for it (it is
+            // voiced as an ordinary turn the moment it comes) — nothing is asked for twice.
+            // Should it not come, the old way: everything to the Zentrale, for a summary now.
+            Log.write("missed: Sir is back while the Zentrale writes its summary — the line is held for it")
+            await sayHold(config)
+            held = true
+            let until = Date().addingTimeInterval(Self.summaryHold)
+            while Date() < until, server.nothingQueued(), phone.callActive || !phone.away {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard server.nothingQueued(), phone.callActive || !phone.away else { return none }
+        }
+        if let ready = server.takeMissedReady() { return await voiceCallBack(ready.line, of: ready.all) }
+        guard let all = server.takeMissed() else { return none }
         Log.write("missed: Sir is back — what he missed goes to the Zentrale for one summary")
         _ = deliverToZentrale(all)
-        let config = AppConfig.load()
-        if !brief {
-            let de = config.language.lowercased().hasPrefix("de")
-            await speakLine(de ? "Einen Moment, Sir, ich fasse zusammen, was Sie verpasst haben."
-                               : "One moment, Sir, I'll sum up what you missed.", config: config)
-        }
+        if !held { await sayHold(config) }
         let until = Date().addingTimeInterval(Self.summaryWait)
         while Date() < until, server.nothingQueued(), phone.callActive || !phone.away {
             try? await Task.sleep(nanoseconds: 100_000_000)

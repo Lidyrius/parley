@@ -136,10 +136,19 @@ list without a new ring (its turn is answered empty and parks); Sir gets one not
 the count, then at most one every 15 minutes, and "In N Min." on the phone rings exactly once
 more. `GET /sessions` carries `"missed": n` and the Zentrale's row `"callback": 0` ("wartet auf
 Rückruf", the tile offers Rückrufen); the Live Activity's line is "n Updates warten auf deinen
-Rückruf". When Sir calls back (a call from the phone, "Anrufen" at the host, "Hey Parley") — or
-is back at the host when the Zentrale next speaks — the Zentrale gets everything as one
-instruction ("[Parley] Sir ruft zurück. … Offen — … Zur Kenntnis — …"), the list is emptied, and
-the call is held until its one summary is voiced. `GET /sessions` carries `"supervisor": true` while it is on (omitted
+Rückruf". What Sir hears at his call back is ready before he calls: the one line that waits (its
+voice kept from the ring), or — as soon as a second line joins — one summary the Zentrale is asked
+for in place of an answer to that line ("[Parley] Sir hat noch nicht zurückgerufen … Es warten
+jetzt N Zeilen …"; its next line is the summary, kept with its voice and counted as no update;
+asked again for every further line). When he calls back (a call from the phone, "Anrufen" at the
+host) that line plays the moment the call connects — no summary to wait for —, Parley listens if
+it asks, the list is emptied, and the Zentrale reads "[Parley] Sir hat zurückgerufen und sofort
+gehört: „…“ … Seine Antwort: „…“". Only when nothing is ready (he calls while the summary is being
+written — the line is held ≤ 15 s for it —, says "Hey Parley", or is back at the host when the
+Zentrale next speaks) the Zentrale gets everything as one instruction ("[Parley] Sir ruft zurück.
+… Offen — … Zur Kenntnis — …") and the call is held until its one summary is voiced. He never
+meets silence there either: "Einen Moment, Sir, ich fasse zusammen, was Sie verpasst haben." plays
+at once (its voice made with the first missed line), with "Ohne Floskeln" too. `GET /sessions` carries `"supervisor": true` while it is on (omitted
 otherwise) and `"zentrale": true` on the Zentrale's row: the apps then show the Zentrale as the
 one card and the other sessions (name, state, last line) folded away below it; the Live Activity
 shows the Zentrale alone.

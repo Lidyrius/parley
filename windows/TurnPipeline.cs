@@ -265,9 +265,17 @@ public sealed class TurnPipeline
             if (ringing) return MissedTurn(turn, first: false);
             if (PhoneCall.Active || !PhoneCall.Away)
             {
-                waits.AddMissed(turn);
-                waits.CallBack();
-                return ("", true, 0, "");
+                if (waits.SummaryAwaited)
+                {
+                    // The summary for his call back — and he is here already: it is voiced as it comes.
+                    waits.TakeMissed();
+                }
+                else
+                {
+                    waits.AddMissed(turn);
+                    waits.CallBack();
+                    return ("", true, 0, "");
+                }
             }
         }
 
@@ -302,8 +310,8 @@ public sealed class TurnPipeline
             // One ring. Not taken (or "not now"): the line is kept for his call back and the
             // Zentrale goes on — no waiting half an hour with everything behind it.
             var rung = await ringOnce(turn.SpokenLabel);
-            if (rung.Kind == RingKind.Later) return MissedTurn(turn, first: true, ringAgain: rung.After);
-            if (rung.Kind == RingKind.Missed) return MissedTurn(turn, first: true);
+            if (rung.Kind == RingKind.Later) return MissedTurn(turn, first: true, ringAgain: rung.After, voice: prefetch);
+            if (rung.Kind == RingKind.Missed) return MissedTurn(turn, first: true, voice: prefetch);
         }
         else (_, calledBack) = await ReachPhone(turn.SpokenLabel, session);
         if (ringing && PhoneCall.Active && !config.Brief) await AnnounceRound(config);
@@ -484,12 +492,18 @@ public sealed class TurnPipeline
 
     private DateTime _missedNoticeAt = DateTime.MinValue;
     private static readonly TimeSpan SummaryWait = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan SummaryHold = TimeSpan.FromSeconds(15);
 
     /// The Zentrale's line is kept for Sir's call back; its turn ends now — nothing waits for him.
-    /// `first`: this is the line that rang: the Zentrale learns that he didn't answer.
-    private (string transcript, bool park, int wait, string resume) MissedTurn(TurnPayload turn, bool first, double? ringAgain = null)
+    /// `first`: this is the line that rang: the Zentrale learns that he didn't answer. A later
+    /// one is answered with the request for the one summary he is to hear (unless it is that).
+    /// `voice`: the line's synthesis, already made for the ring.
+    private (string transcript, bool park, int wait, string resume) MissedTurn(TurnPayload turn, bool first, double? ringAgain = null,
+                                                                                Task<byte[]?>? voice = null)
     {
         var n = Host!.AddMissed(turn, ringAgain);
+        var request = Host!.MissedSummaryRequest();
+        PrepareCallBack(voice);
         Log.Write($"missed: {turn.SpokenLabel} — {(first ? "the call was not taken" : "no new ring")}, {n} line(s) wait for Sir's call back"
             + (ringAgain is double again ? $", ringing once more in {(int)again} s" : ""));
         // One notification, then at most one every quarter of an hour with the count — the Live
@@ -499,7 +513,73 @@ public sealed class TurnPipeline
             _missedNoticeAt = DateTime.UtcNow;
             _ = Apns.SendAlert($"Parley · {turn.SpokenLabel}", Missed.Waiting(n) + ". Zuletzt: " + turn.Speak, Server.SessionKey(turn));
         }
-        return (first ? Missed.Note : "", true, 0, "");
+        if (request is not null) Log.Write("missed: the Zentrale is asked for the summary Sir hears at his call back");
+        return (first ? Missed.Note : request ?? "", true, 0, "");
+    }
+
+    // The voice of what Sir hears first when he calls back, made while he is away: his call
+    // then starts with it, not with a wait for the synthesis.
+    private (string Text, Task<byte[]?> Pcm)? _callBackVoice;
+
+    private void PrepareCallBack(Task<byte[]?>? voice = null)
+    {
+        var config = Config.Load();
+        _holdVoice ??= (HoldLine(config), GoogleTts.Synthesize(HoldLine(config), config));
+        if (Host?.MissedReady is not { } line) { _callBackVoice = null; return; }
+        if (_callBackVoice?.Text == line.Text) return;
+        _callBackVoice = (line.Text, voice ?? GoogleTts.Synthesize(line.Text, config));
+    }
+
+    // Nothing is ready for his call back (the Zentrale still writes its summary, or writes it
+    // only now): he hears this at once — no silence after "Rückrufen", "Ohne Floskeln" or not.
+    // Its voice is made with the first line he misses. As macOS.
+    private (string Text, Task<byte[]?> Pcm)? _holdVoice;
+
+    private static string HoldLine(Config config) =>
+        config.Language.StartsWith("de", StringComparison.OrdinalIgnoreCase)
+            ? "Einen Moment, Sir, ich fasse zusammen, was Sie verpasst haben."
+            : "One moment, Sir, I'll sum up what you missed.";
+
+    private async Task SayHold(Config config)
+    {
+        var text = HoldLine(config);
+        PhoneCall.SetSpeaker(Routing.ZentraleName);
+        byte[]? pcm = null;
+        if (_holdVoice is { } made && made.Text == text) pcm = await made.Pcm;
+        if (pcm is not null) await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: text);
+        else await SpeakLine(text, config);
+    }
+
+    /// Sir is back and what he is to hear is ready: it plays at once — no summary to wait for —
+    /// and the Zentrale learns what he heard and what he said to it. As macOS.
+    private async Task<(string transcript, bool park, int wait, string resume)> VoiceCallBack(MissedLine line, List<MissedLine> all)
+    {
+        Log.Write($"missed: Sir is back — the line kept ready for him plays at once ({Missed.Lines(all).Count} waited)");
+        var config = Config.Load();
+        _resumeGen++;
+        PhoneCall.SetSpeaker(Routing.ZentraleName);   // it is the Zentrale's line: the call screen says so from the start
+        byte[]? pcm = null;
+        if (_callBackVoice is { } made && made.Text == line.Text) pcm = await made.Pcm;
+        _callBackVoice = null;
+        if (_ackTask is not null) { await _ackTask; _ackTask = null; }
+        pcm ??= await GoogleTts.Synthesize(line.Text, config);
+        await PauseMediaIfPlaying();
+        var beeped = false;
+        if (pcm is not null)
+            beeped = await AudioOut.PlayPcm(AudioOut.ApplyRate(pcm, config.SpeakingRate), caption: line.Text,
+                                            last: !line.Asks && _queuedTurns() == 0, beep: line.Asks);
+        else Log.Write("no TTS audio (missing key or synth failed)");
+        var barged = PhoneCall.TakeBarge();
+        var answer = "";
+        if (line.Asks || barged)
+        {
+            (_, answer) = await ListenOnce(config, barged, beeped: beeped);
+            StartAck(Groq.Intent.Other, answer.Length > 0, config);
+        }
+        else ScheduleResume();
+        Log.Write($"missed: heard, {(answer.Length == 0 ? "nothing said" : $"answered ({answer.Length} chars)")} → the Zentrale");
+        Host?.Delivery.ToZentrale(Missed.Heard(line, all, answer), config);
+        return ("", false, 0, "");
     }
 
     /// Sir is back — he called, pressed "Anrufen", or the ring he asked for was taken: everything
@@ -518,17 +598,27 @@ public sealed class TurnPipeline
                 return none;
             }
         }
-        if ((PhoneCall.Away && !PhoneCall.Active) || host.TakeMissed() is not { } all) return none;
-        Log.Write("missed: Sir is back — what he missed goes to the Zentrale for one summary");
+        if (PhoneCall.Away && !PhoneCall.Active) return none;
         var config = Config.Load();
+        var held = false;
+        if (host.SummaryAwaited)
+        {
+            // He calls while the Zentrale writes that summary: the gate is held for it (it is
+            // voiced as an ordinary turn the moment it comes) — nothing is asked for twice.
+            // Should it not come, the old way: everything to the Zentrale, for a summary now.
+            Log.Write("missed: Sir is back while the Zentrale writes its summary — the line is held for it");
+            await SayHold(config);
+            held = true;
+            var hold = DateTime.UtcNow + SummaryHold;
+            while (DateTime.UtcNow < hold && _queuedTurns() == 0 && (PhoneCall.Active || !PhoneCall.Away)) await Task.Delay(100);
+            if (_queuedTurns() != 0 || (PhoneCall.Away && !PhoneCall.Active)) return none;
+        }
+        if (host.TakeMissedReady() is { } ready) return await VoiceCallBack(ready.Line, ready.All);
+        if (host.TakeMissed() is not { } all) return none;
+        Log.Write("missed: Sir is back — what he missed goes to the Zentrale for one summary");
         host.Delivery.ToZentrale(all, config);
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
-        if (!config.Brief)
-        {
-            var de = config.Language.StartsWith("de", StringComparison.OrdinalIgnoreCase);
-            await SpeakLine(de ? "Einen Moment, Sir, ich fasse zusammen, was Sie verpasst haben."
-                               : "One moment, Sir, I'll sum up what you missed.", config);
-        }
+        if (!held) await SayHold(config);
         var until = DateTime.UtcNow + SummaryWait;
         while (DateTime.UtcNow < until && _queuedTurns() == 0 && (PhoneCall.Active || !PhoneCall.Away)) await Task.Delay(100);
         return none;

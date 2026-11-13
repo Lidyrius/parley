@@ -93,13 +93,17 @@ public sealed class Supervisor
 
 /// A line of the Zentrale that Sir did not hear: he didn't take its call (Überwachungsmodus).
 /// Nothing waits for him — the Zentrale goes on working, its lines are kept here (missed.json,
-/// through restarts) without ringing again, and when he calls back the Zentrale gets them all
-/// as one instruction and makes one spoken summary of them. As macOS (Supervisor.swift, Missed).
+/// through restarts) without ringing again. What he hears when he calls back is ready before he
+/// does (Missed.Ready): the one line that waits, or — once there are more — the one summary the
+/// Zentrale is asked for as each joins. It plays the moment his call connects; the Zentrale
+/// then learns what he heard and what he said. As macOS (Supervisor.swift, Missed).
 public sealed class MissedLine
 {
     [JsonPropertyName("at")] public double At { get; set; }          // epoch ms
     [JsonPropertyName("text")] public string Text { get; set; } = "";
     [JsonPropertyName("asks")] public bool Asks { get; set; }        // a <speak>: it wanted an answer
+    // The Zentrale's summary of the lines before it (not a line he missed).
+    [JsonPropertyName("sum"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? Sum { get; set; }
 }
 
 public static class Missed
@@ -107,6 +111,15 @@ public static class Missed
     public static string FilePath => Path.Combine(Config.Dir, "missed.json");
     public const int Most = 40;                                             // the newest; older ones are long overtaken
     public static readonly TimeSpan NoticeEvery = TimeSpan.FromMinutes(15);   // a notification with the count at most this often
+    public static readonly TimeSpan SummaryWithin = TimeSpan.FromMinutes(3);  // the Zentrale's next line is the summary asked for, this long
+
+    /// The lines he missed (without a summary made of them).
+    public static List<MissedLine> Lines(IEnumerable<MissedLine> list) => list.Where(l => l.Sum != true).ToList();
+
+    /// What he hears first when he calls back, if it is ready: the one line that waits, or the
+    /// summary of all of them. null: more than one waits and the newest is not in a summary yet.
+    public static MissedLine? Ready(IReadOnlyList<MissedLine> list) =>
+        list.Count == 1 ? list[0] : list.Count > 1 && list[list.Count - 1].Sum == true ? list[list.Count - 1] : null;
 
     public static List<MissedLine> Load(string? file)
     {
@@ -133,28 +146,65 @@ public static class Missed
 
     /// What the Zentrale reads in place of an answer to the line that rang unanswered.
     public const string Note =
-        "[Parley] Sir hat den Anruf nicht angenommen. Deine Zeile ist für seinen Rückruf vorgemerkt; " +
-        "alles Weitere, was du ihm sagst, wird ebenfalls gesammelt, ohne erneut zu klingeln. Arbeite " +
-        "normal weiter (Berichte annehmen, delegieren, was nur Sir entscheiden kann, offen halten). " +
-        "Antworte hierauf nur mit <speak-end></speak-end>.";
+        "[Parley] Sir hat den Anruf nicht angenommen. Deine Zeile ist für seinen Rückruf vorgemerkt: " +
+        "Ruft er zurück, hört er sie sofort, und du erfährst, was er geantwortet hat. Alles Weitere, " +
+        "was du ihm sagst, wird ebenfalls gesammelt, ohne erneut zu klingeln; dann bitte ich dich um " +
+        "EINE Zusammenfassung, die er stattdessen hört. Arbeite normal weiter (Berichte annehmen, " +
+        "delegieren, was nur Sir entscheiden kann, offen halten). Antworte hierauf nur mit " +
+        "<speak-end></speak-end>.";
 
     private static string Clock(double at) =>
         DateTime.UnixEpoch.AddMilliseconds(at).ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
 
-    /// Sir is back: everything he missed as one instruction — what is open first, then the rest,
-    /// each oldest first. `said`: what he says right now ("Hey Parley, …").
-    public static string Instruction(IReadOnlyList<MissedLine> list, string? said = null)
+    // The lines he missed: what is open first, then the rest, each oldest first.
+    private static List<string> Listing(List<MissedLine> list)
     {
         var open = list.Where(l => l.Asks).ToList();
         var rest = list.Where(l => !l.Asks).ToList();
-        static string Lines(List<MissedLine> l) => string.Join("\n", l.Select(x => $"- ({Clock(x.At)} Uhr) {x.Text}"));
+        static string Rows(List<MissedLine> l) => string.Join("\n", l.Select(x => $"- ({Clock(x.At)} Uhr) {x.Text}"));
+        var parts = new List<string>();
+        if (open.Count > 0) parts.Add("Offen — Fragen an ihn, älteste zuerst:\n" + Rows(open));
+        if (rest.Count > 0) parts.Add("Zur Kenntnis, älteste zuerst:\n" + Rows(rest));
+        return parts;
+    }
+
+    private const string How = "zuerst, was offen ist oder seine Entscheidung braucht, dann kurz das Erledigte. Was sich inzwischen überholt oder erledigt hat, lass weg oder sag es in einem Halbsatz.";
+
+    /// Sir is back and nothing was ready for him (or he says something right now — `said`, "Hey
+    /// Parley, …"): everything he missed as one instruction, for a summary made now.
+    public static string Instruction(IReadOnlyList<MissedLine> all, string? said = null)
+    {
+        var list = Lines(all);
         var since = list.Count > 0 ? Clock(list[0].At) : "?";
         var which = list.Count == 1 ? "diese Zeile" : $"diese {list.Count} Zeilen";
         var parts = new List<string> { $"[Parley] Sir ruft zurück. Seit dem nicht angenommenen Anruf ({since} Uhr) hat er {which} von dir nicht gehört." };
-        if (open.Count > 0) parts.Add("Offen — Fragen an ihn, älteste zuerst:\n" + Lines(open));
-        if (rest.Count > 0) parts.Add("Zur Kenntnis, älteste zuerst:\n" + Lines(rest));
-        parts.Add("Gib ihm jetzt EINE gesprochene Zusammenfassung: zuerst, was offen ist oder seine Entscheidung braucht, dann kurz das Erledigte. Was sich inzwischen überholt oder erledigt hat, lass weg oder sag es in einem Halbsatz. Danach geht es normal weiter.");
+        parts.AddRange(Listing(list));
+        parts.Add($"Gib ihm jetzt EINE gesprochene Zusammenfassung: {How} Danach geht es normal weiter.");
         if (said?.Trim() is { Length: > 0 } now) parts.Add($"Außerdem sagt Sir gerade: „{now}“");
+        return string.Join("\n\n", parts);
+    }
+
+    /// More than one line waits: what the Zentrale reads in place of an answer to the newest —
+    /// its next line is the summary he hears the moment he calls back.
+    public static string SummaryRequest(IReadOnlyList<MissedLine> all)
+    {
+        var list = Lines(all);
+        var parts = new List<string> { $"[Parley] Sir hat noch nicht zurückgerufen; auch diese Zeile ist vorgemerkt. Es warten jetzt {list.Count} Zeilen von dir auf ihn." };
+        parts.AddRange(Listing(list));
+        parts.Add($"Schreib jetzt die EINE gesprochene Zusammenfassung, die er beim Rückruf sofort hört, ohne Wartezeit: {How} Antworte nur mit ihr — als <speak>, wenn etwas offen ist, sonst als <speak-end>. Es klingelt dabei nicht; danach arbeitest du normal weiter.");
+        return string.Join("\n\n", parts);
+    }
+
+    /// He called back and heard `line` at once (of `all` that waited): what the Zentrale reads now.
+    public static string Heard(MissedLine line, IReadOnlyList<MissedLine> all, string answer)
+    {
+        var list = Lines(all);
+        var parts = new List<string> { $"[Parley] Sir hat zurückgerufen und sofort gehört: „{line.Text}“" };
+        if (line.Sum == true) parts.Add($"Das war deine Zusammenfassung dieser {list.Count} Zeilen:\n" + string.Join("\n\n", Listing(list)));
+        var said = answer.Trim();
+        parts.Add(said.Length == 0
+            ? "Er hat darauf nichts gesagt. Liegt nichts Neues an, antworte nur mit <speak-end></speak-end>."
+            : $"Seine Antwort: „{said}“");
         return string.Join("\n\n", parts);
     }
 
