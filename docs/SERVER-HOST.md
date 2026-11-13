@@ -369,6 +369,36 @@ Keep-Alive „Browser FEHLER" und die Zentrale sieht den Alarm.
 Offen: Claude in Chrome (die Erweiterung) im Container ist ungeprüft; Playwright-MCP ist geprüft.
 Wer eine härtere Grenze will als einen Container, nimmt je Profil eine kleine VM oder den eigenen Host.
 
+## Session auslagern (gebaut 13.11.)
+
+`scripts/session-move.sh check|to-server|to-mac|status <id>` am Mac, die Zentrale ruft es per Bash.
+Kein neuer Endpunkt: es nutzt `/close` und `/dispatch` mit `resume` beider Hosts.
+
+1. Projektordner per rsync über SSH auf denselben Pfad im Pilot (mit `.git`, also auch Ungetracktes
+   und Uncommittetes); ohne Abhängigkeiten, ohne Secrets (nur mit `--with-secrets`, dann 0600) und
+   ohne das, was `.parley-move-exclude` im Projekt nennt (rsync-Muster, z. B. Kundendaten).
+2. Session am Mac über `/close` beenden, warten bis der Prozess weg ist — kein Doppelbetrieb.
+3. Letzter Stand, Verlauf (`<id>.jsonl`, `<id>/`) und `memory/` nachziehen.
+4. Auf dem Server `/dispatch {resume}`: `claude --resume` mit Sprachmodus und Remote Control.
+`to-mac` ist derselbe Weg zurück; gelöscht wird auf keiner Seite etwas.
+
+`check` meldet vorher: MCP-Server (aus `.mcp.json` kommen mit, lokale aus `~/.claude.json` müssen
+von Hand angelegt werden, Anmeldungen immer neu), welche Browser der Verlauf benutzt hat, Compose-
+Dateien mit Pfaden außerhalb des Projekts und Ports, gefundene Secret-Dateien.
+
+Gelernt beim ersten Umzug: Eine von Hand gepflegte Ausschlussliste rutscht durch — ein erzeugtes
+Dashboard mit Kundendaten lag in einem Unterordner, an den niemand gedacht hatte. Die umgezogene
+Session hat es selbst gemeldet; die Kopie auf dem Server ist gelöscht. Bei Kundenprojekten erst
+`to-server --dry-run` und die Liste prüfen.
+
+**Docker für Sessions im Pilot: geht so nicht.** Rootless Podman im Container braucht das
+AppArmor-Profil `podman` des Hosts, ein seccomp-Profil mit Namespaces und `mount`, Datei-Capabilities
+statt setuid für `newuidmap` — und scheitert dann noch an den von Docker maskierten `/proc` und
+schreibgeschützten `/sys`. `systempaths=unconfined` öffnet `/proc` (für uid 0 bis hin zu
+`/proc/sysrq-trigger` des Hosts) und reicht trotzdem nicht. Auf einem Server mit Kunden-Produktion
+nicht vertretbar. Wege: Sysbox als Runtime (Docker-Neustart = alle Container kurz weg), eine
+kleine VM für die Sessions, oder der eigene Host — dort ist Docker für die Sessions einfach.
+
 ## Sicherheitskonzept
 
 Der Arbeits-Host wird das wertvollste Ziel in Sirs Umgebung: alle Kunden-Repos, alle `.env`, die
