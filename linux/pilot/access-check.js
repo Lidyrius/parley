@@ -16,7 +16,9 @@ const services = [
     const p = await ctx.newPage();
     try {
       await p.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await p.waitForTimeout(5000);
+      // Gmail and others finish redirecting by script: wait up to 20 s for the signed-in host.
+      for (let i = 0; i < 20 && !home.test(new URL(p.url()).host || "x"); i++) await p.waitForTimeout(1000);
+      await p.waitForTimeout(2000);
       const u = new URL(p.url());
       const isLogin = !home.test(u.host) || /login|signin|sign_in|auth\//.test(u.pathname)
         || (await p.locator('input[type="password"]').count()) > 0;
