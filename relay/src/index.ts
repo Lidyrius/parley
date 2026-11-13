@@ -13,6 +13,9 @@ const MAX_FRAME_BYTES = 256 * 1024;
 const MAX_AUDIO_BYTES = 64 * 1024;
 // Close code for a host connection that a newer host connection replaced (private range).
 const CLOSE_REPLACED = 4000;
+// The newest `sessions` frame reaches storage at most this often per host connection. A host
+// sends one every 2–10 s; a row for each used up the free plan's 100k rows a day with two hosts.
+const SAVE_EVERY_MS = 60_000;
 
 export default {
 	async fetch(request, env): Promise<Response> {
@@ -39,6 +42,11 @@ export default {
 
 /** One pairing room: at most one host, any number of phones. */
 export class Room extends DurableObject<Env> {
+	// The newest `sessions` frame, and whether storage is behind it. Memory is gone after
+	// hibernation; storage then answers, at most SAVE_EVERY_MS behind.
+	private latest?: string;
+	private unsaved = false;
+
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		// Keep-alive pings are answered by the runtime without waking the object.
@@ -67,7 +75,7 @@ export class Room extends DurableObject<Env> {
 			this.ctx.acceptWebSocket(server, ["phone"]);
 			server.send(peerFrame(this.open("host").length > 0));
 			// The phone shows the last known state right away instead of waiting up to 10 s.
-			const latest = this.ctx.storage.kv.get<string>("sessions");
+			const latest = this.latest ?? this.ctx.storage.kv.get<string>("sessions");
 			if (latest !== undefined) server.send(latest);
 		}
 		return new Response(null, { status: 101, webSocket: client });
@@ -93,8 +101,9 @@ export class Room extends DurableObject<Env> {
 		if (t === undefined) return;
 
 		if (fromHost) {
-			if (t === "sessions") this.ctx.storage.kv.put("sessions", message);
+			// Relay first: a write that fails must not hold the frame back.
 			this.toPhones(message);
+			if (t === "sessions") this.keep(ws, message);
 		} else {
 			for (const host of this.open("host")) trySend(host, message);
 		}
@@ -113,8 +122,33 @@ export class Room extends DurableObject<Env> {
 
 	/** Tells the phones when the last host is gone (a replaced host leaving changes nothing). */
 	private left(ws: WebSocket): void {
-		if (this.ctx.getTags(ws).includes("host") && this.open("host", ws).length === 0) {
-			this.toPhones(peerFrame(false));
+		if (!this.ctx.getTags(ws).includes("host")) return;
+		if (this.open("host", ws).length === 0) this.toPhones(peerFrame(false));
+		// The last known state outlives the host and this object's memory.
+		this.save();
+	}
+
+	/** Keeps the newest `sessions` frame for phones that connect later: in memory always, in
+	 *  storage at most every SAVE_EVERY_MS. When that last happened rides in the host socket's
+	 *  attachment, which survives hibernation and costs no row. */
+	private keep(host: WebSocket, frame: string): void {
+		this.latest = frame;
+		this.unsaved = true;
+		const savedAt = (host.deserializeAttachment() as number | null) ?? 0;
+		if (Date.now() - savedAt < SAVE_EVERY_MS) return;
+		// Before the write, so a failing one is retried in a minute, not on every frame.
+		host.serializeAttachment(Date.now());
+		this.save();
+	}
+
+	private save(): void {
+		if (!this.unsaved || this.latest === undefined) return;
+		try {
+			this.ctx.storage.kv.put("sessions", this.latest);
+			this.unsaved = false;
+		} catch (e) {
+			// E.g. the plan's daily row limit: relaying goes on, only the replay falls behind.
+			console.warn(JSON.stringify({ msg: "sessions frame not saved", error: String(e) }));
 		}
 	}
 

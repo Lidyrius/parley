@@ -12,5 +12,11 @@
   // SQLite-backed, so the relay runs on the Workers free plan.
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
 
-  "observability": { "enabled": true, "head_sampling_rate": 1 }
+  // Every WebSocket message is an invocation; a log event for each used up the free plan's
+  // 200k events a day. Kept: the relay's own warnings and uncaught exceptions.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "invocation_logs": false }
+  }
 }

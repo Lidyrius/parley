@@ -37,6 +37,9 @@ Room WebSocket behaviour beyond `docs/IPHONE.md`:
 - `400` for a malformed room id (base64url, 16–64 chars) or role, `426` without a WebSocket
   upgrade, `401` without a bearer secret or with the wrong one, `404` for a phone on an unclaimed room.
 - A host connection replaced by a newer one is closed with code `4000`.
+- The latest `sessions` frame is written to storage at most once a minute per host connection and
+  when the host leaves; in between it lives in memory. After hibernation a phone may therefore get
+  one up to a minute old, until the host's next frame (≤ 10 s).
 - Text frames that aren't a JSON object with a string `t`, binary frames, and frames over 256 KB
   are dropped.
 

@@ -272,6 +272,52 @@ describe("forwarding", () => {
 		expect(await late.json()).toEqual(sessionsFrame(2));
 		for (const p of [watcher, phone, late]) p.ws.close(1000);
 	});
+
+	it("stores the latest sessions frame at most once a minute, and when the host leaves", async () => {
+		const room = newRoom();
+		const stub = env.ROOM.get(env.ROOM.idFromName(room));
+		const stored = async () =>
+			JSON.parse((await runInDurableObject(stub, (_, state) => state.storage.kv.get<string>("sessions"))) ?? "null");
+		const host = await connect(room, "host");
+		const phone = await connect(room, "phone");
+		await phone.next(); // peer
+
+		// A connection's first frame is stored at once; the next ones only live in memory …
+		host.send(sessionsFrame(1));
+		host.send(sessionsFrame(2));
+		await phone.next();
+		await phone.next();
+		expect(await stored()).toEqual(sessionsFrame(1));
+		// … from where a new phone gets the newest.
+		const second = await connect(room, "phone");
+		expect(await second.json()).toEqual({ t: "peer", host: true });
+		expect(await second.json()).toEqual(sessionsFrame(2));
+		second.ws.close(1000);
+
+		// Hibernation empties the memory: storage answers, and the minute is still counted.
+		await evictDurableObject(stub);
+		const woken = await connect(room, "phone");
+		expect(await woken.json()).toEqual({ t: "peer", host: true });
+		expect(await woken.json()).toEqual(sessionsFrame(1));
+		woken.ws.close(1000);
+		host.send(sessionsFrame(3));
+		await phone.next();
+		expect(await stored()).toEqual(sessionsFrame(1));
+
+		// A minute after the last write the next frame is stored again.
+		await runInDurableObject(stub, (_, state) => state.getWebSockets("host")[0].serializeAttachment(Date.now() - 61_000));
+		host.send(sessionsFrame(4));
+		await phone.next();
+		expect(await stored()).toEqual(sessionsFrame(4));
+
+		// The host's last frame is stored when it leaves.
+		host.send(sessionsFrame(5));
+		await phone.next();
+		host.ws.close(1000);
+		expect(await phone.json()).toEqual({ t: "peer", host: false });
+		expect(await stored()).toEqual(sessionsFrame(5));
+		phone.ws.close(1000);
+	});
 });
 
 describe("peer presence", () => {
