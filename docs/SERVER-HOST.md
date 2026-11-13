@@ -391,13 +391,31 @@ Dashboard mit Kundendaten lag in einem Unterordner, an den niemand gedacht hatte
 Session hat es selbst gemeldet; die Kopie auf dem Server ist gelöscht. Bei Kundenprojekten erst
 `to-server --dry-run` und die Liste prüfen.
 
-**Docker für Sessions im Pilot: geht so nicht.** Rootless Podman im Container braucht das
-AppArmor-Profil `podman` des Hosts, ein seccomp-Profil mit Namespaces und `mount`, Datei-Capabilities
-statt setuid für `newuidmap` — und scheitert dann noch an den von Docker maskierten `/proc` und
-schreibgeschützten `/sys`. `systempaths=unconfined` öffnet `/proc` (für uid 0 bis hin zu
-`/proc/sysrq-trigger` des Hosts) und reicht trotzdem nicht. Auf einem Server mit Kunden-Produktion
-nicht vertretbar. Wege: Sysbox als Runtime (Docker-Neustart = alle Container kurz weg), eine
-kleine VM für die Sessions, oder der eigene Host — dort ist Docker für die Sessions einfach.
+**Docker für Sessions im Pilot (gebaut 13.11.): rootless Docker auf dem Host.** Podman *im*
+Container scheiterte an Dockers maskiertem `/proc` und schreibgeschütztem `/sys`. Stattdessen läuft
+auf dem Host ein eigener Docker-Daemon ohne root als uid 1500 (`parley-sessions`, = der Pilot-Nutzer),
+`linux/pilot/session-docker.sh` (install/start/stop/status). Der Produktions-Daemon bleibt unberührt.
+
+| Zaun | Wie |
+|---|---|
+| Zugang | nur sein Socket `~/.docker-rootless/docker.sock` im Pilot (`DOCKER_HOST` in `~/.profile`); Docker-CLI und Compose sind Kopien der Host-Binaries im Home |
+| Rechte | root im Container = uid 1500 auf dem Host (User-Namespace, Unter-UIDs ab 1500000) |
+| Dateisicht | systemd-Sandbox: `/srv`, `/home`, `/root`, `/opt` (bis auf die eigenen Ordner), `/var/lib`, `/var/log`, `/mnt`, Dateien in `/` versteckt; der Socket des Produktions-Daemons unbenutzbar; Prozesse anderer Nutzer unsichtbar; der Pilot-Home erscheint unter `/Users/sydney`, also stimmen Bind-Mount-Pfade aus Compose-Dateien |
+| Netz | der Daemon lebt im Netz-Namespace des Pilot-Containers: `-p 127.0.0.1:x:y` landet auf dem Loopback des Pilots, wo die Sessions sind; auf dem Host und öffentlich nichts. Standard-Bindung 127.0.0.1 |
+| Grenzen | ein cgroup für alles: 8 GB RAM ohne Swap, 4 Kerne, 4096 Tasks, halbes CPU-/IO-Gewicht gegenüber der Produktion |
+| Platte | Images und Volumes in einem 40-GB-Dateisystem-Image (`/opt/parley-docker/data.img`), kann den Server nicht volllaufen lassen |
+| Neustart | `parley-pilot.service` → `autostart.sh` startet nach dem Pilot auch diesen Daemon; Container mit Restart-Policy kommen wieder |
+
+`linux/pilot/session-docker-selftest.sh [--mssql]` prüft alles; am 13.11. 19 von 19 bestanden: sieht
+keinen der 64 Produktions-Container, Host-Socket unbenutzbar, mit allen Capabilities ohne seccomp und
+AppArmor und `/` eingehängt: `/srv`, `/root`, `/home` leer, `/etc/shadow` nicht lesbar, `/usr` nicht
+schreibbar, kein `mknod`; 12 GB werden am 8-GB-Deckel getötet; zehn Rechenschleifen bekommen 4 Kerne;
+Ports nur im Pilot; Kaltstart über `autostart.sh`; leerer MS SQL Server 2022 per Compose läuft.
+Grenzen: `--privileged` startet nicht (das sysfs im Pilot-Netz ist schreibgeschützt) — schlägt also
+geschlossen fehl; nach einem Neustart *nur* des Pilot-Containers `session-docker.sh start` von Hand
+(neuer Netz-Namespace); das Daten-Image ist nicht verschlüsselt — Kundendaten gehören erst mit
+Zustimmung und dann auf ein LUKS-Image; Sessions, die vor der Einrichtung gestartet sind, kennen
+`DOCKER_HOST` nicht (neu starten oder `export DOCKER_HOST=…`).
 
 ## Sicherheitskonzept
 

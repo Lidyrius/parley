@@ -41,6 +41,8 @@ EOF
     } || exit 1 ;;
 esac
 docker start parley-pilot >/dev/null || exit 1
+# the sessions' rootless Docker joins the pilot's network namespace, so only after the pilot runs
+[ -x /opt/parley-docker/session-docker.sh ] && { /opt/parley-docker/session-docker.sh start || echo "session docker: did not start"; }
 for n in dev saf privat; do
   if mountpoint -q "$P/browser-$n"; then docker start "parley-browser-$n" >/dev/null && echo "browser-$n: läuft"
   else echo "browser-$n: Volume zu — nicht gestartet (autostart.sh unlock $n < Schlüssel)"; fi
