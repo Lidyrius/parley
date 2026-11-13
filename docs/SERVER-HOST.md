@@ -342,7 +342,7 @@ einem Profil träfe alle.
 | Anmelden | frisch, über den Web-Desktop, vom Mac oder iPhone. Profile werden nie kopiert |
 | Zugang zum Web-Desktop | Port nur an die Tailnet-Adresse oder `127.0.0.1` binden, nie an alle Schnittstellen — von Docker veröffentlichte Ports umgehen die Firewall. Eigenes Passwort, Tailnet-Regel nur für Sirs Geräte |
 | Zugang für Claude | Playwright-MCP je Profil mit `--cdp-endpoint`. Der CDP-Port wird nicht veröffentlicht; er liegt in einem privaten Docker-Netz, das nur Browser- und Session-Container teilen |
-| Grenzen | je Container 2 GB RAM, `--shm-size 1g`, kein automatischer Neustart ohne entsperrtes Volume |
+| Grenzen | je Container 6 GB RAM (3 GB reichten nicht: Teams stürzte ab), `--shm-size 1g`, kein automatischer Neustart ohne entsperrtes Volume |
 | Not-Aus | Container stoppen, Volume schließen; beim Anbieter „überall abmelden" |
 | Pflege | Chrome altert im Image: wöchentlich neu bauen. Schriften für CJK nachinstallieren, sonst Kästchen |
 
@@ -357,6 +357,14 @@ Server und im privaten Anhang.
 Gelernt dabei: Manche Dienste leiten erst nach Sekunden zur Anmeldung um; die Prüfung wartet darum
 8 Sekunden und wertet bekannte Login-Seiten (Microsoft, Atlassian, Google) immer als „Login nötig".
 Systeme mit IP-Freigabeliste sind vom Server aus nicht erreichbar, auch wenn sie es vom Mac sind.
+Ein abgestürzter Tab („Oh nein!", Fehlercode 9 nach Speichermangel) blockiert jede CDP-Verbindung
+zum ganzen Browser; die Prüfung öffnet Tabs, die nicht antworten, darum unter derselben Adresse neu.
+
+**Nach einem Server-Neustart** startet `parley-pilot.service` (systemd, `linux/pilot/autostart.sh`
+als root-eigene Kopie) den Pilot-Container, Parleys Dienst und den Keep-Alive. Die Browser bleiben
+aus, bis ihr Volume entsperrt ist (`autostart.sh unlock <profil>`, Schlüssel über stdin) — sonst
+legte Chrome ein frisches, unverschlüsseltes Profil im leeren Einhängepunkt an. Bis dahin meldet der
+Keep-Alive „Browser FEHLER" und die Zentrale sieht den Alarm.
 
 Offen: Claude in Chrome (die Erweiterung) im Container ist ungeprüft; Playwright-MCP ist geprüft.
 Wer eine härtere Grenze will als einen Container, nimmt je Profil eine kleine VM oder den eigenen Host.
