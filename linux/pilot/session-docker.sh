@@ -3,7 +3,8 @@
 # (the pilot's user) on the host — never the production daemon, which this leaves alone. Root on
 # the host (root-owned copy at /opt/parley-docker/session-docker.sh):
 #   session-docker.sh install   once: uidmap, user parley-sessions (1500), subuids, data volume, unit
-#   session-docker.sh start     (re)start; autostart.sh calls it after the pilot container is up
+#   session-docker.sh start     (re)start unless it already runs in the pilot's network; autostart.sh
+#                               calls it at boot, parley-docker-follow.service after every pilot start
 #   session-docker.sh stop | status
 #   session-docker.sh selftest  isolation, limits and function checks (see docs/SERVER-HOST.md)
 # How it is fenced in:
@@ -73,7 +74,19 @@ InaccessiblePaths=-/run/docker.sock -/run/containerd -/run/docker -/installimage
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > /etc/systemd/system/parley-docker-follow.service <<EOF
+[Unit]
+Description=Restart the sessions' rootless Docker whenever the pilot container starts
+After=docker.service
+[Service]
+ExecStart=$D/session-docker.sh follow
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+EOF
   systemctl daemon-reload
+  systemctl enable --now parley-docker-follow.service
   # the client in the pilot: the host's own docker CLI and plugins (static binaries), DOCKER_HOST
   install -d -o $ID -g $ID $PH/.local/bin $PH/.docker $PH/.docker/cli-plugins
   install -o $ID -g $ID -m 755 /usr/bin/docker $PH/.local/bin/docker
@@ -92,6 +105,11 @@ start() {
   install -d -o $ID -g $ID -m 700 $PH/.docker-rootless
   local pid; pid="$(docker inspect -f '{{.State.Pid}}' parley-pilot)"
   [ "$pid" -gt 0 ] || { echo "pilot container not running" >&2; exit 1; }
+  # already running in the pilot's current network namespace: nothing to do
+  if systemctl is-active -q parley-docker && [ -e /run/netns/$NS ] \
+     && [ "$(stat -L -c %i /run/netns/$NS)" = "$(stat -L -c %i /proc/$pid/ns/net)" ]; then
+    echo "already running in the pilot's network"; return
+  fi
   ip netns delete $NS 2>/dev/null || true
   ip netns attach $NS "$pid"
   systemctl restart parley-docker
@@ -100,6 +118,13 @@ start() {
     sleep 1
   done
   echo "parley-docker did not come up:" >&2; journalctl -u parley-docker -n 20 --no-pager >&2; exit 1
+}
+
+# parley-docker-follow.service: every start of the pilot container (a new network namespace) →
+# start again. Only reads the production daemon's event stream; changes nothing there.
+follow() {
+  docker events --filter type=container --filter "container=${PARLEY_FOLLOW_CONTAINER:-parley-pilot}" --filter event=start --format '{{.Actor.Attributes.name}}' |
+    while read -r name; do echo "$name started"; sleep 2; "$D/session-docker.sh" start || echo "start failed"; done
 }
 
 stop() { systemctl stop parley-docker; ip netns delete $NS 2>/dev/null || true; }
@@ -111,7 +136,7 @@ status() {
 }
 
 case "${1:-}" in
-  install) install_ ;; start) start ;; stop) stop ;; status) status ;;
+  install) install_ ;; start) start ;; stop) stop ;; status) status ;; follow) follow ;;
   selftest) exec bash "$(dirname "$0")/session-docker-selftest.sh" ;;
   *) sed -n '2,19p' "$0"; exit 2 ;;
 esac

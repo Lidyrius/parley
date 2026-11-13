@@ -404,7 +404,7 @@ auf dem Host ein eigener Docker-Daemon ohne root als uid 1500 (`parley-sessions`
 | Netz | der Daemon lebt im Netz-Namespace des Pilot-Containers: `-p 127.0.0.1:x:y` landet auf dem Loopback des Pilots, wo die Sessions sind; auf dem Host und öffentlich nichts. Standard-Bindung 127.0.0.1 |
 | Grenzen | ein cgroup für alles: 8 GB RAM ohne Swap, 4 Kerne, 4096 Tasks, halbes CPU-/IO-Gewicht gegenüber der Produktion |
 | Platte | Images und Volumes in einem 40-GB-Dateisystem-Image (`/opt/parley-docker/data.img`), kann den Server nicht volllaufen lassen |
-| Neustart | `parley-pilot.service` → `autostart.sh` startet nach dem Pilot auch diesen Daemon; Container mit Restart-Policy kommen wieder |
+| Neustart | Server: `parley-pilot.service` → `autostart.sh` startet ihn nach dem Pilot. Nur der Pilot-Container: `parley-docker-follow.service` liest dessen Start-Ereignis (nur lesend am Produktions-Daemon) und startet ihn im neuen Netz-Namespace neu. Container mit Restart-Policy kommen wieder |
 
 `linux/pilot/session-docker-selftest.sh [--mssql]` prüft alles; am 13.11. 19 von 19 bestanden: sieht
 keinen der 64 Produktions-Container, Host-Socket unbenutzbar, mit allen Capabilities ohne seccomp und
@@ -412,8 +412,7 @@ AppArmor und `/` eingehängt: `/srv`, `/root`, `/home` leer, `/etc/shadow` nicht
 schreibbar, kein `mknod`; 12 GB werden am 8-GB-Deckel getötet; zehn Rechenschleifen bekommen 4 Kerne;
 Ports nur im Pilot; Kaltstart über `autostart.sh`; leerer MS SQL Server 2022 per Compose läuft.
 Grenzen: `--privileged` startet nicht (das sysfs im Pilot-Netz ist schreibgeschützt) — schlägt also
-geschlossen fehl; nach einem Neustart *nur* des Pilot-Containers `session-docker.sh start` von Hand
-(neuer Netz-Namespace); das Daten-Image ist nicht verschlüsselt — Kundendaten gehören erst mit
+geschlossen fehl; das Daten-Image ist nicht verschlüsselt — Kundendaten gehören erst mit
 Zustimmung und dann auf ein LUKS-Image; Sessions, die vor der Einrichtung gestartet sind, kennen
 `DOCKER_HOST` nicht (neu starten oder `export DOCKER_HOST=…`).
 
