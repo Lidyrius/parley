@@ -220,7 +220,7 @@ Bedarf auf dem Server: 36 GB netto + 6 GB `.git` + bis 19 GB neu gebaute Abhäng
   an einem laufenden Chrome (CDP nur auf `127.0.0.1`) ist der robustere Weg.
 - Wo der Browser entfallen kann: Outlook/Kalender über den Microsoft-365-Connector (braucht einmal
   Admin-Zustimmung im jeweiligen Tenant), monday über dessen MCP, Jira über den Atlassian-MCP
-  (wenn der Kunde es erlaubt), Gmail über den Connector. SupplyOn hat keine Nutzer-API und braucht
+  (wenn der Kunde es erlaubt), Gmail über den Connector. Ein Lieferantenportal ohne Nutzer-API braucht
   einen Browser.
 - Sitzungsdauer bei Entra: bis etwa 90 Tage rollierend, wenn der Kunde nichts Engeres setzt.
 
@@ -500,7 +500,7 @@ Also: **3–33 €/Monat auf dem Big Boy, 27–152 €/Monat mit eigenem Host.**
 | Risiko | Folge | Gegenmittel |
 |---|---|---|
 | Groq sperrt Rechenzentrums-IPs | Kein STT, keine Sprachsteuerung vom Server | Vom Big Boy erreichbar (Probe 13.11.). Ein neuer Host hat eine andere IP: dort wiederholen. Ausweg: anderer STT-Anbieter oder Whisper auf dem Server |
-| Kunde erlaubt Server-Zugriff nicht | Teams/SupplyOn des Kunden bleiben am Laptop | Früh fragen; Ausweg Heim-Rechner |
+| Kunde erlaubt Server-Zugriff nicht | Teams/Lieferantenportal des Kunden bleiben am Laptop | Früh fragen; Ausweg Heim-Rechner |
 | Ein Einbruch trifft alles auf einmal | Alle Kunden betroffen | Eigener Host, keine offenen Ports, getrennte Nutzer, Not-Aus, Backups |
 | Prompt-Injection über Mail, Teams, Jira | Agent verschickt oder verändert etwas | Lesen ohne Schreibrechte, Rückfrage bei jeder Außenwirkung |
 | Claude-Anmeldung läuft ab | Alle Sessions stehen | Meldung drei Tage vorher, Neuanmeldung vom Handy |
