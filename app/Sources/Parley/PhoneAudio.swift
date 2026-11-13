@@ -421,11 +421,12 @@ protocol PhoneSpeech: Sendable {
 }
 
 /// What the phone says about a clip: how many of its frames it holds, and whether it played it.
-/// `id` 0: it knows of none.
+/// `id` 0: it knows of none. `mic` (v9, with `played`): its mic's number when the last frame played.
 struct ClipStatus: Equatable, Sendable {
     var id: Int
     var have: Int
     var played: Bool
+    var mic: UInt32? = nil
 }
 
 /// 24 kHz PCM in, the call's 20 ms frames out: the speaking rate, the call's own rate, whole frames.

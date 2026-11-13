@@ -317,7 +317,8 @@ public sealed class PhoneLine
                 _awaited = a;
                 if (status.Played)
                 {
-                    _listenAfter = unchecked((a.HeldAt ?? _micSeq ?? 0u) + (uint)a.Frames);
+                    // A v9 phone says where the clip ended (it may have begun it while it still arrived).
+                    _listenAfter = status.Mic ?? unchecked((a.HeldAt ?? _micSeq ?? 0u) + (uint)a.Frames);
                     _kept.Clear();
                     _awaited = null;
                 }

@@ -123,12 +123,15 @@ enum RelayFrame {
         let body = json.trimmingCharacters(in: .whitespacesAndNewlines)
         guard body.hasPrefix("{"), body.hasSuffix("}") else { return nil }
         let rest = body.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
-        // `call`: the call protocol this host speaks (8: clips and a numbered mic, "Funkloch").
+        // `call`: the call protocol this host speaks (8: clips and a numbered mic, "Funkloch";
+        // 9: it takes the clip's end from the phone's mic count, so the phone may play a clip
+        // while it still arrives).
         let head = #"{"t":"sessions","at":\#(Int64((at.timeIntervalSince1970 * 1000).rounded()))\#(offersClips ? #","call":\#(callVersion)"# : "")"#
         return head + (rest == "}" ? "" : ",") + rest
     }
 
-    static let callVersion = 8
+    static let callVersion = 9
+    static let clipsFrom = 8   // a phone's `"v"` from here on: clips and a numbered mic
     // The way back (Optionen → "Funkloch-Schutz" off): the host says nothing of v8 and takes a
     // phone's `"v":8` as a plain call — calls run streamed, as before. Set once at launch and
     // when the option changes.
@@ -156,7 +159,7 @@ enum RelayFrame {
         case "call":
             switch f["state"] as? String {
             case "start": return .call(true, down: f["down"] as? Int == PhoneAudioFormat.hiFiRate ? PhoneAudioFormat.hiFiRate : PhoneAudioFormat.sampleRate,
-                                       clips: offersClips && (f["v"] as? Int ?? 0) >= callVersion)
+                                       clips: offersClips && (f["v"] as? Int ?? 0) >= clipsFrom)
             case "end": return .call(false)
             case "idle": return .callIdle
             default: return nil
@@ -166,7 +169,8 @@ enum RelayFrame {
             return .supervisor(on)
         case "clip":
             guard let id = f["id"] as? Int, let have = f["have"] as? Int, id >= 0, have >= 0 else { return nil }
-            return .clip(ClipStatus(id: id, have: have, played: f["played"] as? Bool ?? false))
+            return .clip(ClipStatus(id: id, have: have, played: f["played"] as? Bool ?? false,
+                                    mic: (f["mic"] as? Int).flatMap { UInt32(exactly: $0) }))
         case "wake":
             return .wake
         case "push":

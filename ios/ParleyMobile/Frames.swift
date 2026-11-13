@@ -395,8 +395,12 @@ enum Outgoing {
     /// v8: connected and in no call — a hang-up may never have reached the host (a dead zone).
     static let callIdle = encode(["t": .s("call"), "state": .s("idle")])
     /// v8: where this phone stands with a clip: after its end, once it played, after every break.
-    static func clip(id: Int, have: Int, played: Bool) -> String {
-        encode(["t": .s("clip"), "id": .i(id), "have": .i(have), "played": .b(played)])
+    /// v9 (`mic`, with `played`): the mic's number when the clip's last frame played — what was
+    /// recorded up to there is not Sir's answer.
+    static func clip(id: Int, have: Int, played: Bool, mic: UInt32? = nil) -> String {
+        var body: [String: Value] = ["t": .s("clip"), "id": .i(id), "have": .i(have), "played": .b(played)]
+        if let mic { body["mic"] = .i(Int(mic)) }
+        return encode(body)
     }
     /// v2: the wake word was heard while the host was idle.
     static let wake = encode(["t": .s("wake")])

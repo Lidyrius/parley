@@ -138,12 +138,15 @@ public static class RelayFrame
         var body = json.Trim();
         if (!body.StartsWith('{') || !body.EndsWith('}')) return null;
         var rest = body[1..].Trim();
-        // `call`: the call protocol this host speaks (8: clips and a numbered mic, "Funkloch").
+        // `call`: the call protocol this host speaks (8: clips and a numbered mic, "Funkloch";
+        // 9: it takes the clip's end from the phone's mic count, so the phone may play a clip
+        // while it still arrives).
         var head = "{\"t\":\"sessions\",\"at\":" + Num(atMs) + (OffersClips ? ",\"call\":" + Num(CallVersion) : "");
         return head + (rest == "}" ? "" : ",") + rest;
     }
 
-    public const int CallVersion = 8;
+    public const int CallVersion = 9;
+    public const int ClipsFrom = 8;   // a phone's "v" from here on: clips and a numbered mic
     // The way back (tray → "Funkloch-Schutz" off): the host says nothing of v8 and takes a phone's
     // "v":8 as a plain call — calls run streamed, as before. Set at launch and when the option changes.
     public static volatile bool OffersClips = true;
@@ -185,7 +188,7 @@ public static class RelayFrame
                             root.TryGetProperty("down", out var down) && down.ValueKind == JsonValueKind.Number
                                 && down.TryGetInt32(out var rate) && rate == PhoneAudio.HiFiRate ? PhoneAudio.HiFiRate : PhoneAudio.SampleRate,
                             root.TryGetProperty("v", out var ver) && ver.ValueKind == JsonValueKind.Number
-                                && ver.TryGetInt32(out var speaks) && speaks >= CallVersion && OffersClips),
+                                && ver.TryGetInt32(out var speaks) && speaks >= ClipsFrom && OffersClips),
                         "end" => new PhoneCallState(false),
                         "idle" => new PhoneCallIdle(),
                         _ => null,
@@ -193,7 +196,9 @@ public static class RelayFrame
                 case "clip":    // v8: how far it got with a clip
                     return root.TryGetProperty("id", out var cid) && cid.ValueKind == JsonValueKind.Number && cid.TryGetInt32(out var clip) && clip >= 0
                         && root.TryGetProperty("have", out var ch) && ch.ValueKind == JsonValueKind.Number && ch.TryGetInt32(out var have) && have >= 0
-                        ? new PhoneClipStatus(clip, have, Flag("played")) : null;
+                        ? new PhoneClipStatus(clip, have, Flag("played"),
+                            root.TryGetProperty("mic", out var cm) && cm.ValueKind == JsonValueKind.Number && cm.TryGetUInt32(out var endMic) ? endMic : (uint?)null)
+                        : null;
                 case "hello":   // its name (for the setup's "Verbunden mit …"), at most 60 characters
                 {
                     var device = new System.Globalization.StringInfo(Str("device") ?? "");
@@ -291,7 +296,8 @@ public sealed record PhoneResume(string Id) : PhoneMessage;          // resume a
 // `call` start / end; the voice's rate (v3: 24 kHz on request); v8: it takes clips and numbers its mic
 public sealed record PhoneCallState(bool Started, int Down = PhoneAudio.SampleRate, bool Clips = false) : PhoneMessage;
 public sealed record PhoneCallIdle : PhoneMessage { }                 // v8: the phone is connected and in no call (a hang-up may have got lost)
-public sealed record PhoneClipStatus(int Id, int Have, bool Played) : PhoneMessage;   // v8: how far it got with a clip (`Id` 0: it knows of none)
+// v8: how far it got with a clip (`Id` 0: it knows of none). `Mic` (v9, with Played): its mic's number when the last frame played.
+public sealed record PhoneClipStatus(int Id, int Have, bool Played, uint? Mic = null) : PhoneMessage;
 public sealed record PhoneWake : PhoneMessage { }                     // "Hey Parley" while the host was idle
 public sealed record PhonePush(string Token, string Env) : PhoneMessage;   // VoIP token, production | development
 public sealed record PhoneAway(bool On) : PhoneMessage;              // Unterwegs-Modus

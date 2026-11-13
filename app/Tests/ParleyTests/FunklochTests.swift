@@ -146,12 +146,13 @@ final class FunklochTests: XCTestCase {
     // MARK: - the frames
 
     func testFramesAndWhatThePhoneSays() {
-        XCTAssertEqual(RelayFrame.sessions("{}", at: Date(timeIntervalSince1970: 1)), #"{"t":"sessions","at":1000,"call":8}"#)
+        XCTAssertEqual(RelayFrame.sessions("{}", at: Date(timeIntervalSince1970: 1)), #"{"t":"sessions","at":1000,"call":9}"#)
         XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"start","down":24000,"v":8}"#), .call(true, down: 24000, clips: true))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"start","down":24000}"#), .call(true, down: 24000, clips: false))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"call","state":"idle"}"#), .callIdle)
         XCTAssertEqual(RelayFrame.parse(#"{"t":"clip","id":4,"have":12,"played":true}"#), .clip(ClipStatus(id: 4, have: 12, played: true)))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"clip","id":0,"have":0}"#), .clip(ClipStatus(id: 0, have: 0, played: false)))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"clip","id":4,"have":12,"played":true,"mic":77}"#), .clip(ClipStatus(id: 4, have: 12, played: true, mic: 77)))
         XCTAssertNil(RelayFrame.parse(#"{"t":"clip","id":"x"}"#))
         XCTAssertEqual(RelayFrame.clip(id: 4, from: 12), #"{"t":"clip","id":4,"from":12}"#)
         XCTAssertEqual(RelayFrame.clipEnd(id: 4, frames: 50, listen: true), #"{"t":"clip","id":4,"frames":50,"play":true,"listen":true}"#)
@@ -237,6 +238,55 @@ final class FunklochTests: XCTestCase {
         hub.audioIn(numbered(22, 22))
         hub.setAudioSink { wire.hear($0) }                            // another listening, no clip before it: nothing old
         XCTAssertEqual(wire.heard.count, 7)
+    }
+
+    // v9: the phone began the clip while it still arrived, so "it holds all of it" is no longer
+    // where it starts — it says itself at which mic frame the clip was over.
+    func testAPhoneThatPlayedEarlySaysWhereTheClipEnded() {
+        let clock = Clock(), wire = Wire()
+        let hub = hub(clock, wire)
+        hub.handle(.call(true, down: 24000, clips: true))
+        for n in 1...10 { hub.audioIn(numbered(UInt32(n), UInt8(n))) }
+        hub.listensAfter(clip: 5, frames: 4)
+        hub.handle(.clip(ClipStatus(id: 5, have: 4, played: false)))            // whole at mic frame 10 — three frames of it had played
+        hub.handle(.clip(ClipStatus(id: 5, have: 4, played: true, mic: 11)))   // over at 11, not at 14
+        for n in 11...15 { hub.audioIn(numbered(UInt32(n), UInt8(n))) }
+        hub.setAudioSink { wire.hear($0) }
+        XCTAssertEqual(wire.heard.map { $0.first }, [12, 13, 14, 15])          // his answer from its first frame
+    }
+
+    // v9, the phone's side (ClipPlayback in ios/ParleyMobile/Funkloch.swift): a clip starts while
+    // it still arrives, and a dead zone in its middle makes it wait for the rest — no stutter.
+    func testAClipStartsWhileItArrivesAndWaitsForTheRestOnceItRanDry() {
+        func frame(_ n: Int) -> Data { Data([UInt8(n)]) }
+        var clip = ClipBuffer(), play = ClipPlayback()
+        clip.start(id: 1, from: 0)
+        for n in 0..<24 { _ = clip.add(frame(n)) }
+        XCTAssertTrue(play.feed(clip, early: true, seconds: 0.05, played: 100).isEmpty)        // not half a second of it yet
+        _ = clip.add(frame(24))
+        XCTAssertTrue(play.feed(clip, early: false, seconds: 0.05, played: 100).isEmpty)       // a v8 host: only the whole clip
+        XCTAssertTrue(play.feed(clip, early: true, seconds: 0.4, played: 100).isEmpty)         // 0.5 s in 0.4 s: too slow a line
+        XCTAssertEqual(play.feed(clip, early: true, seconds: 0.05, played: 100).count, 25)     // it speaks
+        _ = clip.add(frame(25))
+        XCTAssertEqual(Array(play.feed(clip, early: true, seconds: 9, played: 103)), [frame(25)])   // and goes on
+        XCTAssertFalse(play.playedOut(clip, played: 120))                                      // 20 of 26 came out
+        XCTAssertFalse(play.playedOut(clip, played: 126))                                      // all 26 — but that is not the clip
+        XCTAssertTrue(play.ranDry)
+        _ = clip.add(frame(26))
+        XCTAssertTrue(play.feed(clip, early: true, seconds: 9, played: 126).isEmpty)           // it waits for the rest
+        _ = clip.add(frame(27))
+        XCTAssertNotNil(clip.end(id: 1, frames: 28, listen: true))
+        XCTAssertEqual(Array(play.feed(clip, early: true, seconds: 9, played: 126)), [frame(26), frame(27)])
+        XCTAssertFalse(play.playedOut(clip, played: 127))
+        XCTAssertTrue(play.playedOut(clip, played: 128))                                       // its last frame played
+
+        var again = ClipPlayback()                                                             // the whole clip at once (v8, or a fast line)
+        XCTAssertEqual(again.feed(clip, early: false, seconds: 0, played: 10).count, 28)
+        again.restart(played: 15)                                                              // a route change after five frames
+        XCTAssertEqual(again.feed(clip, early: false, seconds: 0, played: 15).first, frame(5))
+        again.cutShort()                                                                       // Sir talks over it
+        again.restart(played: 15)
+        XCTAssertTrue(again.feed(clip, early: false, seconds: 0, played: 15).isEmpty)
     }
 
     func testACountThatStartsOverIsANewCall() {

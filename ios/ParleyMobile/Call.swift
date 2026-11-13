@@ -87,9 +87,10 @@ final class CallController {
     private(set) var lineLost = false
     @ObservationIgnored private var clip = ClipBuffer()
     @ObservationIgnored private var clipPlayed = false      // its last frame played (the host is told)
-    @ObservationIgnored private var clipDone = 0            // its frames played before the engine last (re)started
-    @ObservationIgnored private var clipFedAt = 0           // `audio.played` when the rest was handed to the player
-    @ObservationIgnored private var clipFed = 0             // … and how many frames that was
+    @ObservationIgnored private var clipEarly = false       // v9: a clip starts while it still arrives
+    @ObservationIgnored private var playback = ClipPlayback()
+    @ObservationIgnored private var clipSince = Date.distantPast   // the clip's first word from the host
+    @ObservationIgnored private var clipEndMic: UInt32?     // the mic's number when its last frame played
     @ObservationIgnored private var clipWatch: Task<Void, Never>?
     @ObservationIgnored private var lineWatch: Task<Void, Never>?
     @ObservationIgnored private var lastMicAck = Date.now
@@ -407,7 +408,7 @@ final class CallController {
 
     /// A binary frame from the host: Parley's voice.
     func play(_ frame: Data) {
-        if clipCall, clip.add(frame) { return }   // a clip's frame: kept until all of it is here
+        if clipCall, clip.add(frame) { feedClip(); return }   // a clip's frame: kept — and played when its turn comes
         guard phase.isActive else { return }
         audio.play(frame)
     }
@@ -422,18 +423,21 @@ final class CallController {
         guard clipCall else { return }
         if id != clip.id {
             clipWatch?.cancel()
+            clipWatch = nil
             clipPlayed = false
-            clipDone = 0
-            clipFed = 0
+            playback = ClipPlayback()
+            clipSince = .now
+            clipEndMic = nil
         }
         clip.start(id: id, from: from)
     }
 
-    /// That was all of the clip: it plays once every frame is here — and the host hears where
-    /// this phone stands (all of it, or how far it got before a break).
+    /// That was all of the clip: what has not played yet plays now that every frame is here — and
+    /// the host hears where this phone stands (all of it, or how far it got before a break).
     func clipEnded(id: Int, frames: Int, listen: Bool) {
         guard clipCall else { return }
-        if clip.end(id: id, frames: frames, listen: listen) != nil { feedClip(from: 0) }
+        _ = clip.end(id: id, frames: frames, listen: listen)
+        feedClip()
         sendClipStatus()
     }
 
@@ -451,24 +455,26 @@ final class CallController {
     }
 
     private func sendClipStatus() {
-        relay.send(Outgoing.clip(id: clip.id, have: clip.have, played: clipPlayed))
+        relay.send(Outgoing.clip(id: clip.id, have: clip.have, played: clipPlayed, mic: clipPlayed ? clipEndMic : nil))
     }
 
-    /// The clip's frames from `done` on go to the player; a watch says when its last one played.
-    private func feedClip(from done: Int) {
+    /// The clip's frames whose turn it is go to the player (ClipPlayback: all of them once the
+    /// clip is whole; with a v9 host the first ones while the rest still arrives); a watch says
+    /// when its last one played.
+    private func feedClip() {
         guard phase.isActive, audio.isRunning else { return }   // `resumeClip` once the engine runs
-        clipDone = done
-        clipFedAt = audio.played
-        clipFed = clip.have - done
-        for f in clip.frames.dropFirst(done) { audio.play(f) }
-        clipWatch?.cancel()
+        for f in playback.feed(clip, early: clipEarly, seconds: Date.now.timeIntervalSince(clipSince), played: audio.played) {
+            audio.play(f)
+        }
+        guard playback.started, clipWatch == nil else { return }
         let id = clip.id
         clipWatch = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(40))
                 guard let self, phase.isActive, clip.id == id else { return }
-                guard audio.isRunning, audio.played - clipFedAt >= clipFed else { continue }
+                guard audio.isRunning, playback.playedOut(clip, played: audio.played) else { continue }
                 clipPlayed = true
+                clipEndMic = mic.isNumbered ? mic.last : nil
                 sendClipStatus()
                 // Without a line the host can't say that it listens now: the screen shows it anyway.
                 if clip.listen, lineLost, hostAudio == .speaking { hostAudioChanged(.listening, label: nil) }
@@ -480,8 +486,9 @@ final class CallController {
     /// The engine runs again (a route change dropped what was scheduled), or runs at last: the
     /// clip goes on from the frame it stood at.
     private func resumeClip() {
-        guard clipCall, clip.released, !clipPlayed, phase.isActive else { return }
-        feedClip(from: min(clip.have, clipDone + max(0, min(clipFed, audio.played - clipFedAt))))
+        guard clipCall, clip.released || playback.started, !clipPlayed, phase.isActive else { return }
+        playback.restart(played: audio.played)
+        feedClip()
     }
 
     /// The host says every second how much of the mic it has. Silence means the socket is dead
@@ -604,9 +611,13 @@ final class CallController {
         }
         // v8 when the host speaks it (its `sessions` frame says so): clips down, a numbered mic up.
         clipCall = (relay.snapshot?.callVersion ?? 0) >= 8
+        clipEarly = (relay.snapshot?.callVersion ?? 0) >= 9
         mic.begin(numbered: clipCall)
         relay.eager = clipCall
+        clipWatch?.cancel()
+        clipWatch = nil
         clip = ClipBuffer()
+        playback = ClipPlayback()
         clipPlayed = false
         lineLost = false
         lastMicAck = .now
@@ -706,10 +717,13 @@ final class CallController {
 
     private func reset() {
         clipWatch?.cancel()
+        clipWatch = nil
         lineWatch?.cancel()
         clipCall = false
+        clipEarly = false
         lineLost = false
         clip = ClipBuffer()
+        playback = ClipPlayback()
         clipPlayed = false
         relay.eager = false
         mic.begin(numbered: false)
@@ -771,7 +785,8 @@ final class CallController {
     private func bargeHeard() {
         guard phase.isActive, hostAudio == .speaking else { return }
         audio.silence()
-        clipWatch?.cancel()   // the clip is cut: nothing of it is "played" any more
+        clipWatch?.cancel()   // the clip is cut: nothing of it is "played" any more,
+        playback.cutShort()   // and what still arrives of it stays silent
         hangUpAtEnd?.cancel()
         autoHangUpTask?.cancel()
         relay.send(Outgoing.barge)

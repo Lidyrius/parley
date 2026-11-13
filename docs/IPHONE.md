@@ -505,3 +505,22 @@ older phone or host exactly as it was.
 - A mic count that starts over (a frame numbered ≤ 3 after more than 100) is a new call whose
   `call start` the host took for a repeated one — its numbering is taken from there.
 
+## Protocol v9 — a clip that speaks while it arrives
+
+In v8 Sir answered and heard nothing until the whole line was on his phone: 1.5–2.7 s for a line
+of 12–15 s (the Mac's log, 13.11.), longer for a longer one. v9 keeps the clip and its memory and
+starts it early. Nothing changes for a v8 phone or a v8 host.
+
+- **Who speaks it:** the host's `sessions` frame carries `"call":9`. The phone's `call start` stays
+  `"v":8` (a host takes clips from `"v"` ≥ 8).
+- **The phone plays a clip while it still arrives** — once it holds 25 frames (0.5 s) and they
+  came at least twice as fast as they play (`ClipPlayback` in `Funkloch.swift`; a host sends about
+  six times as fast). On a line slower than that it waits for the whole clip, as in v8.
+- **A dead zone in the middle:** the player runs dry, the voice stops there — and goes on only
+  when the rest of the clip is on the phone, in one piece from memory. One pause, no stutter. The
+  resend after a break (`have`, `from`) is v8's.
+- **Where the clip ended:** `{"t":"clip","id":n,"have":K,"played":true,"mic":m}` — `m` is the
+  phone's mic number when the clip's last frame came out of the speaker. A v9 host drops the mic
+  up to `m` (recorded while the clip played) and takes Sir's answer from `m`+1; without `mic` it
+  reckons as in v8 (the mic number when the phone held all of it, plus the clip's frames), which
+  would be late by whatever had already played.

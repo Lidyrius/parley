@@ -74,6 +74,11 @@ Do them by hand once before relying on Parley.
       sending the rest`).
 - [ ] Flight mode for over three minutes: the call ends on both sides; the next update rings anew.
 - [ ] An iPhone build without v8 (or an Android phone): calls behave exactly as before.
+- [ ] **v9, the line starts at once** (iPhone build and host that both speak v9): answer a ring —
+      Parley speaks within about half a second, not after the whole line has loaded; the answer
+      after the beep is transcribed from its first word.
+- [ ] v9, flight mode on a second into a long line: the voice stops, and after flight mode off
+      the rest plays in one piece; a v8 iPhone build against a v9 host plays whole lines as before.
 
 ## Überwachungsmodus (supervisor)
 

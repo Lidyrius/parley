@@ -89,7 +89,7 @@ final class RelayFrameTests: XCTestCase {
 
     func testSessionsFrameEdgeCases() throws {
         let at = Date(timeIntervalSince1970: 1)
-        XCTAssertEqual(RelayFrame.sessions("{}", at: at), #"{"t":"sessions","at":1000,"call":8}"#)
+        XCTAssertEqual(RelayFrame.sessions("{}", at: at), #"{"t":"sessions","at":1000,"call":9}"#)
         XCTAssertNil(RelayFrame.sessions("[]", at: at))
         XCTAssertNil(RelayFrame.sessions("", at: at))
     }
@@ -193,7 +193,7 @@ final class RelayClientTests: XCTestCase {
         XCTAssertEqual(world.sockets.count, 1)
         XCTAssertEqual(socket.request.url?.absoluteString, "wss://relay.example.dev/v1/room/room1?role=host")
         XCTAssertEqual(socket.request.value(forHTTPHeaderField: "Authorization"), "Bearer sekret")
-        XCTAssertEqual(socket.sent, [#"{"t":"sessions","at":1760000000000,"call":8,"sessions":[],"today":{}}"#])
+        XCTAssertEqual(socket.sent, [#"{"t":"sessions","at":1760000000000,"call":9,"sessions":[],"today":{}}"#])
         XCTAssertEqual(world.states, [true])
     }
 
@@ -203,7 +203,7 @@ final class RelayClientTests: XCTestCase {
         world.json = #"{"sessions":[{"id":"a"}],"today":{}}"#
         tick(after: 2)
         XCTAssertEqual(socket.sent.count, 2)                            // changed
-        XCTAssertTrue(socket.sent[1].hasPrefix(#"{"t":"sessions","at":1760000004000,"call":8,"sessions":[{"id":"a"}]"#))
+        XCTAssertTrue(socket.sent[1].hasPrefix(#"{"t":"sessions","at":1760000004000,"call":9,"sessions":[{"id":"a"}]"#))
         tick(after: 2); tick(after: 2); tick(after: 2); tick(after: 2)
         XCTAssertEqual(socket.sent.count, 2)                            // 8 s unchanged
         tick(after: 2)

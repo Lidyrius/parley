@@ -192,6 +192,8 @@ struct FunklochTests {
         #expect(Outgoing.call(started: true, clips: true) == #"{"down":24000,"state":"start","t":"call","v":8}"#)
         #expect(Outgoing.callIdle == #"{"state":"idle","t":"call"}"#)
         #expect(Outgoing.clip(id: 4, have: 12, played: true) == #"{"have":12,"id":4,"played":true,"t":"clip"}"#)
+        // v9: where the clip ended, in the mic's own count.
+        #expect(Outgoing.clip(id: 4, have: 12, played: true, mic: 77) == #"{"have":12,"id":4,"mic":77,"played":true,"t":"clip"}"#)
         #expect(Frame.decode(#"{"t":"clip","id":4,"from":12}"#) == .clipStart(id: 4, from: 12))
         #expect(Frame.decode(#"{"t":"clip","id":4,"frames":50,"play":true,"listen":true}"#) == .clipEnd(id: 4, frames: 50, listen: true))
         #expect(Frame.decode(#"{"t":"mic","got":9}"#) == .micGot(9))

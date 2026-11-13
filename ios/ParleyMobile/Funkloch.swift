@@ -51,6 +51,60 @@ struct ClipBuffer: Equatable {
     }
 }
 
+/// How far a clip's playback got. v8: it plays once all of it is here. v9 (the host's `sessions`
+/// say `"call":9`): it starts while it still arrives — once `lead` frames are here and they come
+/// at least `pace` times as fast as they play — so Parley speaks the moment Sir answers. Should
+/// the player run dry before the rest came (a dead zone), it waits for all of it and goes on
+/// from memory, as a v8 clip does from its first frame.
+struct ClipPlayback: Equatable {
+    static let lead = 25                     // frames (0.5 s) in hand before the first one plays
+    static let pace = 2.0                    // … arriving at least this much faster than real time
+    static let frameSeconds = 0.02
+
+    private(set) var started = false         // frames went to the player
+    private(set) var ranDry = false          // … and it ran out before the rest came
+    private var cut = false                  // Sir talked over it: nothing more of it plays
+    private var base = 0                     // frames played before the player last (re)started
+    private var fedAt = 0                    // the player's count of played frames when it was fed from `base`
+    private var fed = 0                      // frames handed to it since
+
+    /// A frame of the clip came, or its end: the frames that go to the player now.
+    /// `early`: the host speaks v9. `seconds`: since the clip's first word from the host.
+    /// `played`: the player's count of frames played.
+    mutating func feed(_ clip: ClipBuffer, early: Bool, seconds: Double, played: Int) -> ArraySlice<Data> {
+        guard !cut else { return [] }
+        if !clip.released {
+            guard early, !ranDry else { return [] }
+            guard started || clip.have >= Self.lead && Double(clip.have) * Self.frameSeconds >= Self.pace * seconds else { return [] }
+        }
+        if !started {
+            started = true
+            fedAt = played
+        }
+        let rest = clip.frames.dropFirst(base + fed)
+        fed += rest.count
+        return rest
+    }
+
+    /// The player starts anew (a route change dropped what was scheduled): on from the frame it stood at.
+    mutating func restart(played: Int) {
+        base += max(0, min(fed, played - fedAt))
+        fedAt = played
+        fed = 0
+    }
+
+    /// Everything handed over came out of the speaker. True: that was the whole clip. Else it
+    /// ran dry in the middle — from here it waits for the rest.
+    mutating func playedOut(_ clip: ClipBuffer, played: Int) -> Bool {
+        guard started, played - fedAt >= fed else { return false }
+        if clip.released, base + fed >= clip.have { return true }
+        ranDry = true
+        return false
+    }
+
+    mutating func cutShort() { cut = true }
+}
+
 /// The call's mic on its way to the host. v7: every frame as it is. v8 (`numbered`): four bytes
 /// in front number it; a frame is kept until the host says it has it (`acked`); after a break
 /// (`hold`) nothing goes out until the host said where it stands — then everything after that,
@@ -83,6 +137,8 @@ final class MicLedger: @unchecked Sendable {
     }
 
     var isNumbered: Bool { lock.withLock { numbered } }
+    /// The number of the newest frame (0: none yet, or a v7 call).
+    var last: UInt32 { lock.withLock { seq } }
     var waiting: Int { lock.withLock { kept.count } }
 
     /// One 20 ms mic frame (640 bytes), from the mic's thread.

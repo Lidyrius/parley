@@ -69,7 +69,8 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     private var clipSink: (@Sendable (ClipStatus) -> Void)?
     // A listening follows clip `id`: once the phone holds all of it (`heldAt`: the mic's number
     // then) it plays, its mic running along one frame per frame played — so the clip is over at
-    // heldAt + frames. Mic frames up to there are not Sir's answer (`listenAfter`); those after
+    // heldAt + frames. A v9 phone says the number itself (it may have begun the clip while it
+    // still arrived). Mic frames up to there are not Sir's answer (`listenAfter`); those after
     // it are kept until the listener is there.
     private var awaited: (id: Int, frames: Int, heldAt: UInt32?)?
     private var listenAfter: UInt32?
@@ -249,7 +250,7 @@ final class PhoneHub: CallLink, @unchecked Sendable {
                     if status.have >= a.frames, a.heldAt == nil { a.heldAt = micSeq ?? 0 }
                     awaited = a
                     if status.played {
-                        listenAfter = (a.heldAt ?? micSeq ?? 0) &+ UInt32(a.frames)
+                        listenAfter = status.mic ?? (a.heldAt ?? micSeq ?? 0) &+ UInt32(a.frames)
                         kept.removeAll()
                         awaited = nil
                     }
