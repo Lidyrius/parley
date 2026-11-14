@@ -43,7 +43,7 @@ marker="$slugdir/.parley-moved-$id"
 # WordPress' class-wp-application-passwords.php …): a "password" or "secret" name only as a dotfile
 # or data file. Examples and samples of .env stay (they hold no values).
 SECRET_PATTERNS=('.env' '.env.*' '*.pem' '*.key' '*.p8' '*.p12' '*.pfx' '.npmrc' 'credentials*.json'
-  '.*password*' '*password*.txt' '*secret*.json' '*secret*.txt' '*.secret' 'id_rsa*' 'id_ed25519*')
+  '.*password*' '*password*.txt' '*secret*.json' '*secret*.txt' '*.secret' 'id_rsa*' 'id_ed25519*' '*gauth*.json' 'service-account*.json')
 SECRET_KEEP=('.env.example' '.env.sample' '.env.template')
 DEP_PATTERNS=('.playwright-mcp/' 'node_modules/' '.venv/' 'venv/' '__pycache__/' '.next/' '.turbo/' '.DS_Store')
 excludes() {

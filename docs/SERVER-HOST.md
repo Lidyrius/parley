@@ -360,6 +360,12 @@ Systeme mit IP-Freigabeliste sind vom Server aus nicht erreichbar, auch wenn sie
 Ein abgestürzter Tab („Oh nein!", Fehlercode 9 nach Speichermangel) blockiert jede CDP-Verbindung
 zum ganzen Browser; die Prüfung öffnet Tabs, die nicht antworten, darum unter derselben Adresse neu.
 
+**Pilot-Home verschlüsselt (seit 14.11. 01:11).** Das Home des Pilots (Workspace, Verläufe,
+`.env`-Dateien und Schlüssel der Projekte, Claude-Anmeldung, Parley-Daten) liegt auf einem
+LUKS2-Image (50 GB), Schlüssel nur am Mac. Gesperrt startet nichts — der leere Einhängepunkt gehört
+root und ist 0700. Nach einem Neustart: erst `autostart.sh unlock home`, dann je Browser `unlock <profil>`.
+Das Daten-Image des Session-Dockers ist (noch) nicht verschlüsselt.
+
 **Nach einem Server-Neustart** startet `parley-pilot.service` (systemd, `linux/pilot/autostart.sh`
 als root-eigene Kopie) den Pilot-Container, Parleys Dienst und den Keep-Alive. Die Browser bleiben
 aus, bis ihr Volume entsperrt ist (`autostart.sh unlock <profil>`, Schlüssel über stdin) — sonst
