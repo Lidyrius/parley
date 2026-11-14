@@ -375,12 +375,14 @@ Wer eine härtere Grenze will als einen Container, nimmt je Profil eine kleine V
 Kein neuer Endpunkt: es nutzt `/close` und `/dispatch` mit `resume` beider Hosts.
 
 1. Projektordner per rsync über SSH auf denselben Pfad im Pilot (mit `.git`, also auch Ungetracktes
-   und Uncommittetes); ohne Abhängigkeiten, ohne Secrets (nur mit `--with-secrets`, dann 0600) und
-   ohne das, was `.parley-move-exclude` im Projekt nennt (rsync-Muster, z. B. Kundendaten).
+   und Uncommittetes); mit Secrets (`.env*`, Schlüssel, Zertifikate — nur über SSH, auf dem Server 0600,
+   in der Ausgabe nur Namen; `--without-secrets` lässt sie weg); ohne Abhängigkeiten und ohne das, was `.parley-move-exclude` im Projekt nennt (rsync-Muster, z. B. Kundendaten).
 2. Session am Mac über `/close` beenden, warten bis der Prozess weg ist — kein Doppelbetrieb.
 3. Letzter Stand, Verlauf (`<id>.jsonl`, `<id>/`) und `memory/` nachziehen.
 4. Auf dem Server `/dispatch {resume}`: `claude --resume` mit Sprachmodus und Remote Control.
 `to-mac` ist derselbe Weg zurück; gelöscht wird auf keiner Seite etwas.
+`copy-to-server` legt nur eine Kopie bereit: die Session läuft am Mac weiter, auf dem Server startet nichts;
+`--exclude-from DATEI` nimmt weitere Muster dazu, ohne etwas in den Projektordner zu schreiben.
 
 `check` meldet vorher: MCP-Server (aus `.mcp.json` kommen mit, lokale aus `~/.claude.json` müssen
 von Hand angelegt werden, Anmeldungen immer neu), welche Browser der Verlauf benutzt hat, Compose-
