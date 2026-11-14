@@ -360,9 +360,13 @@ Systeme mit IP-Freigabeliste sind vom Server aus nicht erreichbar, auch wenn sie
 Ein abgestürzter Tab („Oh nein!", Fehlercode 9 nach Speichermangel) blockiert jede CDP-Verbindung
 zum ganzen Browser; die Prüfung öffnet Tabs, die nicht antworten, darum unter derselben Adresse neu.
 
+**Platz (Sirs harte Regel, 14.11.): `/` des Big Boy nie über 88 %.** Alles von Parley hat feste
+Obergrenzen: Pilot-Home 20 GB, Browser 4/4/5 GB (voll belegt), Session-Docker 15 GB — schlimmster Fall
+von 81 % aus etwa +25 GB, also 82 %. Der Plattenwächter stoppt ab 87 % den Session-Docker.
+
 **Pilot-Home verschlüsselt (seit 14.11. 01:11).** Das Home des Pilots (Workspace, Verläufe,
 `.env`-Dateien und Schlüssel der Projekte, Claude-Anmeldung, Parley-Daten) liegt auf einem
-LUKS2-Image (50 GB), Schlüssel nur am Mac. Gesperrt startet nichts — der leere Einhängepunkt gehört
+LUKS2-Image (20 GB, dünn belegt), Schlüssel nur am Mac. Gesperrt startet nichts — der leere Einhängepunkt gehört
 root und ist 0700. Nach einem Neustart: erst `autostart.sh unlock home`, dann je Browser `unlock <profil>`.
 Das Daten-Image des Session-Dockers ist (noch) nicht verschlüsselt.
 
@@ -411,7 +415,7 @@ auf dem Host ein eigener Docker-Daemon ohne root als uid 1500 (`parley-sessions`
 | Dateisicht | systemd-Sandbox: `/srv`, `/home`, `/root`, `/opt` (bis auf die eigenen Ordner), `/var/lib`, `/var/log`, `/mnt`, Dateien in `/` versteckt; der Socket des Produktions-Daemons unbenutzbar; Prozesse anderer Nutzer unsichtbar; der Pilot-Home erscheint unter `/Users/sydney`, also stimmen Bind-Mount-Pfade aus Compose-Dateien |
 | Netz | der Daemon lebt im Netz-Namespace des Pilot-Containers: `-p 127.0.0.1:x:y` landet auf dem Loopback des Pilots, wo die Sessions sind; auf dem Host und öffentlich nichts. Standard-Bindung 127.0.0.1 |
 | Grenzen | ein cgroup für alles: 8 GB RAM ohne Swap, 4 Kerne, 4096 Tasks, halbes CPU-/IO-Gewicht gegenüber der Produktion |
-| Platte | Images und Volumes in einem 40-GB-Dateisystem-Image (`/opt/parley-docker/data.img`), kann den Server nicht volllaufen lassen |
+| Platte | Images und Volumes in einem 15-GB-Dateisystem-Image (`/opt/parley-docker/data.img`), kann den Server nicht volllaufen lassen; dazu `parley-disk-guard.timer`: ab 87 % auf `/` stoppt er diesen Daemon und setzt den Alarm für die Zentrale |
 | Neustart | Server: `parley-pilot.service` → `autostart.sh` startet ihn nach dem Pilot. Nur der Pilot-Container: `parley-docker-follow.service` liest dessen Start-Ereignis (nur lesend am Produktions-Daemon) und startet ihn im neuen Netz-Namespace neu. Container mit Restart-Policy kommen wieder |
 
 `linux/pilot/session-docker-selftest.sh [--mssql]` prüft alles; am 13.11. 19 von 19 bestanden: sieht

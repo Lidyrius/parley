@@ -7,6 +7,9 @@
 #                               calls it at boot, parley-docker-follow.service after every pilot start
 #   session-docker.sh stop | status
 #   session-docker.sh selftest  isolation, limits and function checks (see docs/SERVER-HOST.md)
+#   session-docker.sh guard     parley-disk-guard.timer, every 2 min: / at 87 % or more (the hard
+#                               line is 88 %: production shares the disk) → the sessions' Docker
+#                               stops and ~/keepalive/ALERT in the pilot says why
 # How it is fenced in:
 #   - its socket is the only way in: /Users/sydney/.docker-rootless/docker.sock in the pilot
 #     (DOCKER_HOST there); the production daemon's socket is not mounted anywhere near it
@@ -21,7 +24,7 @@ set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "as root" >&2; exit 1; }
 D=/opt/parley-docker; U=parley-sessions; ID=1500
 PH=/opt/parley-pilot/home                       # the pilot's /Users/sydney
-SIZE="${PARLEY_DOCKER_SIZE:-40G}" MEM="${PARLEY_DOCKER_MEM:-8G}" CPU="${PARLEY_DOCKER_CPU:-400%}"
+SIZE="${PARLEY_DOCKER_SIZE:-15G}" MEM="${PARLEY_DOCKER_MEM:-8G}" CPU="${PARLEY_DOCKER_CPU:-400%}"
 NS=parley-pilot
 
 install_() {
@@ -85,8 +88,20 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > /etc/systemd/system/parley-disk-guard.service <<EOF
+[Service]
+Type=oneshot
+ExecStart=$D/session-docker.sh guard
+EOF
+  cat > /etc/systemd/system/parley-disk-guard.timer <<EOF
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+[Install]
+WantedBy=timers.target
+EOF
   systemctl daemon-reload
-  systemctl enable --now parley-docker-follow.service
+  systemctl enable --now parley-docker-follow.service parley-disk-guard.timer
   # the client in the pilot: the host's own docker CLI and plugins (static binaries), DOCKER_HOST
   install -d -o $ID -g $ID $PH/.local/bin $PH/.docker $PH/.docker/cli-plugins
   install -o $ID -g $ID -m 755 /usr/bin/docker $PH/.local/bin/docker
@@ -127,6 +142,15 @@ follow() {
     while read -r name; do echo "$name started"; sleep 2; "$D/session-docker.sh" start || echo "start failed"; done
 }
 
+guard() {
+  local pct; pct="$(df --output=pcent / | tail -1 | tr -dc 0-9)"
+  [ "$pct" -ge "${PARLEY_DISK_LIMIT:-87}" ] || return 0
+  logger -t parley-disk-guard "/ at $pct % — stopping the sessions' Docker"
+  systemctl is-active -q parley-docker && systemctl stop parley-docker
+  echo "DISK: / bei $pct % ($(date '+%F %T')) — Session-Docker gestoppt, Grenze 88 %" >> $PH/keepalive/ALERT
+  chown $ID:$ID $PH/keepalive/ALERT 2>/dev/null || true
+}
+
 stop() { systemctl stop parley-docker; ip netns delete $NS 2>/dev/null || true; }
 
 status() {
@@ -136,7 +160,7 @@ status() {
 }
 
 case "${1:-}" in
-  install) install_ ;; start) start ;; stop) stop ;; status) status ;; follow) follow ;;
+  install) install_ ;; start) start ;; stop) stop ;; status) status ;; follow) follow ;; guard) guard ;;
   selftest) exec bash "$(dirname "$0")/session-docker-selftest.sh" ;;
   *) sed -n '2,19p' "$0"; exit 2 ;;
 esac
