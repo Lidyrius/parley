@@ -246,6 +246,10 @@ enum RelayFrame {
             case "delete": return id.isEmpty ? nil : .snapshotDelete(id)
             default: return nil
             }
+        case "alerts":   // v10: run the host's `alertsCheck` again
+            return f["op"] as? String == "check" ? .alertsCheck : nil
+        case "vnc":      // v10: a remote desktop channel through the relay
+            return VncFrame.parse(f).map(PhoneEvent.vnc)
         default:
             return nil
         }
@@ -311,6 +315,9 @@ enum PhoneEvent: Equatable, Sendable {
     case shareRemove(String)
     case join(name: String, device: String, pub: String, who: String = "")
     case answer(id: String, text: String, pass: Bool)
+    // v10 (docs/IPHONE.md): Hinweise and the remote desktop.
+    case alertsCheck
+    case vnc(VncFrame)
 }
 
 // When the overview goes out: on change (compared as the registry's JSON, so `at` never
@@ -426,6 +433,15 @@ final class RelayClient: @unchecked Sendable {
     // A binary frame (call audio) to the phones (dropped while the link is down).
     func sendAudio(_ data: Data) {
         queue.async { self.send(data: data) }
+    }
+
+    // The overview now, changed or not (v10: after an `alertsCheck` ends).
+    func refresh() {
+        queue.async {
+            guard self.socket != nil else { return }
+            self.sync.reset()
+            self.push()
+        }
     }
 
     func stop() {

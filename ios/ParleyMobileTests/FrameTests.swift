@@ -521,5 +521,40 @@ struct FrameTests {
         #expect(PushPayload.share(["label": "Website"]) == nil)
         #expect(PushPayload.share(["share": ""]) == nil)
     }
+
+    // MARK: v10 — Hinweise and desktops
+
+    @Test func alertsAndDesktopsRideAlong() throws {
+        let json = #"{"t":"sessions","sessions":[],"alertsChecking":true,"desktops":["dev","saf",""],"alerts":[{"id":"0123456789abcdef","text":"Google abgemeldet","since":1760000000000,"desktop":"saf"},{"id":"b","text":"Ohne Desktop","since":1760000001000},{"text":"no id"}]}"#
+        guard case .sessions(let snap)? = Frame.decode(json) else { Issue.record("not a sessions frame"); return }
+        #expect(snap.alerts == [HostAlert(id: "0123456789abcdef", text: "Google abgemeldet", since: 1_760_000_000_000, desktop: "saf"),
+                                HostAlert(id: "b", text: "Ohne Desktop", since: 1_760_000_001_000, desktop: nil)])
+        #expect(snap.alertsChecking)
+        #expect(snap.desktops == ["dev", "saf"])
+        guard case .sessions(let old)? = Frame.decode(#"{"t":"sessions","sessions":[]}"#) else { Issue.record("not a sessions frame"); return }
+        #expect(old.alerts.isEmpty && !old.alertsChecking && old.desktops.isEmpty)
+    }
+
+    @Test func vncFramesDecode() {
+        #expect(Frame.decode(#"{"t":"vnc","op":"open","ch":"abc","ok":true,"password":"pw"}"#) == .vncOpen(ch: "abc", ok: true, password: "pw", error: nil))
+        #expect(Frame.decode(#"{"t":"vnc","op":"open","ch":"abc","ok":false,"error":"Desktop aus"}"#) == .vncOpen(ch: "abc", ok: false, password: nil, error: "Desktop aus"))
+        #expect(Frame.decode(#"{"t":"vnc","ch":"abc","d":"UkZCIDAwMy4wMDgK"}"#) == .vncData(ch: "abc", d: "UkZCIDAwMy4wMDgK"))
+        #expect(Frame.decode(#"{"t":"vnc","op":"close","ch":"abc"}"#) == .vncClose(ch: "abc"))
+        #expect(Frame.decode(#"{"t":"vnc","ch":"abc"}"#) == .other("vnc"))
+        #expect(Frame.decode(#"{"t":"vnc","op":"open","ch":""}"#) == .other("vnc"))
+    }
+
+    @Test func vncAndAlertsEncode() {
+        #expect(Outgoing.alertsCheck == #"{"op":"check","t":"alerts"}"#)
+        #expect(Outgoing.vncOpen(ch: "abc", desktop: "saf") == #"{"ch":"abc","desktop":"saf","op":"open","t":"vnc"}"#)
+        #expect(Outgoing.vncData(ch: "abc", d: "a/b+") == #"{"ch":"abc","d":"a/b+","t":"vnc"}"#)
+        #expect(Outgoing.vncClose(ch: "abc") == #"{"ch":"abc","op":"close","t":"vnc"}"#)
+    }
+
+    @Test func vncChannelIdsFitTheContract() {
+        let id = DesktopChannel.newID()
+        #expect(id.count == 16 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) })
+        #expect(DesktopChannel.newID() != id)
+    }
 }
 

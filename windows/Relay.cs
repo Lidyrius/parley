@@ -259,6 +259,19 @@ public static class RelayFrame
                         case "delete": return snap.Length > 0 ? new PhoneSnapshotDelete(snap) : null;
                         default: return null;
                     }
+                case "alerts":   // v10: Sir asks for a fresh check
+                    return Str("op") == "check" ? new PhoneAlertsCheck() : null;
+                case "vnc":      // v10: a desktop channel — open / data / close
+                {
+                    if (Str("ch") is not { Length: > 0 } vch) return null;
+                    var op = Str("op") ?? "data";
+                    if (op == "data")
+                    {
+                        try { return Str("d") is { Length: > 0 } d ? new PhoneVnc("data", vch, null, Convert.FromBase64String(d)) : null; }
+                        catch (FormatException) { return null; }
+                    }
+                    return op is "open" or "close" ? new PhoneVnc(op, vch, Str("desktop"), null) : null;
+                }
                 case "join":   // v7: a guest on a share's room says who he is, with his share key
                     return new PhoneJoin(Str("name") ?? "", Str("device") ?? "", Str("pub") ?? "", Str("who")?.Trim() ?? "");
                 case "answer": // v7: a guest answers his question, or passes it on to Sir
@@ -292,7 +305,9 @@ public static class RelayFrame
 
 // A phone's message (protocol v1 + v2).
 public abstract record PhoneMessage { }
-public sealed record PhoneResume(string Id) : PhoneMessage;          // resume a session (POST /resume)
+public sealed record PhoneResume(string Id) : PhoneMessage;
+public sealed record PhoneAlertsCheck : PhoneMessage { }             // v10: run alertsCheck
+public sealed record PhoneVnc(string Op, string Ch, string? Desktop, byte[]? Data) : PhoneMessage;   // v10: open | data | close          // resume a session (POST /resume)
 // `call` start / end; the voice's rate (v3: 24 kHz on request); v8: it takes clips and numbers its mic
 public sealed record PhoneCallState(bool Started, int Down = PhoneAudio.SampleRate, bool Clips = false) : PhoneMessage;
 public sealed record PhoneCallIdle : PhoneMessage { }                 // v8: the phone is connected and in no call (a hang-up may have got lost)

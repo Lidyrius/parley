@@ -117,7 +117,21 @@ struct Snapshot: Equatable, Sendable {
     var today: Today?
     var reminders: [ReminderRow] = []
     var snapshots: [SavedSnapshot] = []
+    /// v10: Hinweise — something on the host needs Sir outside any session (a lost login).
+    var alerts: [HostAlert] = []
+    /// v10: "Erneut prüfen" runs on the host right now.
+    var alertsChecking = false
+    /// v10: the host's desktops (names), opened through the relay (VNC).
+    var desktops: [String] = []
     var at: Double?
+}
+
+/// v10: one Hinweis of the host — `desktop` names the desktop to log in on, if any.
+struct HostAlert: Identifiable, Equatable, Sendable, Decodable {
+    var id: String
+    var text: String
+    var since: Double?              // epoch ms, host clock: when the host first saw it
+    var desktop: String?
 }
 
 /// v6: a set of sessions kept under a name (the "Snapshots" sheet) — opened again in one go.
@@ -256,6 +270,12 @@ enum Frame: Equatable, Sendable {
     case clipEnd(id: Int, frames: Int, listen: Bool)
     /// v8: the host has this phone's mic up to frame `seq`.
     case micGot(UInt32)
+    /// v10: the host's answer to a desktop `open` on channel `ch` — the VNC password, or why not.
+    case vncOpen(ch: String, ok: Bool, password: String?, error: String?)
+    /// v10: RFB bytes of channel `ch`, still base64 (the web view takes them as they are).
+    case vncData(ch: String, d: String)
+    /// v10: the host closed channel `ch`.
+    case vncClose(ch: String)
     case other(String)              // unknown `t` (or a v2 frame it cannot read): ignored
 
     /// nil for anything that is not a JSON message with a `t` (e.g. the relay's `pong`).
@@ -312,6 +332,14 @@ enum Frame: Equatable, Sendable {
         case "mic":
             guard let w = try? decoder.decode(MicWire.self, from: data) else { return .other(head.t) }
             return .micGot(w.got)
+        case "vnc":
+            guard let w = try? decoder.decode(VNCWire.self, from: data), !w.ch.isEmpty else { return .other(head.t) }
+            switch w.op {
+            case "open"?: return .vncOpen(ch: w.ch, ok: w.ok ?? false, password: w.password, error: w.error)
+            case "close"?: return .vncClose(ch: w.ch)
+            case nil: return w.d.map { .vncData(ch: w.ch, d: $0) } ?? .other(head.t)
+            default: return .other(head.t)
+            }
         case "image":
             guard let w = try? decoder.decode(ImageWire.self, from: data) else { return .other(head.t) }
             return .image(key: w.key, data: w.data.flatMap { Data(base64Encoded: $0) })
@@ -331,6 +359,7 @@ enum Frame: Equatable, Sendable {
     private struct NoticeWire: Decodable { let text: String }
     private struct ClipWire: Decodable { let id: Int; let from: Int?; let frames: Int?; let listen: Bool? }
     private struct MicWire: Decodable { let got: UInt32 }
+    private struct VNCWire: Decodable { let ch: String; let op: String?; let ok: Bool?; let password: String?; let error: String?; let d: String? }
     private struct AskEndWire: Decodable { let id: String }
     private struct SnapshotWire: Decodable { let id: String; let results: Lossy<SnapshotResult> }
     /// `{"t":"palette","name","note","alwaysDark","colors":{role:["#light","#dark"]}}` — every role
@@ -463,6 +492,14 @@ enum Outgoing {
     static func later(after: Int?) -> String {
         after.map { encode(["t": .s("later"), "after": .i($0)]) } ?? encode(["t": .s("later")])
     }
+    /// v10: "Erneut prüfen" — the host runs its check for the Hinweise once more.
+    static let alertsCheck = encode(["t": .s("alerts"), "op": .s("check")])
+    /// v10: a desktop through the relay on channel `ch` — open it, its RFB bytes (base64), close it.
+    static func vncOpen(ch: String, desktop: String) -> String {
+        encode(["t": .s("vnc"), "op": .s("open"), "ch": .s(ch), "desktop": .s(desktop)])
+    }
+    static func vncData(ch: String, d: String) -> String { encode(["t": .s("vnc"), "ch": .s(ch), "d": .s(d)]) }
+    static func vncClose(ch: String) -> String { encode(["t": .s("vnc"), "op": .s("close"), "ch": .s(ch)]) }
 
     private enum Value: Encodable {
         case s(String), b(Bool), i(Int), a([String])
@@ -597,7 +634,7 @@ extension ReminderRow: Decodable {
 }
 
 extension Snapshot: Decodable {
-    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor, call, missed }
+    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor, call, missed, alerts, alertsChecking, desktops }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         supervisor = c.lenient(.supervisor) ?? false
@@ -607,6 +644,9 @@ extension Snapshot: Decodable {
         today = c.lenient(.today)
         reminders = (c.lenient(.reminders) as Lossy<ReminderRow>?)?.items ?? []
         snapshots = (c.lenient(.snapshots) as Lossy<SavedSnapshot>?)?.items ?? []
+        alerts = (c.lenient(.alerts) as Lossy<HostAlert>?)?.items ?? []
+        alertsChecking = c.lenient(.alertsChecking) ?? false
+        desktops = ((c.lenient(.desktops) as Lossy<String>?)?.items ?? []).filter { !$0.isEmpty }
         at = c.lenient(.at)
     }
 }

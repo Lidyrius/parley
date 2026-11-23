@@ -50,8 +50,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             await AppModel.shared.deliverLater(after)
             return
         }
-        guard let id = response.notification.request.content.userInfo["session"] as? String, !id.isEmpty else { return }   // "": a join ask, a reminder
-        await MainActor.run { AppModel.shared.open(session: id) }
+        let content = response.notification.request.content, title = content.title
+        guard let id = content.userInfo["session"] as? String else { return }
+        // "": a Hinweis (v10), a join ask, a reminder — the overview.
+        await MainActor.run { id.isEmpty ? AppModel.shared.showOverview(title: title) : AppModel.shared.open(session: id) }
     }
 }
 
@@ -150,6 +152,8 @@ final class AppModel {
     /// v7: questions for this phone as a guest (the Rückfrage screen shows the first).
     var guestAsks: [GuestAsk] = []
     private(set) var loadingOlder: Set<String> = []
+    /// v10: the desktop open right now (one at a time), on the active host.
+    private(set) var desktop: DesktopChannel?
     @ObservationIgnored private var requestedImages: Set<String> = []
     @ObservationIgnored var alertToken: String? {
         didSet { if alertToken != oldValue { sendAlertToken() } }
@@ -416,6 +420,7 @@ final class AppModel {
         images = [:]   // kept by item, not by session: a guest's are asked for again
         requestedImages = []
         opened = [:]
+        closeDesktop()
         shareLinks = [:]
         joinRequests = []
         resumeOnConnect = nil
@@ -443,6 +448,7 @@ final class AppModel {
             dialIfIdle()
         case .background:
             isForeground = false
+            closeDesktop()   // before the socket closes, so the host hears it
             if !call.isBusy { relay.disconnect() }
             for r in guestRelays.values { r.disconnect() }
         default: break
@@ -520,6 +526,39 @@ final class AppModel {
         relay.send(Outgoing.snapshotDelete(id: id))
     }
 
+    /// A tapped notification about no session: the overview. A Hinweis (v10) is titled
+    /// "Parley · <host name>" — when that is another paired host, it becomes the active one (not
+    /// during a call), so its card shows.
+    func showOverview(title: String) {
+        path = []
+        compose = nil
+        let name = title.hasPrefix("Parley · ") ? String(title.dropFirst("Parley · ".count)) : ""
+        if let h = hosts.hosts.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) { activate(h.id) }
+    }
+
+    // MARK: Hinweise and desktops (v10)
+
+    /// "Erneut prüfen": the host runs its check; `alertsChecking` shows while it runs.
+    func checkAlerts() {
+        guard !demo else { return }
+        relay.send(Outgoing.alertsCheck)
+    }
+
+    /// Opens one of the active host's desktops (a fresh channel; one already open closes).
+    func openDesktop(_ name: String) {
+        closeDesktop()
+        let channel = DesktopChannel(desktop: name) { [weak relay] in relay?.send($0) }
+        desktop = channel
+        if demo { channel.opened(ok: false, password: nil, error: "Im Demo-Modus gibt es keinen Desktop."); return }
+        guard relay.canSend else { channel.opened(ok: false, password: nil, error: "Der Host ist gerade nicht verbunden."); return }
+        channel.open()
+    }
+
+    func closeDesktop() {
+        desktop?.close()
+        desktop = nil
+    }
+
     func say(_ text: String, to id: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
@@ -565,6 +604,7 @@ final class AppModel {
             }
             call.relayChanged()
         case .closed:
+            desktop?.lost()
             call.relayChanged()
         case .audio(let frame):
             if call.line === relay { call.play(frame) }
@@ -607,6 +647,13 @@ final class AppModel {
         case .frame(.joinRequest(let r)):
             joinRequests.removeAll { $0.id == r.id }
             joinRequests.append(r)
+        // v10: a phone drops `vnc` frames for a channel it didn't open.
+        case .frame(.vncOpen(let ch, let ok, let password, let error)):
+            if desktop?.id == ch { desktop?.opened(ok: ok, password: password, error: error) }
+        case .frame(.vncData(let ch, let d)):
+            if desktop?.id == ch { desktop?.received(d) }
+        case .frame(.vncClose(let ch)):
+            if desktop?.id == ch { desktop?.closedByHost() }
         case .frame(.ring(let label)):
             // In the background the VoIP push rings instead (the socket is closed there anyway).
             if isForeground { call.reportIncoming(label: label) }

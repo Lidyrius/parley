@@ -12,6 +12,7 @@ namespace Parley;
 //   status                is the daemon up, its sessions, the Überwachungsmodus
 //   selftest              the Unix-specific parts (paths, app-data folder, file modes) — exit 1 on a failure
 //   sim-phone <link> …    a stand-in phone on the relay (SimPhone.cs)
+//   desktop-check <name>  open that `vnc` desktop as the phone would (v10), expect the RFB greeting
 internal static class Program
 {
     private const UnixFileMode OwnerDir = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
@@ -33,10 +34,30 @@ internal static class Program
             case "pair": return Pair();
             case "status": return await Status();
             case "sim-phone": return await SimPhone.Run(args[1..]);
+            case "desktop-check": return await DesktopCheck(args.ElementAtOrDefault(1) ?? "");
             default:
                 Console.Error.WriteLine("usage: parley run | pair | status | selftest | sim-phone <parley://pair?…> [--seconds N] [--say <session id or name> <text>] [--answer]");
                 return 2;
         }
+    }
+
+    // v10: the tunnel a phone gets for `vnc` desktop `name` (Desktops.cs) — exit 0 on "RFB 003.00x".
+    private static async Task<int> DesktopCheck(string name)
+    {
+        var got = new TaskCompletionSource<string>();
+        Desktops.Send = frame =>
+        {
+            using var doc = JsonDocument.Parse(frame);
+            var r = doc.RootElement;
+            if (r.TryGetProperty("ok", out var ok) && !ok.GetBoolean()) got.TrySetResult("error: " + r.GetProperty("error").GetString());
+            else if (r.TryGetProperty("d", out var d)) got.TrySetResult(System.Text.Encoding.ASCII.GetString(Convert.FromBase64String(d.GetString()!)).Trim());
+            return Task.CompletedTask;
+        };
+        Desktops.OnPhone(new PhoneVnc("open", "check0000check", name, null), Config.Load);
+        var first = await Task.WhenAny(got.Task, Task.Delay(15000)) == got.Task ? got.Task.Result : "timeout";
+        Desktops.Close("check0000check", tell: false);
+        Console.WriteLine($"{name}: {first}");
+        return first.StartsWith("RFB 003.", StringComparison.Ordinal) ? 0 : 1;
     }
 
     // The app-data folder ($XDG_CONFIG_HOME or ~/.config, then /Parley) is the user's alone:
@@ -119,6 +140,12 @@ internal static class Program
         Check("path: the root stays", CwdPath.Normalize("/"), "/");
         Check("path: same folder", CwdPath.Same("/srv/work/shirts/", "/srv/work/shirts"), true);
         Check("path: case matters", CwdPath.Same("/srv/work/Shirts", "/srv/work/shirts"), false);
+        Check("alerts: desktop in brackets", Alerts.Parse("[saf] Teams: bitte neu anmelden", 1)?.Desktop, "saf");
+        Check("alerts: text without it", Alerts.Parse("[saf] Teams: bitte neu anmelden", 1)?.Text, "Teams: bitte neu anmelden");
+        Check("alerts: no brackets, no desktop", Alerts.Parse("DISK: / bei 88 %", 1)?.Desktop, null);
+        Check("alerts: id = sha256 of the line", Alerts.Parse("  x  ", 1)?.Id, "2d711642b726b044");
+        Check("alerts: an empty line is none", Alerts.Parse("   ", 1) is null, true);
+        Check("vnc: channel ids", Desktops.ValidChannel("abcDEF12") && !Desktops.ValidChannel("short") && !Desktops.ValidChannel("bad-chars!x"), true);
         Check("path: a bare name lives under projectsDir", CwdPath.Resolve("shirts", "/srv/work/"), "/srv/work/shirts");
         Check("path: absolute as is", CwdPath.Resolve("/srv/else/x", "/srv/work"), "/srv/else/x");
         var pending = new PendingByCwd();

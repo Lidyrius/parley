@@ -524,3 +524,48 @@ starts it early. Nothing changes for a v8 phone or a v8 host.
   up to `m` (recorded while the clip played) and takes Sir's answer from `m`+1; without `mic` it
   reckons as in v8 (the mic number when the phone held all of it, plus the clip's frames), which
   would be late by whatever had already played.
+
+## Protocol v10 — Hinweise and the remote desktop through the relay
+
+A host can say that something needs Sir outside any session — typically a lost login in a
+browser on a server (`linux/pilot/keepalive.sh`). The phone pushes it, shows it on that host, and
+opens the affected desktop right in the app: a VNC session tunnelled through the relay, end-to-end
+encrypted like every other frame. No VPN, no open port, no address to know — the same reach as
+the rest of Parley, which is what an open-source install needs.
+
+### Hinweise (alerts)
+- **Source:** a plain text file, path in the host's config `alertsFile` (none = feature off).
+  One alert per non-empty line, `[<desktop>] <text>` or just `<text>`; `<desktop>` names an entry
+  of `vnc` (below). The file's owner writes it while something is wrong and removes it (or empties
+  it) when all is well. The host reads it every 30 s (the Wachhund's tick).
+- **`sessions` frame / `GET /sessions`:** `alerts: [{id, text, since, desktop?}]`, omitted when
+  none. `id` = the first 16 hex chars of `sha256(line)`; `since` = epoch ms when the host first saw
+  that line.
+- **Push:** a line the host hasn't seen before → one alert push (the `alert` token, `push kind
+  alert`) titled `Parley · <host name>`, body = the text, `session` = `""`. A line that stays sends
+  nothing more; one that goes and comes back pushes again. A line that is gone drops out of
+  `alerts` — no push for that.
+- **Check again:** phone → host `{"t":"alerts","op":"check"}`. The host runs its config's
+  `alertsCheck` (a shell command, e.g. `keepalive.sh once`) in the background, at most one at a
+  time, and sends a fresh `sessions` frame when it ends. Without `alertsCheck` it is ignored.
+  While a check runs, `sessions` carries `alertsChecking: true`.
+
+### Desktops (VNC)
+- **Host config `vnc`:** `{"<name>": {"url": "ws://10.252.0.11:6080/websockify" | "tcp://127.0.0.1:5900",
+  "password": "<VNC password>"}}`. `ws://` = a websockify endpoint (binary frames), `tcp://` = a
+  plain RFB server (e.g. macOS Screen Sharing). The config stays on the host (0600).
+- **`sessions` frame:** `desktops: ["dev","saf","privat"]` (names only), omitted when none. The
+  phone offers them on that host even without an alert.
+- **Open:** phone → host `{"t":"vnc","op":"open","ch":"<8–32 chars [A-Za-z0-9]>","desktop":"saf"}`.
+  Host → phone `{"t":"vnc","op":"open","ch","ok":true,"password":"…"}` once it is connected to the
+  desktop, or `{"t":"vnc","op":"open","ch","ok":false,"error":"<German, short>"}`.
+- **Data:** both ways `{"t":"vnc","ch","d":"<base64 RFB bytes>"}`, in order. The host sends at
+  most 48 KB of RFB bytes per frame (well under the relay's 256 KB text limit).
+- **Close:** either side `{"t":"vnc","op":"close","ch"}`. The host also closes a channel after
+  10 min without data from the phone, when the desktop closes, or when the relay connection drops;
+  it keeps at most 2 channels (a third open closes the oldest).
+- The host forwards to all phones; a phone drops `vnc` frames for a `ch` it didn't open.
+- **Phone:** noVNC (MPL-2.0, `third_party/novnc`) in a web view, its socket replaced by the relay
+  channel; the password from `open` is handed to noVNC, never shown or stored.
+- Costs: every frame is a relay message (Durable Object request). A few minutes of logging in is a
+  few thousand — fine for the free plan's 100k a day, not for watching a desktop all day.

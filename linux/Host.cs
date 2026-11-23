@@ -86,6 +86,14 @@ internal sealed class Host
         };
         _server.AskGuest = (id, turn) => _shares.AskGuest(id, turn);
         RelayHost.Start = StartRelay;
+        Desktops.Send = PhoneCall.Reply;
+    }
+
+    // v10: Hinweise from `alertsFile` — a new line is pushed; idle desktop channels close.
+    private static void TickAlerts()
+    {
+        Alerts.Tick(Config.Load(), (title, body) => { Notifier.Notify(title, body); _ = Apns.SendAlert(title, body, ""); });
+        Desktops.Tick();
     }
 
     private void Start()
@@ -96,7 +104,7 @@ internal sealed class Host
         // Live Activity. Every 30 s: the Wachhund, reminders, shares. A tick never ends the host.
         _activityTimer = new System.Threading.Timer(_ => { Safely("relay", StartRelay); Safely("live activity", TickLiveActivity); },
             null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
-        _watchdogTimer = new System.Threading.Timer(_ => { Safely("watchdog", TickWatchdog); Safely("reminders", _server.TickReminders); Safely("shares", _shares.Tick); },
+        _watchdogTimer = new System.Threading.Timer(_ => { Safely("watchdog", TickWatchdog); Safely("alerts", TickAlerts); Safely("reminders", _server.TickReminders); Safely("shares", _shares.Tick); },
             null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
@@ -309,7 +317,7 @@ internal sealed class Host
             if (_relay is null && !config.IsComplete) return;   // not paired yet: nothing to log every 2 s
             _relay?.Stop();
             _relay = RelayClient.Create(config, () => _server.Sessions.Json(), OnPhone, PhoneCall.OnAudio);
-            if (_relay is not null) _relay.OnConnected = PhoneCall.Resync;
+            if (_relay is not null) _relay.OnConnected = () => { Desktops.CloseAll(); PhoneCall.Resync(); };
             PhoneCall.Attach(_relay);
             _relay?.Start();
             if (_relay is not null) Clips.PrerenderGreet(Config.Load());
@@ -322,6 +330,8 @@ internal sealed class Host
         switch (message)
         {
             case PhoneResume r: _server.StartResume(r.Id); break;
+            case PhoneAlertsCheck: Alerts.Check(Config.Load()); break;
+            case PhoneVnc v: Desktops.OnPhone(v, Config.Load); break;
             case PhoneCallState c:
                 var wasInCall = PhoneCall.Active;
                 PhoneCall.OnCall(c.Started, c.Down, c.Clips);

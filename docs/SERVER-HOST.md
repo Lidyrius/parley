@@ -428,6 +428,31 @@ geschlossen fehl; das Daten-Image ist nicht verschlüsselt — Kundendaten gehö
 Zustimmung und dann auf ein LUKS-Image; Sessions, die vor der Einrichtung gestartet sind, kennen
 `DOCKER_HOST` nicht (neu starten oder `export DOCKER_HOST=…`).
 
+## Login weg → Hinweis aufs iPhone, Anmelden in der App (gebaut 23.11.)
+
+Fällt in einem Server-Browser ein Login raus, merkt das der Keep-Alive-Check und schreibt
+`~/keepalive/ALERT`, eine Zeile je Problem: `[saf] Teams: bitte neu anmelden`. Der Login-Tab bleibt
+dabei vorn offen. Solange ein Problem offen ist, prüft der Check alle 15 Minuten statt alle 2 bis 4 Stunden.
+
+Der Parley-Host liest die Datei alle 30 Sekunden (Protokoll v10, `docs/IPHONE.md`):
+- **Push:** Für jede neue Zeile kommt ein Push „Parley · Big Boy: Teams: bitte neu anmelden“.
+- **Banner:** Die iPhone-App zeigt am Host ein Banner mit **Anmelden** und **Erneut prüfen**.
+- **Anmelden:** öffnet den Desktop genau dieses Browsers in der App (noVNC). Die Verbindung läuft
+  durch das Relay, Ende-zu-Ende verschlüsselt wie alles andere. Es braucht kein Tailnet, keinen
+  offenen Port und kein Passwort-Abtippen.
+- **Erneut prüfen:** startet `keepalive.sh once`. Ist alles grün, verschwindet das Banner.
+
+Einrichtung in `credentials.json` des Hosts (0600):
+
+```json
+"hostName": "Big Boy",
+"alertsFile": "/Users/sydney/keepalive/ALERT",
+"alertsCheck": "bash …/linux/pilot/keepalive.sh once",
+"vnc": { "saf": { "url": "ws://<browser-ip>:6080/websockify", "password": "<VNC-Passwort>" } }
+```
+
+Prüfen ohne iPhone: `parley desktop-check saf` → `saf: RFB 003.008`.
+
 ## Sicherheitskonzept
 
 Der Arbeits-Host wird das wertvollste Ziel in Sirs Umgebung: alle Kunden-Repos, alle `.env`, die

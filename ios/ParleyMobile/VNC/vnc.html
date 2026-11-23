@@ -1,0 +1,117 @@
+<!doctype html>
+<!-- The remote desktop (docs/IPHONE.md → v10): noVNC (novnc.js, injected by the app once the
+     page is parsed) on a channel that is the relay — bytes go to Swift as base64 and come back the same
+     way, in order. Swift drives it through `window.parley`. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #screen { position: fixed; inset: 0; }
+</style>
+</head>
+<body>
+<div id="screen"></div>
+<script>
+(function () {
+  const post = (m) => window.webkit.messageHandlers.vnc.postMessage(m);
+
+  // Bytes to base64, in slices (String.fromCharCode takes a bounded number of arguments).
+  function b64(bytes) {
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(s);
+  }
+
+  // What noVNC sends is collected for a moment and leaves as one frame (every frame is a relay
+  // message): a mouse drag becomes a few frames, not one per pointer event. At most 48 KB a frame.
+  let out = [], outLen = 0, timer = null;
+  function flush() {
+    timer = null;
+    if (!outLen) return;
+    const all = new Uint8Array(outLen);
+    let o = 0;
+    for (const p of out) { all.set(p, o); o += p.length; }
+    out = []; outLen = 0;
+    for (let i = 0; i < all.length; i += 48 * 1024) post({ op: "d", d: b64(all.subarray(i, i + 48 * 1024)) });
+  }
+
+  // The raw channel noVNC attaches to instead of a WebSocket (core/websock.js → attach): it is
+  // open from the start — the host has connected to the desktop before the app creates the RFB.
+  const channel = {
+    binaryType: "arraybuffer",
+    protocol: "",
+    readyState: "open",
+    onopen: null, onmessage: null, onclose: null, onerror: null,
+    send(data) {
+      // noVNC hands a view into its reused send buffer: copy it now.
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data.slice(0)) : new Uint8Array(data);
+      out.push(bytes); outLen += bytes.length;
+      if (outLen >= 48 * 1024) flush(); else if (!timer) timer = setTimeout(flush, 20);
+    },
+    close() {
+      if (this.readyState === "closed") return;
+      flush();
+      this.readyState = "closed";
+      post({ op: "close" });
+      closed();
+    },
+  };
+
+  // Like a WebSocket: the close event comes after close() has returned.
+  const closed = () => setTimeout(() => { if (channel.onclose) channel.onclose({ code: 1000, reason: "", wasClean: true }); }, 0);
+
+  let rfb = null;
+
+  window.parley = {
+    start(password) {
+      rfb = new NoVNC.default(document.getElementById("screen"), channel, { credentials: { password } });
+      rfb.scaleViewport = true;
+      rfb.resizeSession = false;
+      rfb.focusOnClick = false;   // the iOS keyboard comes from the app's own button
+      rfb.addEventListener("connect", () => post({ op: "state", s: "connected" }));
+      rfb.addEventListener("disconnect", (e) => post({ op: "state", s: "disconnected", clean: !!(e.detail && e.detail.clean) }));
+      rfb.addEventListener("securityfailure", (e) => post({ op: "state", s: "securityfailure", reason: (e.detail && e.detail.reason) || "" }));
+      rfb.addEventListener("credentialsrequired", () => rfb.sendCredentials({ password }));
+    },
+    // Bytes from the desktop (base64), in the order they came.
+    data(d) {
+      if (!channel.onmessage || channel.readyState !== "open") return;
+      const s = atob(d), bytes = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+      channel.onmessage({ data: bytes.buffer });
+    },
+    // The host closed the channel.
+    end() {
+      if (channel.readyState === "closed") return;
+      channel.readyState = "closed";
+      closed();
+    },
+    // The iOS keyboard: typed text (a line break is Return) and the delete key.
+    type(text) {
+      if (!rfb) return;
+      for (const c of text) {
+        if (c === "\n" || c === "\r") { rfb.sendKey(NoVNC.KeyTable.XK_Return, "Enter"); continue; }
+        if (c === "\t") { rfb.sendKey(NoVNC.KeyTable.XK_Tab, "Tab"); continue; }
+        const sym = NoVNC.keysyms.lookup(c.codePointAt(0));
+        if (sym) rfb.sendKey(sym, null);
+      }
+    },
+    key(name) {
+      if (!rfb) return;
+      const keys = {
+        backspace: [NoVNC.KeyTable.XK_BackSpace, "Backspace"],
+        escape: [NoVNC.KeyTable.XK_Escape, "Escape"],
+        tab: [NoVNC.KeyTable.XK_Tab, "Tab"],
+      };
+      const k = keys[name];
+      if (k) rfb.sendKey(k[0], k[1]);
+    },
+  };
+})();
+</script>
+</body>
+</html>

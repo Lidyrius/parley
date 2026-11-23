@@ -92,6 +92,16 @@ final class AppController: ObservableObject {
     let phone = PhoneHub()
     lazy var shares = ShareHub(server: server)   // shared sessions (Shares.swift)
     private let apns = APNsClient()
+    private var tunnels: VncTunnels?   // v10: the phone's remote desktop channels (Desktops.swift), per relay link
+    // v10: Hinweise (Hints.swift) — read on the Wachhund's tick, pushed, shown in /sessions.
+    private lazy var hints = HintsWatch(
+        publish: { [server] alerts, checking, desktops in server.setHints(alerts: alerts, checking: checking, desktops: desktops) },
+        push: { [phone, apns] text in
+            guard let target = phone.alertTarget else { return }
+            let title = "Parley · \(Host.current().localizedName ?? "Mac")"
+            Task.detached { _ = await apns.notify(token: target.token, env: target.env, title: title, body: text, session: "") }
+        },
+        refreshed: { [weak self] in self?.relay?.refresh() })
     private var audioWork = 0  // queue items + ack clips in flight; 0 → the phone hears `audio idle`
     static let ringTimeout: TimeInterval = 45
     static let maxPutOff = 3   // "not now" repeats before a line gives up on the phone
@@ -254,8 +264,9 @@ final class AppController: ObservableObject {
         activityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickLiveActivity() }
         }
+        hints.tick()
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tickWatchdog() }
+            Task { @MainActor in self?.tickWatchdog(); self?.hints.tick() }
             self?.server.tickReminders()
             self?.shares.tick()
         }
@@ -1795,17 +1806,26 @@ final class AppController: ObservableObject {
         relayGen += 1
         let gen = relayGen
         let phone = self.phone
-        client.onEvent = { phone.handle($0) }
+        // v10: desktop channels stay on the relay queue — their data must keep its order.
+        let tunnels = VncTunnels(send: { [weak client] in client?.sendText($0) })
+        client.onEvent = { [weak self] event in
+            switch event {
+            case .vnc(let f): tunnels.handle(f)
+            case .alertsCheck: Task { @MainActor in self?.hints.check() }
+            default: phone.handle(event)
+            }
+        }
         client.onAudio = { phone.audioIn($0) }
         phone.attach(text: { [weak client] in client?.sendText($0) }, audio: { [weak client] in client?.sendAudio($0) })
         client.onState = { [weak self] up in
-            if !up { phone.handle(.call(false)) }   // no relay, no call audio
+            if !up { phone.handle(.call(false)); tunnels.closeAll() }   // no relay, no call audio, no desktop
             Task { @MainActor in
                 guard let self, self.relayGen == gen else { return }
                 self.relayConnected = up
             }
         }
         relay = client
+        self.tunnels = tunnels
         relayConnected = false
         client.start()
     }
@@ -1813,6 +1833,8 @@ final class AppController: ObservableObject {
     func stopRelay() {
         relay?.stop()
         relay = nil
+        tunnels?.closeAll()
+        tunnels = nil
         relayConnected = nil
         phone.detach()
     }

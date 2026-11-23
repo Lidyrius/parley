@@ -987,6 +987,15 @@ final class ControlServer: @unchecked Sendable {
     }
 
     // GET /sessions for the relay, read on the server queue. `only`: a guest's view (Shares.swift).
+    // v10 (Hints.swift): what /sessions says about the host's Hinweise and desktops.
+    func setHints(alerts: [Hints.Alert], checking: Bool, desktops: [String]) {
+        queue.async {
+            self.sessions.alerts = alerts
+            self.sessions.alertsChecking = checking
+            self.sessions.desktops = desktops
+        }
+    }
+
     func sessionsJSON(only: String? = nil) -> String {
         queue.sync { sessions.json(only: only) }
     }

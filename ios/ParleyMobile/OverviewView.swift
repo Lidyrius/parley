@@ -117,6 +117,10 @@ struct OverviewView: View {
                              leave: guest.map { g in { detail = nil; model.leave(g.id) } })
             }
             .navigationDestination(for: String.self) { SessionView(id: $0) }
+            // v10: a desktop of the host, through the relay.
+            .fullScreenCover(isPresented: Binding(get: { model.desktop != nil }, set: { if !$0 { model.closeDesktop() } })) {
+                if let d = model.desktop { DesktopView(channel: d).id(d.id) }
+            }
         }
     }
 
@@ -142,11 +146,16 @@ struct OverviewView: View {
             }
         case .connected, .connecting:
             if let snapshot = relay.snapshot {
+                if !snapshot.alerts.isEmpty {
+                    AlertsCard(host: host, alerts: snapshot.alerts, checking: snapshot.alertsChecking, skew: relay.skew,
+                               canSend: relay.canSend, desktops: snapshot.desktops, open: model.openDesktop, check: model.checkAlerts)
+                }
                 if let today = snapshot.today { TodayCard(today: today) }
                 sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend,
                          supervisor: wantsSupervisor ?? snapshot.supervisor, missed: snapshot.missed,
                          canSwitch: model.demo || (snapshot.callVersion >= 8 && relay.canSend))
                 if !snapshot.reminders.isEmpty { RemindersCard(list: snapshot.reminders, skew: relay.skew) }
+                if !snapshot.desktops.isEmpty { DesktopsLink(desktops: snapshot.desktops, open: model.openDesktop) }
             } else {
                 HStack(spacing: 10) {
                     ProgressView()
@@ -432,6 +441,102 @@ private struct TodayCard: View {
             guard let name = r.kind.flatMap({ names[$0] }), let p = r.percentUsed else { return nil }
             return (name, p)
         }
+    }
+}
+
+/// v10: Hinweise of the host — something there needs Sir outside any session (a lost login):
+/// what, since when, the desktop to put it right on, and "Erneut prüfen" once he has.
+private struct AlertsCard: View {
+    let host: String
+    let alerts: [HostAlert]
+    let checking: Bool
+    let skew: Double
+    let canSend: Bool
+    let desktops: [String]
+    let open: (String) -> Void
+    let check: () -> Void
+    /// Just tapped: the spinner turns at once; the host's `alertsChecking` carries it on.
+    @State private var asked = false
+
+    var body: some View {
+        let busy = checking || asked
+        VStack(alignment: .leading, spacing: 14) {
+            Label(alerts.count == 1 ? "\(host) braucht dich" : "\(host) braucht dich · \(alerts.count)",
+                  systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(Theme.danger)
+            ForEach(alerts) { a in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(a.text).font(.body).fixedSize(horizontal: false, vertical: true)
+                    if let since = a.since {
+                        Text("seit " + Self.when(since, skew: skew)).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if let d = a.desktop, desktops.contains(d) {
+                        Button { open(d) } label: {
+                            Label("Anmelden", systemImage: "display").font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.danger)
+                        .disabled(!canSend)
+                        .accessibilityHint("Öffnet den Desktop „\(d)“")
+                    }
+                }
+                .accessibilityElement(children: .contain)
+            }
+            Button(action: { asked = true; check() }) {
+                HStack(spacing: 8) {
+                    if busy { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
+                    Text(busy ? "Prüft…" : "Erneut prüfen")
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.danger)
+            .disabled(busy || !canSend)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.danger.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.danger.opacity(0.45)))
+        .onChange(of: checking) { _, now in if !now { asked = false } }
+        .task(id: asked) {
+            guard asked else { return }
+            try? await Task.sleep(for: .seconds(6))   // a host without a check says nothing
+            if !checking { asked = false }
+        }
+    }
+
+    /// "09:41" today, else "Mo., 20.10. 09:41".
+    static func when(_ ms: Double, skew: Double) -> String {
+        let date = Date(timeIntervalSince1970: (ms - skew) / 1000)
+        if Calendar.current.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
+        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.twoDigits).hour().minute())
+    }
+}
+
+/// v10: the host's desktops, also without a Hinweis — quiet, below everything.
+private struct DesktopsLink: View {
+    let desktops: [String]
+    let open: (String) -> Void
+
+    var body: some View {
+        Group {
+            if desktops.count == 1 {
+                Button { open(desktops[0]) } label: { label }
+            } else {
+                Menu {
+                    ForEach(desktops, id: \.self) { d in Button(d, systemImage: "display") { open(d) } }
+                } label: { label }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
+    }
+
+    private var label: some View {
+        Label("Server-Desktop öffnen", systemImage: "display")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
     }
 }
 

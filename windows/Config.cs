@@ -43,6 +43,11 @@ public sealed class Config
     public bool PlainCalls { get; init; }   // calls as before v8: streamed, no clips, no numbered mic ("Funkloch" off)
     public string AppIcon { get; init; } = "graphit";   // tray → App-Symbol (AppIcon.Choices id)
     public bool RemoteControl { get; init; } = true;    // "0" = sessions without Remote Control (RemoteControl.cs)
+    // Protocol v10 (docs/IPHONE.md): Hinweise and desktops. `vnc` is an object {name: {url, password}}.
+    public string HostName { get; init; } = Environment.MachineName;
+    public string AlertsFile { get; init; } = "";
+    public string AlertsCheck { get; init; } = "";
+    public IReadOnlyDictionary<string, VncTarget> Vnc { get; init; } = new Dictionary<string, VncTarget>();
 
     public bool UseGoogle => GoogleKey.Length > 0;
     public bool SttReady => GroqKey.Length > 0;
@@ -128,12 +133,27 @@ public sealed class Config
                 PlainCalls = S("plainCalls") == "1",
                 AppIcon = S("appIcon", "graphit"),
                 RemoteControl = S("remoteControl") != "0",
+                HostName = Or("hostName", Environment.MachineName),
+                AlertsFile = S("alertsFile").Trim(),
+                AlertsCheck = S("alertsCheck").Trim(),
+                Vnc = ReadVnc(d),
             };
         }
         catch
         {
             return new Config();
         }
+    }
+
+    private static Dictionary<string, VncTarget> ReadVnc(Dictionary<string, JsonElement> d)
+    {
+        var all = new Dictionary<string, VncTarget>();
+        if (!d.TryGetValue("vnc", out var v) || v.ValueKind != JsonValueKind.Object) return all;
+        foreach (var e in v.EnumerateObject())
+            if (e.Value.ValueKind == JsonValueKind.Object
+                && e.Value.TryGetProperty("url", out var u) && u.GetString() is { Length: > 0 } url)
+                all[e.Name] = new VncTarget(url, e.Value.TryGetProperty("password", out var pw) ? pw.GetString() ?? "" : "");
+        return all;
     }
 
     // Merge string values into credentials.json (indented, like the settings forms); every other

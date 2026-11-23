@@ -332,8 +332,8 @@ final class PhoneHub: CallLink, @unchecked Sendable {
         case .history, .image, .say, .hello, .paletteSaved, .snapshotSave, .snapshotOpen, .snapshotDelete,
              .shareCreate, .shareApprove, .shareRemove, .join, .answer, .supervisor:
             onChat?(event)
-        case .resume:
-            break
+        case .resume, .alertsCheck, .vnc:
+            break   // the server / the app's relay link (v10) take these
         }
     }
 

@@ -109,6 +109,11 @@ final class Relay {
                     s.sessions[z].voice = false
                 }
             }
+            if ProcessInfo.processInfo.arguments.contains("-demoAlert") {   // v10: a Hinweis and the desktops
+                s.alerts = [HostAlert(id: "demo-alert", text: "Safari: Die Anmeldung bei Google ist abgelaufen.",
+                                      since: now.ms - 600_000, desktop: "saf")]
+                s.desktops = ["dev", "saf"]
+            }
             if let only { s = Snapshot(sessions: s.sessions.filter { $0.id == only }) } else { WidgetFeed.publish(s) }
             snapshot = s
         }
@@ -226,7 +231,7 @@ final class Relay {
             hostOnline = host
         case .audio, .ring, .history, .image, .caption, .slides, .palette, .snapshotOpened,
              .shareLink, .joinRequest, .shareMove, .shareEnd, .notice, .ask, .askEnd, .other,
-             .clipStart, .clipEnd, .micGot:
+             .clipStart, .clipEnd, .micGot, .vncOpen, .vncData, .vncClose:
             break
         }
         onEvent(.frame(frame))

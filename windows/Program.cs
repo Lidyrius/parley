@@ -233,7 +233,7 @@ internal sealed class TrayApp : ApplicationContext
         _shares.Start();
         GuestHub.Start();   // shares of other people's sessions this PC joined (Guest.cs)
         _activityTimer = new System.Threading.Timer(_ => TickLiveActivity(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
-        _watchdogTimer = new System.Threading.Timer(_ => { TickWatchdog(); _server.TickReminders(); _shares.Tick(); }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        _watchdogTimer = new System.Threading.Timer(_ => { TickWatchdog(); TickAlerts(); _server.TickReminders(); _shares.Tick(); }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     // ---- Unterwegs when the PC is locked ------------------------------------------------
@@ -383,6 +383,18 @@ internal sealed class TrayApp : ApplicationContext
 
     // Every 30 s: each working session's transcript tail → a finding → Sir is asked (at the PC /
     // on a call), or told by notification (Unterwegs without a call) — once per kind per 30 min.
+    // v10: Hinweise from `alertsFile` — a new line is pushed; idle desktop channels close.
+    private static void TickAlerts()
+    {
+        try
+        {
+            Desktops.Send ??= PhoneCall.Reply;
+            Alerts.Tick(Config.Load(), (title, body) => { Notifier.Notify(title, body); _ = Apns.SendAlert(title, body, ""); });
+            Desktops.Tick();
+        }
+        catch (Exception e) { Log.Write($"alerts: {e.Message}"); }
+    }
+
     private void TickWatchdog()
     {
         try
@@ -490,7 +502,7 @@ internal sealed class TrayApp : ApplicationContext
         if (_relay is not null && _relay.Config == config) return;
         _relay?.Stop();
         _relay = RelayClient.Create(config, () => _server.Sessions.Json(), OnPhone, PhoneCall.OnAudio);
-        if (_relay is not null) _relay.OnConnected = PhoneCall.Resync;
+        if (_relay is not null) _relay.OnConnected = () => { Desktops.CloseAll(); PhoneCall.Resync(); };
         PhoneCall.Attach(_relay);
         _relay?.Start();
         if (_relay is not null) Clips.PrerenderGreet(Config.Load());   // the first "Hey Parley" answers at once
@@ -502,6 +514,8 @@ internal sealed class TrayApp : ApplicationContext
         switch (message)
         {
             case PhoneResume r: _server.StartResume(r.Id); break;
+            case PhoneAlertsCheck: Alerts.Check(Config.Load()); break;
+            case PhoneVnc v: Desktops.OnPhone(v, Config.Load); break;
             case PhoneCallState c:
                 var wasInCall = PhoneCall.Active;
                 PhoneCall.OnCall(c.Started, c.Down, c.Clips);

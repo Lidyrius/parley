@@ -1,6 +1,6 @@
 // Read-only access check of the server browser over CDP: opens each service in a NEW tab,
 // reports final host, page title and whether a login page shows. Reads no content, clicks
-// nothing, closes its own tabs. Usage (in the session container):
+// nothing, closes its own tabs — except a login page, which stays in front. Usage (in the session container):
 //   node access-check.js <cdp url> [services.json]
 // services.json: [["Name", "start url", "regex of the host a signed-in user ends up on"], …];
 // without it the agency defaults below. Profile lists with customer systems stay on the server.
@@ -56,6 +56,13 @@ async function connect() {
       const isLogin = !home.test(u.host) || /login\.microsoftonline|login\.live|id\.atlassian|accounts\.google/.test(u.host) || /login|signin|sign_in|auth\/|\/oauth/.test(u.pathname)
         || (await p.locator('input[type="password"]').count()) > 0;
       console.log(`${name.padEnd(9)} ${isLogin ? "LOGIN NÖTIG" : "angemeldet"}  ${u.host}${u.pathname.slice(0, 40)}  „${(await p.title()).slice(0, 50)}“`);
+      // A login page stays open in front, so the desktop Sir opens from his phone shows it at
+      // once — one per login host (an older one from the last check is brought forward instead).
+      if (isLogin) {
+        const older = ctx.pages().find(o => o !== p && (() => { try { return new URL(o.url()).host === u.host; } catch { return false; } })());
+        if (!older) { await p.bringToFront(); continue; }
+        await older.bringToFront();
+      }
     } catch (e) { console.log(`${name.padEnd(9)} FEHLER ${e.message.split("\n")[0]}`); }
     await p.close();
   }

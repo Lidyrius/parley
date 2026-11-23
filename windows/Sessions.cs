@@ -751,7 +751,10 @@ public sealed class SessionRegistry
         [property: JsonPropertyName("reminders")] List<object> Reminders,
         [property: JsonPropertyName("snapshots")] List<object> Snapshots,
         [property: JsonPropertyName("supervisor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Supervised,
-        [property: JsonPropertyName("missed"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Missed);
+        [property: JsonPropertyName("missed"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Missed,
+        [property: JsonPropertyName("alerts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<object>? Alerts,
+        [property: JsonPropertyName("alertsChecking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AlertsChecking,
+        [property: JsonPropertyName("desktops"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<string>? Desktops);
 
     // GET /sessions — by status group (needs input, working, halted, stopped), newest change
     // first within a group, then label, then id. As macOS.
@@ -813,13 +816,15 @@ public sealed class SessionRegistry
                 spokenSeconds = (int)Math.Round(day.SpokenSeconds),
                 rateLimits = _rateLimits,
             };
+            var (alerts, checking, desktops) = Parley.Alerts.Wire();
             return JsonSerializer.Serialize(new Wire(
                 rows,
                 today,
                 ReminderRows?.Invoke() ?? new List<object>(),
                 SnapshotRows?.Invoke() ?? new List<object>(),
                 _supervised ? true : (bool?)null,
-                _missed > 0 ? _missed : (int?)null));
+                _missed > 0 ? _missed : (int?)null,
+                alerts, checking, desktops));
         }
     }
 

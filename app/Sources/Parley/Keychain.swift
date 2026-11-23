@@ -62,19 +62,24 @@ enum Keychain {
         return base.appendingPathComponent("credentials.json")
     }
 
-    private static func load() -> [String: String] {
+    // The whole file. Values other than strings (v10: `vnc`, an object) are kept as they are —
+    // a [String: String] decode would drop every key once one of them isn't a string.
+    private static func load() -> [String: Any] {
         guard let data = try? Data(contentsOf: fileURL),
-              let dict = try? JSONDecoder().decode([String: String].self, from: data)
+              let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return [:] }
         return dict
     }
 
-    private static func save(_ dict: [String: String]) {
-        guard let data = try? JSONEncoder().encode(dict) else { return }
+    private static func save(_ dict: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]) else { return }
         try? data.write(to: fileURL, options: .atomic)
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }
+
+    // A setting that isn't a plain string (v10: `vnc`), or a string key outside `Key`.
+    static func raw(_ name: String) -> Any? { load()[name] }
 
     static func set(_ value: String, for key: Key) {
         var dict = load()
@@ -84,7 +89,7 @@ enum Keychain {
     }
 
     static func get(_ key: Key) -> String? {
-        load()[key.rawValue]
+        load()[key.rawValue] as? String
     }
 }
 

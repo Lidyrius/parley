@@ -392,6 +392,10 @@ final class SessionRegistry {
     var reminders: [Reminders.Row] = []
     // The snapshots, likewise.
     var snapshots: [Snapshots.Row] = []
+    // v10 (Hints.swift): the host's Hinweise, whether a check runs, the desktops (names).
+    var alerts: [Hints.Alert] = []
+    var alertsChecking = false
+    var desktops: [String] = []
 
     // The sessions running now (not stopped, with a folder): what a snapshot keeps.
     func live() -> [(id: String, label: String, cwd: String)] {
@@ -504,14 +508,20 @@ final class SessionRegistry {
                           spokenSeconds: Int(day.spokenSeconds.rounded()), rateLimits: rateLimits)
         let data = try? JSONEncoder().encode(only == nil
             ? Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots, supervisor: supervisor ? true : nil,
-                   missed: missed > 0 ? missed : nil)
-            : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: [], supervisor: nil, missed: nil))
+                   missed: missed > 0 ? missed : nil, alerts: alerts.isEmpty ? nil : alerts,
+                   alertsChecking: alertsChecking ? true : nil, desktops: desktops.isEmpty ? nil : desktops)
+            : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: [], supervisor: nil, missed: nil,
+                   alerts: nil, alertsChecking: nil, desktops: nil))
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"sessions":[]}"#
     }
 
     // `supervisor`: only when the Überwachungsmodus is on (omitted otherwise).
     // `missed`: how many of the Zentrale's lines wait for Sir's call back (omitted when none).
-    private struct Wire: Encodable { let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row]; let supervisor: Bool?; let missed: Int? }
+    // v10: `alerts`, `alertsChecking` (only while true), `desktops` — each omitted when empty.
+    private struct Wire: Encodable {
+        let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row]; let supervisor: Bool?; let missed: Int?
+        let alerts: [Hints.Alert]?; let alertsChecking: Bool?; let desktops: [String]?
+    }
     private struct Today: Encodable { let costUsd: Double; let turns: Int; let spokenSeconds: Int; let rateLimits: [RateLimit] }
 
     private struct Row: Encodable {
