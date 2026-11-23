@@ -556,5 +556,32 @@ struct FrameTests {
         #expect(id.count == 16 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) })
         #expect(DesktopChannel.newID() != id)
     }
-}
 
+    // MARK: v11 — Rückmeldung beim Fortsetzen, Detailgrad
+
+    @Test func resumeLineAndDetailRideAlong() throws {
+        let json = #"{"t":"sessions","resumeLine":false,"detail":"mittel","sessions":[{"id":"a","detail":"lang"},{"id":"b"},{"id":"c","detail":"riesig"}]}"#
+        guard case .sessions(let snap)? = Frame.decode(json) else { Issue.record("not a sessions frame"); return }
+        #expect(snap.resumeLine == false)
+        #expect(snap.detail == .mittel)
+        #expect(snap.sessions.map(\.detail) == [.lang, nil, nil])   // an unknown level reads as the default
+        guard case .sessions(let old)? = Frame.decode(#"{"t":"sessions","detail":"riesig","sessions":[]}"#) else { Issue.record("not a sessions frame"); return }
+        #expect(old.resumeLine && old.detail == .kurz)
+    }
+
+    @Test func resumeLineAndDetailEncode() {
+        #expect(Outgoing.resumeLine(false) == #"{"on":false,"t":"resumeLine"}"#)
+        #expect(Outgoing.resumeLine(true) == #"{"on":true,"t":"resumeLine"}"#)
+        #expect(Outgoing.detail(.mittel) == #"{"level":"mittel","t":"detail"}"#)
+        #expect(Outgoing.detail(.lang, session: "s1") == #"{"id":"s1","level":"lang","t":"detail"}"#)
+        #expect(Outgoing.detail(nil, session: "s1") == #"{"id":"s1","level":"","t":"detail"}"#)
+    }
+
+    @Test func detailLevelsShowTheContractsHints() {
+        #expect(DetailLevel.allCases.map { "\($0.title) — \($0.hint)" } == [
+            "Kurz — ca. 15 Sek. · 1–2 Sätze",
+            "Mittel — ca. 40 Sek. · 3–5 Sätze",
+            "Ausführlich — ca. 80 Sek. · ganze Zusammenfassung",
+        ])
+    }
+}

@@ -114,7 +114,7 @@ struct SessionTile: View {
                             .foregroundStyle(stateInk(session))
                             .lineLimit(1)
                             .monospacedDigit()
-                        SharedBadge(tags: session.shared)
+                        CardBadges(session: session)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .contentShape(Rectangle())
@@ -172,7 +172,7 @@ struct SessionRow: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
-                    SharedBadge(tags: session.shared)
+                    CardBadges(session: session)
                     if let action = actions.action(session) {
                         ActionButton(action: action, enabled: actions.enabled(session)) { actions.perform(action, session) }
                             .padding(.top, 2)
@@ -511,6 +511,36 @@ private struct Ring: View {
             .stroke(color, style: StrokeStyle(lineWidth: 3 * u, lineCap: .round))
             .rotationEffect(.degrees(-90))
             .frame(width: 30 * u, height: 30 * u)
+    }
+}
+
+/// Under the state line: its own Detailgrad (v11), who it is shared with (v7).
+struct CardBadges: View {
+    let session: Session
+
+    var body: some View {
+        if session.detail != nil || !session.shared.isEmpty {
+            HStack(spacing: 8) {
+                DetailBadge(level: session.detail)
+                SharedBadge(tags: session.shared)
+            }
+        }
+    }
+}
+
+/// v11: "Ausführlich" — the session speaks at its own Detailgrad, not the host's default.
+struct DetailBadge: View {
+    let level: DetailLevel?
+
+    var body: some View {
+        if let level {
+            Label(level.title, systemImage: "text.alignleft")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(SessionState.idle.ink)
+                .lineLimit(1)
+                .fixedSize()
+                .accessibilityLabel("Detailgrad \(level.title)")
+        }
     }
 }
 

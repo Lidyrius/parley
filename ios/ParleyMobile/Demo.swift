@@ -34,9 +34,9 @@ enum Demo {
             return #"{"startedAt":\#(ago(startedMin * 60)),"contextPercent":\#(ctx),"costUsd":\#(cost),"turns":\#(turns),"replies":\#(replies),"lastLine":\#(last)}"#
         }
         var sessions = [
-            #"{"id":"demo-parley","label":"Parley","project":"vloude","state":"speaking","since":\#(ago(9)),"until":null,"voice":true,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(74, 41, 3.12, 14, 6, "Die Tests laufen wieder grün. Soll ich den Release vorbereiten?"))}"#,
+            #"{"id":"demo-parley","label":"Parley","project":"vloude","detail":"lang","state":"speaking","since":\#(ago(9)),"until":null,"voice":true,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(74, 41, 3.12, 14, 6, "Die Tests laufen wieder grün. Soll ich den Release vorbereiten?"))}"#,
             #"{"id":"demo-shirts","label":"Shirts","project":"ds-shirts","state":"working","since":\#(ago(134)),"until":null,"voice":false,"resumable":false,"tasks":[],"host":null,"shared":[{"id":"sh1","name":"Max","role":"Marketing"}],"stats":\#(stats(38, 22, 1.47, 7, 3, "Ich baue jetzt die Mockups für die neue Kollektion."))}"#,
-            #"{"id":"demo-angebote","label":"Angebote","project":"angebotserstellung","state":"waiting","since":\#(ago(48)),"until":\#(t + 252_000),"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(21, 18, 0.86, 4, 2, "Ich warte fünf Minuten auf den Build und melde mich dann."))}"#,
+            #"{"id":"demo-angebote","label":"Angebote","project":"angebotserstellung","detail":"mittel","state":"waiting","since":\#(ago(48)),"until":\#(t + 252_000),"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(21, 18, 0.86, 4, 2, "Ich warte fünf Minuten auf den Build und melde mich dann."))}"#,
             #"{"id":"demo-relay","label":"Relay","project":"parley-relay","state":"background","since":\#(ago(203)),"until":null,"voice":false,"resumable":false,"tasks":[{"type":"subagent","description":"Durable Object gegen das Protokoll testen"},{"type":"subagent","description":"Push-Pfad prüfen"},{"type":"shell","description":"npx vitest --watch"}],"host":null,"stats":\#(stats(52, 57, 2.31, 9, 4, "Ein Agent prüft das Protokoll, ich melde mich, sobald er fertig ist."))}"#,
             #"{"id":"demo-edge","label":"Edge Army","project":"pmr","state":"parked","since":\#(ago(611)),"until":null,"voice":false,"resumable":true,"tasks":[],"host":null,"stats":\#(stats(95, 64, 4.02, 18, 7, "Zwei neue Kandidaten gefunden. Weitermachen?"))}"#,
             #"{"id":"demo-website","label":"Website","project":"developaway","state":"queued","since":\#(ago(17)),"until":null,"callback":0,"voice":false,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(12, 9, 0.31, 2, 1, nil))}"#,
@@ -64,7 +64,7 @@ enum Demo {
             snap("s2", "Parley intern", 26, [("demo-parley", "Parley"), ("demo-relay", "Relay"), ("zentrale", "Zentrale")]),
             snap("s3", "Recherche", 170, [("gta", "GTA 6 Research"), ("poly", "Polymarket")]),
         ].joined(separator: ",")
-        return #"{"t":"sessions","at":\#(t),\#(supervisor ? #""supervisor":true,"# : "")"sessions":[\#(sessions.joined(separator: ","))],"today":\#(today),"reminders":\#(reminders),"snapshots":[\#(snapshots)]}"#
+        return #"{"t":"sessions","at":\#(t),\#(supervisor ? #""supervisor":true,"# : "")"detail":"kurz","sessions":[\#(sessions.joined(separator: ","))],"today":\#(today),"reminders":\#(reminders),"snapshots":[\#(snapshots)]}"#
     }
 }
 

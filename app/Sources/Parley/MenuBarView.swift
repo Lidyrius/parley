@@ -166,6 +166,7 @@ struct MenuBarView: View {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { i, s in
                     if i > 0 { Divider().padding(.leading, 52) }
                     SessionRow(session: s, resume: { controller.resume(s.id) })
+                        .contextMenu { detailMenu(s) }
                 }
                 if withGuests {
                     ForEach(Array(guests.shares.enumerated()), id: \.element.id) { i, g in
@@ -179,6 +180,24 @@ struct MenuBarView: View {
         .fixedSize(horizontal: false, vertical: true)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(MenuTheme.card))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    // v11: a session's own Detailgrad (right-click on its row); "Wie Standard" drops it.
+    @ViewBuilder
+    private func detailMenu(_ s: MenuBoard.Row) -> some View {
+        let own = s.detail.flatMap(DetailLevel.init(rawValue:))
+        Menu("Detailgrad") {
+            Button { controller.setDetail(session: s.id, nil) } label: {
+                let text = "Wie Standard (\(controller.detail.title))"
+                if own == nil { Label(text, systemImage: "checkmark") } else { Text(text) }
+            }
+            Divider()
+            ForEach(DetailLevel.allCases, id: \.self) { level in
+                Button { controller.setDetail(session: s.id, level) } label: {
+                    if own == level { Label(level.label, systemImage: "checkmark") } else { Text(level.label) }
+                }
+            }
+        }
     }
 
     // MARK: - snapshots and shares
@@ -226,6 +245,19 @@ struct MenuBarView: View {
                     .help("Aus: Anrufe laufen wie früher gestreamt — falls ein iPhone damit Probleme hat")
                 Toggle("Unterbrechen (einfach reinreden)", isOn: $controller.bargeIn)
                 Toggle("Ohne Floskeln (keine Ansagen, keine Bestätigung)", isOn: $controller.brief)
+                Toggle("Rückmeldung beim Fortsetzen", isOn: $controller.resumeLine)
+                    .help("Aus: Fortsetzen spricht kein „Ich habe die Arbeit an … wieder aufgenommen“ und hört nicht zu — die Session läuft einfach weiter")
+                Menu {
+                    ForEach(DetailLevel.allCases, id: \.self) { level in
+                        Button { controller.detail = level } label: {
+                            if controller.detail == level { Label(level.label, systemImage: "checkmark") } else { Text(level.label) }
+                        }
+                    }
+                } label: {
+                    Text("Detailgrad: \(controller.detail.title)")
+                }
+                .fixedSize()
+                .help("Wie lang die gesprochene Zeile ist — Standard für alle Sessions (eine Session kann im Rechtsklick-Menü ihren eigenen haben)")
                 if !controller.muted && FocusStatus.doNotDisturbActive() {
                     Text("Nicht stören aktiv — Parley schweigt automatisch").font(.caption2).foregroundStyle(.secondary)
                 }
@@ -292,6 +324,7 @@ struct MenuBoard {
         var asking: String?
         var stats: Stats?
         var zentrale: Bool?
+        var detail: String?   // v11: only when the session has its own Detailgrad
         var name: String { label.isEmpty ? project : label }
     }
     struct Today: Decodable {

@@ -154,6 +154,25 @@ internal sealed class TrayApp : ApplicationContext
         var brief = _briefItem = new ToolStripMenuItem("Ohne Floskeln (keine Ansagen, keine Bestätigung)") { CheckOnClick = true, Checked = Config.Load().Brief };
         brief.CheckedChanged += (_, _) => Config.Merge(new Dictionary<string, string> { ["brief"] = brief.Checked ? "1" : "" });
         menu.Items.Add(brief);
+        // Protocol v11: the resume line, and how long the spoken line is (the default Detailgrad).
+        var resumeLine = new ToolStripMenuItem("Rückmeldung beim Fortsetzen") { CheckOnClick = true, Checked = Config.Load().ResumeLine };
+        resumeLine.CheckedChanged += (_, _) => Detail.SetResumeLine(resumeLine.Checked);
+        var detail = new ToolStripMenuItem("Detailgrad");
+        foreach (var level in Detail.Levels)
+        {
+            var item = new ToolStripMenuItem(Detail.Label(level)) { Tag = level };
+            item.Click += (_, _) => Detail.Apply(new PhoneDetail(null, level));
+            detail.DropDownItems.Add(item);
+        }
+        // The phone may have changed either: the menu reads them when it opens.
+        menu.Opening += (_, _) =>
+        {
+            var c = Config.Load();
+            if (resumeLine.Checked != c.ResumeLine) resumeLine.Checked = c.ResumeLine;   // (fires the merge only on a change)
+            foreach (ToolStripMenuItem item in detail.DropDownItems) item.Checked = (string)item.Tag! == c.Detail;
+        };
+        menu.Items.Add(resumeLine);
+        menu.Items.Add(detail);
         Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) =>
         {
             if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionLock) ScreenLocked(true);
@@ -515,6 +534,8 @@ internal sealed class TrayApp : ApplicationContext
         {
             case PhoneResume r: _server.StartResume(r.Id); break;
             case PhoneAlertsCheck: Alerts.Check(Config.Load()); break;
+            case PhoneDetail d: Detail.Apply(d); break;
+            case PhoneResumeLine rl: Detail.SetResumeLine(rl.On); break;
             case PhoneVnc v: Desktops.OnPhone(v, Config.Load); break;
             case PhoneCallState c:
                 var wasInCall = PhoneCall.Active;

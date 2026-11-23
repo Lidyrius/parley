@@ -618,6 +618,7 @@ public sealed class Server
         {
             Sessions.Activate(id, turn.Speak);
             r = await _runTurn(turn);
+            if (r.transcript.Length > 0) r.transcript += Detail.Note(id, Config.Load());   // v11
         }
         finally
         {
@@ -1266,6 +1267,7 @@ public sealed class Server
     // Every delivery goes this way: the mod has it until it acks (docs/HOOKLESS.md).
     private void Deliver(string id, string instruction)
     {
+        instruction += Detail.Note(id, Config.Load());   // v11: the session's Detailgrad, when due
         lock (_lock) DeliverLocked(id, instruction);
         NotifyParked();
     }

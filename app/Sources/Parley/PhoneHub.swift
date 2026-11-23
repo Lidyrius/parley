@@ -42,9 +42,13 @@ final class PhoneHub: CallLink, @unchecked Sendable {
     private var sendText: (@Sendable (String) -> Void)?
     private var sendBinary: (@Sendable (Data) -> Void)?
 
-    init(store: Store = .credentials, log: @escaping @Sendable (String) -> Void = { Log.write($0) },
+    // v11: the Detailgrad the phone sets. Sir's line passes `.shared`; a guest's line keeps its own.
+    let detail: DetailStore
+
+    init(store: Store = .credentials, detail: DetailStore? = nil, log: @escaping @Sendable (String) -> Void = { Log.write($0) },
          now: @escaping @Sendable () -> Date = { Date() }) {
         self.store = store
+        self.detail = detail ?? DetailStore(store: .memory(), file: nil)
         self.log = log
         self.now = now
     }
@@ -296,6 +300,15 @@ final class PhoneHub: CallLink, @unchecked Sendable {
             guard (store.get(.brief) == "1") != on else { return }
             store.set(on ? "1" : "", .brief)
             log("phone: Ohne Floskeln \(on ? "an" : "aus")")
+            onChange?()
+        case .resumeLine(let on):
+            guard (store.get(.resumeLine) != "0") != on else { return }
+            store.set(on ? "" : "0", .resumeLine)
+            log("phone: Rückmeldung beim Fortsetzen \(on ? "an" : "aus")")
+            onChange?()
+        case .detail(let id, let level):
+            guard detail.set(id: id, level: level) else { return }
+            log("phone: Detailgrad \(id.map { "für \($0)" } ?? "Standard") → \(level.isEmpty ? "wie Standard" : level)")
             onChange?()
         case .round(let seconds):
             let s = min(Self.roundMax, max(0, seconds))

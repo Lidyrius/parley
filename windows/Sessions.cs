@@ -741,7 +741,8 @@ public sealed class SessionRegistry
         [property: JsonPropertyName("shared"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<ShareTag>? Shared,
         [property: JsonPropertyName("asking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Asking,
         [property: JsonPropertyName("zentrale"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IsZentrale,   // the Zentrale's row (omitted otherwise)
-        [property: JsonPropertyName("stats")] object Stats);
+        [property: JsonPropertyName("stats")] object Stats,
+        [property: JsonPropertyName("detail"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Detail);   // v11: its own level only
 
     // `supervisor`: only while the Überwachungsmodus is on (omitted otherwise).
     // `missed`: how many of the Zentrale's lines wait for Sir's call back (omitted when none).
@@ -754,7 +755,9 @@ public sealed class SessionRegistry
         [property: JsonPropertyName("missed"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Missed,
         [property: JsonPropertyName("alerts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<object>? Alerts,
         [property: JsonPropertyName("alertsChecking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AlertsChecking,
-        [property: JsonPropertyName("desktops"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<string>? Desktops);
+        [property: JsonPropertyName("desktops"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<string>? Desktops,
+        [property: JsonPropertyName("detail")] string Detail,   // v11: the default Detailgrad
+        [property: JsonPropertyName("resumeLine"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ResumeLine);   // only while off
 
     // GET /sessions — by status group (needs input, working, halted, stopped), newest change
     // first within a group, then label, then id. As macOS.
@@ -798,7 +801,8 @@ public sealed class SessionRegistry
                         turns = e.Turns,
                         replies = e.Replies,
                         lastLine = e.LastLine,
-                    }))
+                    },
+                    only is null ? Parley.Detail.OwnLevel(e.Id) : null))
                 .ToList();
             if (only is not null)
                 return JsonSerializer.Serialize(new
@@ -817,6 +821,7 @@ public sealed class SessionRegistry
                 rateLimits = _rateLimits,
             };
             var (alerts, checking, desktops) = Parley.Alerts.Wire();
+            var settings = Config.Load();
             return JsonSerializer.Serialize(new Wire(
                 rows,
                 today,
@@ -824,7 +829,8 @@ public sealed class SessionRegistry
                 SnapshotRows?.Invoke() ?? new List<object>(),
                 _supervised ? true : (bool?)null,
                 _missed > 0 ? _missed : (int?)null,
-                alerts, checking, desktops));
+                alerts, checking, desktops,
+                settings.Detail, settings.ResumeLine ? null : false));
         }
     }
 

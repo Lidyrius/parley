@@ -220,6 +220,14 @@ enum RelayFrame {
         case "brief":
             guard let on = f["on"] as? Bool else { return nil }
             return .brief(on)
+        case "resumeLine":   // v11: Rückmeldung beim Fortsetzen
+            guard let on = f["on"] as? Bool else { return nil }
+            return .resumeLine(on)
+        case "detail":       // v11: the Detailgrad, the default or one session's ("" = back to the default)
+            guard let level = f["level"] as? String else { return nil }
+            let id = (f["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            guard DetailLevel(rawValue: level) != nil || (id != nil && level.isEmpty) else { return nil }
+            return .detail(id: id, level: level)
         case "round":
             guard let s = (f["seconds"] as? NSNumber)?.intValue else { return nil }
             return .round(seconds: s)
@@ -294,6 +302,8 @@ enum PhoneEvent: Equatable, Sendable {
     case silent(Bool)                         // Unterwegs + Stumm: a notification instead of a call
     case round(seconds: Int)                  // Fragerunde: how long an update waits for others (0 = never)
     case brief(Bool)                          // Ohne Floskeln (the phone's setting)
+    case resumeLine(Bool)                     // v11: Rückmeldung beim Fortsetzen
+    case detail(id: String?, level: String)   // v11: Detailgrad — the default (id nil) or one session's ("" = default)
     case alert(token: String, env: String)    // notification push token (hex)
     case history(id: String, before: String?) // send that session's newest history, or the page before an item
     case image(id: String, key: String)       // send one image of it

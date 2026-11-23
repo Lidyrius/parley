@@ -259,6 +259,16 @@ public static class RelayFrame
                         case "delete": return snap.Length > 0 ? new PhoneSnapshotDelete(snap) : null;
                         default: return null;
                     }
+                case "resumeLine":   // v11: the resume line on / off
+                    return root.TryGetProperty("on", out var rl) && (rl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                        ? new PhoneResumeLine(rl.ValueKind == JsonValueKind.True) : null;
+                case "detail":       // v11: the default Detailgrad, or one session's ("" = the default again)
+                {
+                    var level = Str("level") ?? "";
+                    if (level.Length > 0 && !Detail.Levels.Contains(level)) return null;
+                    if (Str("id") is { Length: > 0 } did) return new PhoneDetail(did, level);
+                    return level.Length > 0 ? new PhoneDetail(null, level) : null;
+                }
                 case "alerts":   // v10: Sir asks for a fresh check
                     return Str("op") == "check" ? new PhoneAlertsCheck() : null;
                 case "vnc":      // v10: a desktop channel — open / data / close
@@ -305,9 +315,11 @@ public static class RelayFrame
 
 // A phone's message (protocol v1 + v2).
 public abstract record PhoneMessage { }
-public sealed record PhoneResume(string Id) : PhoneMessage;
+public sealed record PhoneResume(string Id) : PhoneMessage;          // resume a session (POST /resume)
 public sealed record PhoneAlertsCheck : PhoneMessage { }             // v10: run alertsCheck
-public sealed record PhoneVnc(string Op, string Ch, string? Desktop, byte[]? Data) : PhoneMessage;   // v10: open | data | close          // resume a session (POST /resume)
+public sealed record PhoneResumeLine(bool On) : PhoneMessage;          // v11
+public sealed record PhoneDetail(string? Id, string Level) : PhoneMessage;   // v11: Id null = the default
+public sealed record PhoneVnc(string Op, string Ch, string? Desktop, byte[]? Data) : PhoneMessage;   // v10: open | data | close
 // `call` start / end; the voice's rate (v3: 24 kHz on request); v8: it takes clips and numbers its mic
 public sealed record PhoneCallState(bool Started, int Down = PhoneAudio.SampleRate, bool Clips = false) : PhoneMessage;
 public sealed record PhoneCallIdle : PhoneMessage { }                 // v8: the phone is connected and in no call (a hang-up may have got lost)

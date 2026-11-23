@@ -90,6 +90,11 @@ public sealed class TurnPipeline
         var config = Config.Load();
         _resumeGen++;
         Log.Write($"resume dialog start project={turn.Project}");
+        if (!config.ResumeLine)   // v11: Rückmeldung beim Fortsetzen off — the session just runs again (no ring, no line)
+        {
+            Log.Write("resume line off → resuming without dialog");
+            return ("", false, 0, "");
+        }
         var (_, calledBack) = await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
         if (PhoneCall.Away && !PhoneCall.Active)
         {

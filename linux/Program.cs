@@ -145,6 +145,15 @@ internal static class Program
         Check("alerts: no brackets, no desktop", Alerts.Parse("DISK: / bei 88 %", 1)?.Desktop, null);
         Check("alerts: id = sha256 of the line", Alerts.Parse("  x  ", 1)?.Id, "2d711642b726b044");
         Check("alerts: an empty line is none", Alerts.Parse("   ", 1) is null, true);
+        Check("detail: kurz from the start notes nothing", Detail.Note("s-kurz", new Config()), "");
+        Check("detail: lang is noted", Detail.Note("s-lang", new Config { Detail = "lang" }).Contains("Detailgrad ausführlich"), true);
+        Check("detail: and again next turn", Detail.Note("s-lang", new Config { Detail = "lang" }).Contains("ausführlich"), true);
+        Check("detail: back to kurz once", Detail.Note("s-lang", new Config()).Contains("Detailgrad kurz"), true);
+        Check("detail: then nothing", Detail.Note("s-lang", new Config()), "");
+        Detail.SetOwn("s-own-kurz", "kurz");
+        Check("detail: own kurz under a mittel default is noted", Detail.Note("s-own-kurz", new Config { Detail = "mittel" }).Contains("Detailgrad kurz"), true);
+        Detail.SetOwn("s-own-kurz", "");
+        Check("detail: unknown level is kurz", Detail.Valid("riesig"), "kurz");
         Check("vnc: channel ids", Desktops.ValidChannel("abcDEF12") && !Desktops.ValidChannel("short") && !Desktops.ValidChannel("bad-chars!x"), true);
         Check("path: a bare name lives under projectsDir", CwdPath.Resolve("shirts", "/srv/work/"), "/srv/work/shirts");
         Check("path: absolute as is", CwdPath.Resolve("/srv/else/x", "/srv/work"), "/srv/else/x");

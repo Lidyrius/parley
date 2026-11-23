@@ -154,6 +154,10 @@ struct SessionView: View {
                     Button { model.resume(id) } label: { Label("Fortsetzen", systemImage: "play.fill") }
                 }
                 Button { model.loadHistory(id) } label: { Label("Neu laden", systemImage: "arrow.clockwise") }
+                // v11: its own Detailgrad — only on Sir's own host, not in someone else's share.
+                if let session, model.guestShare(of: id) == nil, let host = model.relay.snapshot {
+                    detailMenu(session, default: host.detail)
+                }
                 if let last = model.histories[id]?.last(where: { $0.kind == .assistant })?.text {
                     Button { copy(last, key: "menu") } label: { Label("Letzte Antwort kopieren", systemImage: "doc.on.doc") }
                 }
@@ -162,6 +166,34 @@ struct SessionView: View {
             }
             .tint(.primary)
             .accessibilityLabel("Mehr")
+        }
+    }
+
+    /// "Wie Standard (Kurz)", then each level with its length hint; a checkmark on the current one.
+    private func detailMenu(_ session: Session, default level: DetailLevel) -> some View {
+        Menu {
+            detailButton("Wie Standard (\(level.title))", hint: nil, on: session.detail == nil) { model.setDetail(nil, session: id) }
+            ForEach(DetailLevel.allCases) { l in
+                detailButton(l.title, hint: l.hint, on: session.detail == l) { model.setDetail(l, session: id) }
+            }
+        } label: {
+            Label {
+                Text("Detailgrad")
+                Text((session.detail ?? level).title)
+            } icon: {
+                Image(systemName: "text.alignleft")
+            }
+        }
+    }
+
+    private func detailButton(_ title: String, hint: String?, on: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label {
+                Text(title)
+                if let hint { Text(hint) }
+            } icon: {
+                if on { Image(systemName: "checkmark") }
+            }
         }
     }
 

@@ -45,6 +45,9 @@ public sealed class Config
     public bool RemoteControl { get; init; } = true;    // "0" = sessions without Remote Control (RemoteControl.cs)
     // Protocol v10 (docs/IPHONE.md): Hinweise and desktops. `vnc` is an object {name: {url, password}}.
     public string HostName { get; init; } = Environment.MachineName;
+    // Protocol v11: the resume line ("0" = off) and the default Detailgrad (Detail.cs).
+    public bool ResumeLine { get; init; } = true;
+    public string Detail { get; init; } = "kurz";
     public string AlertsFile { get; init; } = "";
     public string AlertsCheck { get; init; } = "";
     public IReadOnlyDictionary<string, VncTarget> Vnc { get; init; } = new Dictionary<string, VncTarget>();
@@ -134,6 +137,8 @@ public sealed class Config
                 AppIcon = S("appIcon", "graphit"),
                 RemoteControl = S("remoteControl") != "0",
                 HostName = Or("hostName", Environment.MachineName),
+                ResumeLine = S("resumeLine") != "0",
+                Detail = Parley.Detail.Valid(S("detail")),
                 AlertsFile = S("alertsFile").Trim(),
                 AlertsCheck = S("alertsCheck").Trim(),
                 Vnc = ReadVnc(d),

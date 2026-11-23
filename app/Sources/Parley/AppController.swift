@@ -43,6 +43,15 @@ final class AppController: ObservableObject {
     @Published var brief = Keychain.get(.brief) == "1" {
         didSet { Keychain.set(brief ? "1" : "", for: .brief) }
     }
+    // Rückmeldung beim Fortsetzen (menu, phone; protocol v11): off → a resume speaks no "Ich habe
+    // die Arbeit an X wieder aufgenommen…" line and doesn't listen; the session just runs on.
+    @Published var resumeLine = Keychain.get(.resumeLine) != "0" {
+        didSet { Keychain.set(resumeLine ? "" : "0", for: .resumeLine) }
+    }
+    // The default Detailgrad (menu, phone; protocol v11, Detail.swift). Sessions may have their own.
+    @Published var detail = DetailStore.shared.defaultLevel {
+        didSet { if detail != DetailStore.shared.defaultLevel { DetailStore.shared.set(id: nil, level: detail.rawValue) } }
+    }
     // Barge-in at the Mac (menu: "Parley unterbrechen"): talking over Parley stops it, it listens.
     /// Funkloch-Schutz (protocol v8): a line is loaded whole before it plays, the phone's mic is
     /// kept through a dead zone. Off: calls as before — the way back should a phone misbehave.
@@ -89,7 +98,7 @@ final class AppController: ObservableObject {
     private var onboardingPlayer: TTSPlayer?
     private var relay: RelayClient?
     private var relayGen = 0   // drops state reports of a replaced relay client
-    let phone = PhoneHub()
+    let phone = PhoneHub(detail: .shared)
     lazy var shares = ShareHub(server: server)   // shared sessions (Shares.swift)
     private let apns = APNsClient()
     private var tunnels: VncTunnels?   // v10: the phone's remote desktop channels (Desktops.swift), per relay link
@@ -156,6 +165,7 @@ final class AppController: ObservableObject {
         let server = self.server
         phone.onWake = { server.wakeFromPhone() }
         server.remindersFile = Reminders.file
+        server.detail = .shared
         server.snapshotsFile = Snapshots.file
         RelayFrame.offersClips = deadZoneCalls
         server.supervisorFile = Supervisor.file
@@ -381,6 +391,8 @@ final class AppController: ObservableObject {
         phoneCall = phone.callActive
         phoneAway = phone.away
         if brief != (Keychain.get(.brief) == "1") { brief.toggle() }   // set on the phone
+        if resumeLine != (Keychain.get(.resumeLine) != "0") { resumeLine.toggle() }
+        if detail != DetailStore.shared.defaultLevel { detail = DetailStore.shared.defaultLevel }
     }
 
     // Sir called in: Parley greets him at once and listens ("Zu Diensten, Sir. Was darf ich für Sie
@@ -675,9 +687,10 @@ final class AppController: ObservableObject {
                 await speakLine("Verstanden, Sir. Ich warte \(human) und melde mich dann.", config: config)
                 scheduleResume()   // let media play during the pause
                 setStatus(key, "idle")
-                let resume = "[Parley] Die vom Nutzer angeforderte Wartezeit von \(human) ist vorbei. " +
+                let after = "[Parley] Die vom Nutzer angeforderte Wartezeit von \(human) ist vorbei. " +
                     "Fahre jetzt fort: prüfe, ob alles wie erwartet funktioniert hat, und berichte kurz." +
                     "\n\nSeine Antwort davor, vollständig:\n\(text)"   // a long reply that mentions waiting must not get lost
+                let resume = DetailStore.shared.noted(after, session: session)   // v11: the Detailgrad note, if due
                 return TurnReply(transcript: "", park: false, waitSeconds: wait, resume: resume)
             }
         }
@@ -741,13 +754,21 @@ final class AppController: ObservableObject {
         }
         setStatus(key, "sent")
         Log.write("turn end")
-        return TurnReply(transcript: text, park: false)
+        // v11: the Detailgrad note, if due — after every other note.
+        return TurnReply(transcript: DetailStore.shared.noted(text, session: session), park: false)
     }
 
     // A listening turn with nothing to feed back: "Stopp" and silence park (resumable); a failed
     // transcription just ends the turn — a network error must not leave its hook parked for good.
     nonisolated static func quietEnd(stop: Bool, sttFailed: Bool) -> TurnReply {
         TurnReply(transcript: "", park: stop || !sttFailed)
+    }
+
+    // A session's own Detailgrad (the menu's right-click); nil = back to the default (v11).
+    func setDetail(session id: String, _ level: DetailLevel?) {
+        if DetailStore.shared.set(id: id, level: level?.rawValue ?? "") {
+            Log.write("menu: Detailgrad für \(id) → \(level?.rawValue ?? "wie Standard")")
+        }
     }
 
     // Resume a session from the menu (mouse fallback for the voice command) — no dialog.
@@ -789,6 +810,12 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
         resumeGen += 1
         Log.write("resume dialog start project=\(turn.project)")
+        // Rückmeldung beim Fortsetzen off (v11): no line, no listening — the server hands the
+        // session the default instruction (with the Detailgrad note, if due).
+        if !resumeLine {
+            Log.write("Rückmeldung beim Fortsetzen aus → resuming without dialog")
+            return TurnReply(transcript: "", park: false)
+        }
         let ringing = shouldRing
         var calledBack = false
         if ringing, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: nil) {

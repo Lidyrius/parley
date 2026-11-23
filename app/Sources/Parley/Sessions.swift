@@ -472,6 +472,11 @@ final class SessionRegistry {
     // /sessions, and the Zentrale's row "waits for his call back" while there are any.
     var missed = 0
     struct ShareTag: Encodable, Equatable { let id, name, role: String }
+    // v11 (the server keeps them current): the default Detailgrad (nil = not told, omitted), the
+    // sessions with their own, and Rückmeldung beim Fortsetzen off (`resumeLine: false`).
+    var detail: String?
+    var detailOverrides: [String: String] = [:]
+    var resumeLineOff = false
 
     /// The overview's order: 0 needs Sir (voice, an update queued, a call put off), 1 working,
     /// 2 paused (waiting, parked, idle), 3 stopped.
@@ -498,7 +503,7 @@ final class SessionRegistry {
                     : e.callbackAt.map { $0 == .distantFuture ? 0 : Self.ms($0) },
                 voice: e.id == activeId,
                 resumable: only == nil && resumable(e), tasks: e.tasks, host: only == nil ? DesktopSessions.resolve(cli: e.id, reported: e.host) : nil,
-                shared: shared[e.id] ?? [], asking: asking[e.id],
+                shared: shared[e.id] ?? [], asking: asking[e.id], detail: only == nil ? detailOverrides[e.id] : nil,
                 zentrale: only == nil && Supervisor.isZentrale(label: e.label, cwd: e.cwd, zentrale: zentraleCwd),
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
@@ -509,9 +514,10 @@ final class SessionRegistry {
         let data = try? JSONEncoder().encode(only == nil
             ? Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots, supervisor: supervisor ? true : nil,
                    missed: missed > 0 ? missed : nil, alerts: alerts.isEmpty ? nil : alerts,
-                   alertsChecking: alertsChecking ? true : nil, desktops: desktops.isEmpty ? nil : desktops)
+                   alertsChecking: alertsChecking ? true : nil, desktops: desktops.isEmpty ? nil : desktops,
+                   detail: detail, resumeLine: resumeLineOff ? false : nil)
             : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: [], supervisor: nil, missed: nil,
-                   alerts: nil, alertsChecking: nil, desktops: nil))
+                   alerts: nil, alertsChecking: nil, desktops: nil, detail: nil, resumeLine: nil))
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"sessions":[]}"#
     }
 
@@ -521,6 +527,7 @@ final class SessionRegistry {
     private struct Wire: Encodable {
         let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row]; let supervisor: Bool?; let missed: Int?
         let alerts: [Hints.Alert]?; let alertsChecking: Bool?; let desktops: [String]?
+        let detail: String?; let resumeLine: Bool?   // v11: resumeLine only while off (false)
     }
     private struct Today: Encodable { let costUsd: Double; let turns: Int; let spokenSeconds: Int; let rateLimits: [RateLimit] }
 
@@ -534,9 +541,10 @@ final class SessionRegistry {
         let host: String?
         let shared: [ShareTag]
         let asking: String?
+        let detail: String?            // v11: only when the session has its own Detailgrad
         let zentrale: Bool             // the Zentrale's row (omitted otherwise)
         let stats: RowStats
-        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, asking, zentrale, stats }
+        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, asking, detail, zentrale, stats }
         func encode(to encoder: Encoder) throws {   // explicit: `until` must be null, not omitted
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(label, forKey: .label)
@@ -547,6 +555,7 @@ final class SessionRegistry {
             try c.encode(tasks, forKey: .tasks); try c.encode(host, forKey: .host)
             if !shared.isEmpty { try c.encode(shared, forKey: .shared) }
             try c.encodeIfPresent(asking, forKey: .asking)
+            try c.encodeIfPresent(detail, forKey: .detail)
             if zentrale { try c.encode(true, forKey: .zentrale) }
             try c.encode(stats, forKey: .stats)
         }

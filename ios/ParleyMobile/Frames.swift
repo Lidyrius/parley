@@ -7,6 +7,27 @@ enum SessionState: String, Sendable, CaseIterable {
     case speaking, listening, transcribing, queued, working, waiting, parked, background, idle, stopped
 }
 
+/// v11: Detailgrad — how long Parley's spoken line is. The host's default, or one session's own.
+enum DetailLevel: String, Sendable, CaseIterable, Identifiable {
+    case kurz, mittel, lang
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .kurz: "Kurz"
+        case .mittel: "Mittel"
+        case .lang: "Ausführlich"
+        }
+    }
+    /// The length hint, as the contract words it (docs/IPHONE.md → v11).
+    var hint: String {
+        switch self {
+        case .kurz: "ca. 15 Sek. · 1–2 Sätze"
+        case .mittel: "ca. 40 Sek. · 3–5 Sätze"
+        case .lang: "ca. 80 Sek. · ganze Zusammenfassung"
+        }
+    }
+}
+
 /// Background work a session left running when its turn ended (subagent, shell, monitor).
 struct BackgroundTask: Equatable, Sendable {
     var type = ""
@@ -39,6 +60,7 @@ struct Session: Identifiable, Equatable, Sendable {
     var shared: [ShareTag] = []     // v7: the guests it is shared with (Sir's side)
     var asking: String?             // v7: a question waits for this guest
     var zentrale = false            // the Zentrale's row (Überwachungsmodus: the one main card)
+    var detail: DetailLevel?        // v11: its own Detailgrad; nil = the host's default
 }
 
 /// v7: a question for this phone's owner as a guest (`ask` frame).
@@ -123,6 +145,10 @@ struct Snapshot: Equatable, Sendable {
     var alertsChecking = false
     /// v10: the host's desktops (names), opened through the relay (VNC).
     var desktops: [String] = []
+    /// v11: Rückmeldung beim Fortsetzen — off, a resume starts the session silently.
+    var resumeLine = true
+    /// v11: the host's default Detailgrad (a session may have its own).
+    var detail: DetailLevel = .kurz
     var at: Double?
 }
 
@@ -443,6 +469,14 @@ enum Outgoing {
     static func silent(_ on: Bool) -> String { encode(["t": .s("silent"), "on": .b(on)]) }
     /// Ohne Floskeln: no announcements, thanks or ack lines.
     static func brief(_ on: Bool) -> String { encode(["t": .s("brief"), "on": .b(on)]) }
+    /// v11: Rückmeldung beim Fortsetzen on or off.
+    static func resumeLine(_ on: Bool) -> String { encode(["t": .s("resumeLine"), "on": .b(on)]) }
+    /// v11: the default Detailgrad, or one session's (`level` nil = back to the default, sent as "").
+    static func detail(_ level: DetailLevel?, session: String? = nil) -> String {
+        var body: [String: Value] = ["t": .s("detail"), "level": .s(level?.rawValue ?? "")]
+        if let session { body["id"] = .s(session) }
+        return encode(body)
+    }
     /// Fragerunde: how long an update waits for others still at work (0 = never).
     static func round(seconds: Int) -> String { encode(["t": .s("round"), "seconds": .i(seconds)]) }
     /// v3: the notification push token (hex).
@@ -563,7 +597,7 @@ extension Stats: Decodable {
 }
 
 extension Session: Decodable {
-    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared, asking, zentrale }
+    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared, asking, zentrale, detail }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)  // the one field a tile cannot do without
@@ -581,6 +615,7 @@ extension Session: Decodable {
         shared = (c.lenient(.shared) as Lossy<ShareTag>?)?.items ?? []
         asking = c.lenient(.asking)
         zentrale = c.lenient(.zentrale) ?? false
+        detail = (c.lenient(.detail) as String?).flatMap(DetailLevel.init(rawValue:))
     }
 }
 
@@ -634,7 +669,7 @@ extension ReminderRow: Decodable {
 }
 
 extension Snapshot: Decodable {
-    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor, call, missed, alerts, alertsChecking, desktops }
+    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor, call, missed, alerts, alertsChecking, desktops, resumeLine, detail }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         supervisor = c.lenient(.supervisor) ?? false
@@ -647,6 +682,8 @@ extension Snapshot: Decodable {
         alerts = (c.lenient(.alerts) as Lossy<HostAlert>?)?.items ?? []
         alertsChecking = c.lenient(.alertsChecking) ?? false
         desktops = ((c.lenient(.desktops) as Lossy<String>?)?.items ?? []).filter { !$0.isEmpty }
+        resumeLine = c.lenient(.resumeLine) ?? true
+        detail = (c.lenient(.detail) as String?).flatMap(DetailLevel.init(rawValue:)) ?? .kurz
         at = c.lenient(.at)
     }
 }

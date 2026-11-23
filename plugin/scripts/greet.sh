@@ -79,11 +79,16 @@ fi
 CREDS="$HOME/Library/Application Support/Parley/credentials.json"
 [ -f "$CREDS" ] || CREDS="${APPDATA:-/nonexistent}/Parley/credentials.json"
 [ -f "$CREDS" ] || CREDS="$(ls /mnt/c/Users/*/AppData/Roaming/Parley/credentials.json 2>/dev/null | head -1 || true)"
+[ -f "$CREDS" ] || CREDS="${XDG_CONFIG_HOME:-$HOME/.config}/Parley/credentials.json"   # the Linux host
 LANG_NAME="Deutsch"
 if [ -f "$CREDS" ]; then
   LANG_NAME="$(jq -r '.language // "Deutsch"' "$CREDS" 2>/dev/null || echo Deutsch)"
 fi
 echo "PARLEY_LANGUAGE=${LANG_NAME}"
+# Detailgrad (docs/IPHONE.md, v11): how long the spoken line is by default — kurz | mittel | lang.
+DETAIL="kurz"
+[ -f "$CREDS" ] && DETAIL="$(jq -r '.detail // "kurz" | if . == "mittel" or . == "lang" then . else "kurz" end' "$CREDS" 2>/dev/null || echo kurz)"
+echo "PARLEY_DETAIL=${DETAIL}"
 
 # Spoken project name from <project>/.parley.json (empty → the skill asks the user once).
 PROJECT_NAME=""

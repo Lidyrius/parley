@@ -288,6 +288,25 @@ final class AppModel {
         if demo { relay.startDemo(supervisor: on) } else { relay.send(Outgoing.supervisor(on)) }
     }
 
+    /// v11: Rückmeldung beim Fortsetzen, on the active host (its `sessions` frame carries it).
+    func setResumeLine(_ on: Bool) {
+        relay.patchSnapshot { $0.resumeLine = on }
+        relay.send(Outgoing.resumeLine(on))
+    }
+
+    /// v11: the active host's default Detailgrad, or (`session`) one session's own — nil = back
+    /// to the default.
+    func setDetail(_ level: DetailLevel?, session: String? = nil) {
+        relay.patchSnapshot { s in
+            if let session {
+                if let i = s.sessions.firstIndex(where: { $0.id == session }) { s.sessions[i].detail = level }
+            } else if let level {
+                s.detail = level
+            }
+        }
+        relay.send(Outgoing.detail(level, session: session))
+    }
+
     func callParley() {
         Task {
             if !demo { await CallController.requestPermissions() }

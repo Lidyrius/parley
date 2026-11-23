@@ -331,6 +331,8 @@ internal sealed class Host
         {
             case PhoneResume r: _server.StartResume(r.Id); break;
             case PhoneAlertsCheck: Alerts.Check(Config.Load()); break;
+            case PhoneDetail d: Detail.Apply(d); break;
+            case PhoneResumeLine rl: Detail.SetResumeLine(rl.On); break;
             case PhoneVnc v: Desktops.OnPhone(v, Config.Load); break;
             case PhoneCallState c:
                 var wasInCall = PhoneCall.Active;

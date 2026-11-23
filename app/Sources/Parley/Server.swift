@@ -996,8 +996,21 @@ final class ControlServer: @unchecked Sendable {
         }
     }
 
+    // v11: the Detailgrad (Detail.swift) and Rückmeldung beim Fortsetzen in /sessions; nil (tests): omitted.
+    var detail: DetailStore?
+
     func sessionsJSON(only: String? = nil) -> String {
-        queue.sync { sessions.json(only: only) }
+        let settings = detail.map { d in
+            (d.defaultLevel.rawValue, d.overrides.mapValues(\.rawValue), !d.resumeLine)
+        }
+        return queue.sync {
+            if let (level, overrides, off) = settings {
+                sessions.detail = level
+                sessions.detailOverrides = overrides
+                sessions.resumeLineOff = off
+            }
+            return sessions.json(only: only)
+        }
     }
 
     func sessionInfo(_ id: String) -> (label: String, cwd: String, state: String)? {
@@ -1015,7 +1028,9 @@ final class ControlServer: @unchecked Sendable {
         switch turn.event {
         case Self.resumeEvent:
             sessions.resumeFinished(id: id, replied: !reply.transcript.isEmpty)
-            deliver(id, reply.transcript.isEmpty ? Self.resumeInstruction : reply.transcript)
+            // v11: the Detailgrad note (if due) at the end — also on the default instruction.
+            let text = reply.transcript.isEmpty ? Self.resumeInstruction : reply.transcript
+            deliver(id, detail?.noted(text, session: id) ?? text)
         case Self.permissionEvent, Self.wakeEvent, Self.watchdogEvent, Self.callbackEvent:
             sessions.dialogFinished(id: id)
         default:

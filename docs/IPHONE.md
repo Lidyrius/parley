@@ -569,3 +569,40 @@ the rest of Parley, which is what an open-source install needs.
   channel; the password from `open` is handed to noVNC, never shown or stored.
 - Costs: every frame is a relay message (Durable Object request). A few minutes of logging in is a
   few thousand — fine for the free plan's 100k a day, not for watching a desktop all day.
+
+## Protocol v11 — Rückmeldung beim Fortsetzen, Detailgrad
+
+Two settings, on the host and switchable from the phone (like `brief`).
+
+### Rückmeldung beim Fortsetzen
+- Host config `resumeLine`: `"0"` = off, anything else / missing = on (default).
+- Off: a resume (`POST /resume`, the phone's Fortsetzen, a snapshot) speaks no "Ich habe die Arbeit
+  an X wieder aufgenommen…" line and doesn't listen — the session just runs again with the default
+  instruction (the path a muted/Unterwegs host already takes).
+- Phone → host `{"t":"resumeLine","on":false}`; the `sessions` frame carries `resumeLine: false`
+  only while it is off.
+
+### Detailgrad — how long the spoken line is
+- Levels: `kurz` (default), `mittel`, `lang`. Shown everywhere as:
+  - **Kurz** — ca. 15 Sek. · 1–2 Sätze (bis ~40 Wörter)
+  - **Mittel** — ca. 40 Sek. · 3–5 Sätze (bis ~90 Wörter)
+  - **Ausführlich** — ca. 80 Sek. · ganze Zusammenfassung (bis ~180 Wörter)
+- Host config `detail` = the default level. Per session: the host's `detail.json` (app data,
+  beside `reminders.json`) `{ "<session id>": "lang" }`; a session without an entry uses `detail`.
+- Phone → host `{"t":"detail","level":"mittel"}` (the default) or
+  `{"t":"detail","id":"<session id>","level":"lang"}` (one session; `"level":""` = back to the
+  default). Unknown levels are ignored.
+- `sessions` frame: top-level `detail: "<default>"`; a row carries `detail` only when that session
+  has its own level.
+- **How Claude learns it:** the host appends one note to the text it hands the session (a
+  listening turn's transcript, a resume's instruction), after any other note:
+  - `mittel`: `[Parley · Detailgrad mittel: Sprechzeile bis etwa 90 Wörter (rund 40 Sekunden) – die wichtigsten Punkte mit kurzer Begründung.]`
+  - `lang`: `[Parley · Detailgrad ausführlich: Sprechzeile bis etwa 180 Wörter (rund 80 Sekunden) – vollständige Zusammenfassung mit Gründen, Zahlen und offenen Punkten.]`
+  - `kurz`: `[Parley · Detailgrad kurz: Sprechzeile wieder höchstens etwa 40 Wörter.]` — only when the
+    level last noted for that session was another one; otherwise nothing. A session never noted
+    counts as at the default level (what the plugin's `PARLEY_DETAIL` told it), so `mittel`/`lang` are
+    noted on every turn and a session's own `kurz` under a longer default is noted once.
+  The host remembers per session which level it last noted (in memory; after a restart a
+  non-`kurz` level is simply noted again).
+- The plugin (`/parley:voice`, `$parley-voice`) prints `PARLEY_DETAIL=<default level>` and tells
+  Claude to follow the latest `[Parley · Detailgrad …]` note over the 40-word default.

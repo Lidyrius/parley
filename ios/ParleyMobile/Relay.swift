@@ -119,6 +119,14 @@ final class Relay {
         }
     }
 
+    /// A switch set on this phone shows at once (v11: Rückmeldung, Detailgrad); the host's next
+    /// `sessions` frame says what it really took. In the demo it is the only way it changes.
+    func patchSnapshot(_ change: (inout Snapshot) -> Void) {
+        guard var s = snapshot else { return }
+        change(&s)
+        snapshot = s
+    }
+
     /// "Fortsetzen": same as `POST /resume` on the host.
     func resume(_ id: String) {
         send(Outgoing.resume(id: id))

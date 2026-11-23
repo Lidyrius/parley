@@ -55,6 +55,12 @@ for listening rather than reading. Use the calm, precise JARVIS character and
 address the user as “Sir” or the natural equivalent. Do not put markdown, code,
 paths, lists, or explanations inside the tag. Keep it below about 40 words (with slides: ~25 words per slide).
 
+**Detailgrad:** the command also prints `PARLEY_DETAIL=<kurz|mittel|lang>`: `kurz` = the limit above,
+`mittel` = up to ~90 words (main points with a short reason), `lang` = up to ~180 words (a full
+summary with reasons, numbers and open points; then 3–8 sentences are fine). Sir can change it, also per
+session: Parley then adds a note like `[Parley · Detailgrad ausführlich: …]` to his message — the
+latest such note wins over `PARLEY_DETAIL` and the word limit.
+
 The tag is the only text Parley speaks. After `<speak>`, wait for the next user
 message: Parley injects the recorded transcription into this Codex session. Do
 not emit a tag when voice mode is not active.

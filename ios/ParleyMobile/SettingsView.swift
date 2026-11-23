@@ -74,6 +74,30 @@ struct SettingsView: View {
                 } footer: {
                     Text("„Hey Siri, Parley anrufen“ geht jederzeit, auch in CarPlay.")
                 }
+                // v11: the active host's switches — they show what it reports and go to it on change.
+                if model.hasOwnMac {
+                    let host = model.relay.snapshot
+                    Section {
+                        Toggle(isOn: Binding(get: { host?.resumeLine ?? true }, set: { model.setResumeLine($0) })) {
+                            Label("Rückmeldung beim Fortsetzen", systemImage: "play.circle")
+                        }
+                    } footer: {
+                        Text("Aus: Fortsetzen startet die Session still, ohne „Ich habe die Arbeit … wieder aufgenommen“.")
+                    }
+                    .disabled(host == nil)
+                    Section {
+                        Picker("Detailgrad", selection: Binding(get: { host?.detail ?? .kurz }, set: { model.setDetail($0) })) {
+                            ForEach(DetailLevel.allCases) { DetailRow(level: $0).tag($0) }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    } header: {
+                        Text("Detailgrad")
+                    } footer: {
+                        Text("Wie lang Parleys gesprochene Antworten sind – pro Session im Menü der Session änderbar.")
+                    }
+                    .disabled(host == nil)
+                }
                 Section("Darstellung") {
                     AppIconRow(selection: $appIcon)
                     Picker("Erscheinungsbild", selection: Binding(get: { Appearance.shared.scheme },
@@ -672,6 +696,18 @@ private struct AppIconRow: View {
 
 /// A settings row that explains itself: the title, and under it one short line (design A,
 /// docs/design/screens/ios/10-einstellungen). The line wraps at large text sizes.
+/// v11: a Detailgrad with its length hint ("Kurz" / "ca. 15 Sek. · 1–2 Sätze").
+private struct DetailRow: View {
+    let level: DetailLevel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(level.title)
+            Text(level.hint).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+}
+
 private struct RowLabel: View {
     let title: String
     let detail: String
