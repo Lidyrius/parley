@@ -68,22 +68,17 @@ public sealed class SettingsForm : Form
             "English" => "en-US", "Français" => "fr-FR", "Español" => "es-ES",
             "Italiano" => "it-IT", "Nederlands" => "nl-NL", _ => "de-DE",
         };
-        Directory.CreateDirectory(Config.Dir);
-        // merge onto the existing file so unknown keys survive
-        Dictionary<string, object> d = new();
-        try
+        // keep the voice (star) picked in Setup, only switch its locale with the language
+        var voice = Config.Load().GoogleVoice;
+        voice = voice.Length > 6 && voice[2] == '-' && voice[5] == '-' ? code + voice[5..] : $"{code}-Chirp3-HD-Alnilam";
+        Config.Merge(new Dictionary<string, string>
         {
-            var existing = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                File.ReadAllText(Config.CredentialsPath)) ?? new();
-            foreach (var kv in existing) d[kv.Key] = kv.Value.ValueKind == JsonValueKind.String ? kv.Value.GetString()! : kv.Value.ToString();
-        }
-        catch { }
-        d["googleAPIKey"] = _google.Text.Trim();
-        d["groqAPIKey"] = _groq.Text.Trim();
-        d["language"] = lang;
-        d["googleVoice"] = $"{code}-Chirp3-HD-Alnilam";
-        d["speakingRate"] = (_rate.Value / 4.0).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        d["notifyMode"] = _notify.SelectedIndex switch { 1 => "system", 2 => "none", _ => "pill" };
-        File.WriteAllText(Config.CredentialsPath, JsonSerializer.Serialize(d, new JsonSerializerOptions { WriteIndented = true }));
+            ["googleAPIKey"] = _google.Text.Trim(),
+            ["groqAPIKey"] = _groq.Text.Trim(),
+            ["language"] = lang,
+            ["googleVoice"] = voice,
+            ["speakingRate"] = (_rate.Value / 4.0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["notifyMode"] = _notify.SelectedIndex switch { 1 => "system", 2 => "none", _ => "pill" },
+        });
     }
 }

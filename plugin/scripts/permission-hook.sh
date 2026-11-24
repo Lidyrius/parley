@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+PATH="$PATH:$HOME/bin"   # Windows: install.ps1 puts jq.exe there; non-login Git Bash lacks it
 # Parley PermissionRequest hook (permission prompts aloud).
 #
 # The client is about to ask the user to approve a tool call. LONG-POLL the app:

@@ -10,7 +10,9 @@ namespace Parley;
 // question, which ride the same gate as turns.
 public sealed class TurnPipeline
 {
-    public volatile bool Muted;
+    private volatile bool _muted;
+    // Stumm (tray toggle) OR Windows is in quiet hours / Focus / presentation mode — as the Mac's DND.
+    public bool Muted { get => _muted || FocusAssist.Active(); set => _muted = value; }
     // Set once at startup. Ring: Unterwegs-Modus — ring the phone for this label and wait for
     // the call (true = connected). Route: a wake utterance → delivered; returns the line to confirm with.
     public Func<string, Task<RingOutcome>>? Ring;
@@ -860,5 +862,21 @@ public sealed class TurnPipeline
             await MediaControl.Resume(ids);
             Log.Write($"resumed media: {string.Join(",", ids)}");
         });
+    }
+}
+
+// Best-effort Windows "Nicht stören": SHQueryUserNotificationState reports quiet hours / Focus
+// Assist and presentation mode. ponytail: Win11's DND toggle isn't always reported (no public
+// API); the manual Stumm still works — same ceiling as the Mac's FocusStatus.
+public static class FocusAssist
+{
+    [System.Runtime.InteropServices.DllImport("shell32.dll")]
+    private static extern int SHQueryUserNotificationState(out int state);
+
+    public static bool Active()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try { return SHQueryUserNotificationState(out var s) == 0 && s is 4 or 6; }   // PRESENTATION_MODE, QUIET_TIME
+        catch { return false; }
     }
 }

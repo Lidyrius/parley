@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+PATH="$PATH:$HOME/bin"   # Windows: install.ps1 puts jq.exe there; non-login Git Bash lacks it
 # Wake the Parley app and send a /ready greeting. Fire-and-forget.
 set -euo pipefail
 PORT="${PARLEY_PORT:-8787}"

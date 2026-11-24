@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+PATH="$PATH:$HOME/bin"   # Windows: install.ps1 puts jq.exe there; non-login Git Bash lacks it
 # Parley Stop hook (terminal-agnostic voice loop).
 #
 # 1. Extract the <speak>…</speak> line from the last assistant message.

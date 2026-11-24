@@ -39,7 +39,12 @@ $claudeSkills = Join-Path $env:USERPROFILE '.claude\skills'
 
 function Is-OwnedJunction($path, $target) {
     if (-not (Test-Path -LiteralPath $path)) { return $false }
-    try { return ((Resolve-Path -LiteralPath $path).Path -eq (Resolve-Path -LiteralPath $target).Path) } catch { return $false }
+    # Resolve-Path does not follow junctions; .Target does (string[] in PS 5.1, string in 7)
+    try {
+        $t = @((Get-Item -LiteralPath $path -Force).Target)[0]
+        if (-not $t) { return $false }
+        return ([IO.Path]::GetFullPath($t).TrimEnd('\') -ieq [IO.Path]::GetFullPath($target).TrimEnd('\'))
+    } catch { return $false }
 }
 
 function Install-Claude {
@@ -68,6 +73,7 @@ $marketPlugin = Join-Path $marketRoot 'plugin'
 $marketFile = Join-Path $marketRoot '.agents\plugins\marketplace.json'
 
 function Ensure-CodexMarketplace {
+    $ErrorActionPreference = 'Continue'   # codex writes progress to stderr
     New-Item -ItemType Directory -Force -Path (Split-Path $marketFile) | Out-Null
     if (Test-Path -LiteralPath $marketPlugin) {
         if (-not (Is-OwnedJunction $marketPlugin $pluginRoot)) {
@@ -87,7 +93,7 @@ function Ensure-CodexMarketplace {
             category = 'Productivity'
         })
     }
-    $market | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 -Path $marketFile
+    [IO.File]::WriteAllText($marketFile, ($market | ConvertTo-Json -Depth 10))   # UTF-8 without BOM (PS 5.1's -Encoding utf8 adds one)
     $codex = Get-Command codex -ErrorAction SilentlyContinue
     if ($null -eq $codex) { return $false }
     $existing = (& $codex.Source plugin marketplace list --json 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue)
@@ -98,6 +104,7 @@ function Ensure-CodexMarketplace {
 }
 
 function Install-Codex {
+    $ErrorActionPreference = 'Continue'   # codex writes progress to stderr
     $codex = Get-Command codex -ErrorAction SilentlyContinue
     if ($null -eq $codex) { Write-Warning 'Parley: Codex ist aktiviert, aber nicht im PATH.'; return }
     if (-not (Ensure-CodexMarketplace)) { return }
@@ -106,6 +113,7 @@ function Install-Codex {
 }
 
 function Remove-Codex {
+    $ErrorActionPreference = 'Continue'   # codex writes progress to stderr
     $codex = Get-Command codex -ErrorAction SilentlyContinue
     if ($null -ne $codex) { & $codex.Source plugin remove "parley@$marketName" --json 2>$null | Out-Null }
 }

@@ -36,6 +36,7 @@ public sealed class TrayPanel : Form
     private readonly Hooks _hooks;
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 100 };
     private readonly List<(Rectangle r, Action a)> _hits = new();
+    private readonly List<(Rectangle r, string id)> _rows = new();   // right-click: the session's Detailgrad
     private JsonElement _board;
     private DateTime _loaded;
     private bool _others;   // Überwachungsmodus: the other sessions, unfolded
@@ -146,6 +147,7 @@ public sealed class TrayPanel : Form
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         _hits.Clear();
+        _rows.Clear();
         var pad = S(16);
         var w = Width - 2 * pad;
         var y = pad;
@@ -337,6 +339,7 @@ public sealed class TrayPanel : Form
         if (Live(r)) using (var b = new SolidBrush(Color.FromArgb(28, Accent))) g.FillRectangle(b, box);
         if (divider) using (var p = new Pen(Raised)) g.DrawLine(p, box.X + S(52), box.Y, box.Right, box.Y);
         Ring(g, state, color, new Rectangle(box.X + S(14), box.Y + S(12), S(24), S(24)), now);
+        if (Str(r, "id") is { Length: > 0 } sid) _rows.Add((box, sid));
 
         var x = box.X + S(52);
         var y = box.Y + S(12);
@@ -569,6 +572,12 @@ public sealed class TrayPanel : Form
     protected override void OnMouseClick(MouseEventArgs e)
     {
         base.OnMouseClick(e);
+        if (e.Button == MouseButtons.Right)
+        {
+            foreach (var (r, id) in _rows)
+                if (r.Contains(e.Location)) { DetailMenu(id).Show(this, e.Location); return; }
+            return;
+        }
         if (e.Button != MouseButtons.Left) return;
         foreach (var (r, a) in _hits.ToList())
         {
@@ -578,5 +587,23 @@ public sealed class TrayPanel : Form
             Invalidate();
             return;
         }
+    }
+
+    // Like the Mac's right-click on a session: its own Detailgrad, or back to the default.
+    private ContextMenuStrip DetailMenu(string id)
+    {
+        var menu = new ContextMenuStrip();
+        menu.Items.Add(new ToolStripLabel("Detailgrad dieser Session") { ForeColor = SystemColors.GrayText });
+        var own = Detail.OwnLevel(id);
+        var std = new ToolStripMenuItem($"Wie Standard ({Detail.Label(Detail.Valid(Config.Load().Detail))})") { Checked = own is null };
+        std.Click += (_, _) => Detail.SetOwn(id, "");
+        menu.Items.Add(std);
+        foreach (var level in Detail.Levels)
+        {
+            var item = new ToolStripMenuItem(Detail.Label(level)) { Checked = own == level };
+            item.Click += (_, _) => Detail.SetOwn(id, level);
+            menu.Items.Add(item);
+        }
+        return menu;
     }
 }
