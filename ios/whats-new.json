@@ -1,6 +1,7 @@
 {
-  "latest": 79,
+  "latest": 80,
   "builds": [
+    { "build": 80, "text": "Im dunklen Schwarzweiß-Design sind alle Knöpfe wieder lesbar." },
     { "build": 79, "text": "Der Verlauf jeder Session bleibt im Hintergrund aktuell und öffnet sich sofort ganz unten, ohne Scrollen." },
     { "build": 78, "text": "Die App meldet ihre Version. Ist eine neuere in TestFlight, zeigt die Übersicht sie an, und Parley sagt Ihnen im Anruf, was neu ist." },
     { "build": 77, "text": "Beim Zoom auf ein Bild bleibt die Umgebung des markierten Teils sichtbar." },
