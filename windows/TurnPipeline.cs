@@ -105,6 +105,7 @@ public sealed class TurnPipeline
         }
         if (_ackTask is not null) { await _ackTask; _ackTask = null; }
         if (calledBack && !config.Brief) await ThankForCallingBack(config);
+        if (PhoneCall.Active && !config.Brief && AppNews.TakeLine(config) is { } news) await SpeakLine(news, config);   // v13
         PhoneCall.Line.SwitchTopic(Server.SessionKey(turn));
 
         // Cached line, or synthesized live + cached; null → no TTS, just the beep.
@@ -319,6 +320,7 @@ public sealed class TurnPipeline
         }
         else (_, calledBack) = await ReachPhone(turn.SpokenLabel, session);
         if (ringing && PhoneCall.Active && !config.Brief) await AnnounceRound(config);
+        if (PhoneCall.Active && !config.Brief && AppNews.TakeLine(config) is { } news) await SpeakLine(news, config);   // v13
         // Unterwegs and not on the phone: the PC stays silent — the line waits as a notification.
         if (PhoneCall.Away && !PhoneCall.Active)
         {

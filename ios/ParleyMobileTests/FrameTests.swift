@@ -143,6 +143,7 @@ struct FrameTests {
         #expect(push["env"] as? String == "development" && push["token"] as? String == "ab")
         let hello = try #require(JSONSerialization.jsonObject(with: Data(Outgoing.hello(device: "Sydney’s \"iPhone\"").utf8)) as? [String: Any])
         #expect(hello["device"] as? String == "Sydney’s \"iPhone\"")
+        #expect(hello["build"] as? Int == AppBuild.build && hello["version"] as? String == AppBuild.version)
     }
 
     @Test(arguments: ["pong", "", "[]", #"{"type":"sessions"}"#, #"{"t":5}"#])
@@ -151,7 +152,7 @@ struct FrameTests {
     }
 
     @Test func encodesOutgoingMessages() {
-        #expect(Outgoing.hello(device: "iPhone") == #"{"device":"iPhone","t":"hello"}"#)
+        #expect(Outgoing.hello(device: "iPhone", build: 77, version: "0.1.0") == #"{"build":77,"device":"iPhone","t":"hello","version":"0.1.0"}"#)
         #expect(Outgoing.resume(id: "abc/1") == #"{"id":"abc/1","t":"resume"}"#)
     }
 
@@ -597,6 +598,38 @@ struct FrameTests {
         #expect(snap.sessions.map(\.detail) == [.lang, nil, nil])   // an unknown level reads as the default
         guard case .sessions(let old)? = Frame.decode(#"{"t":"sessions","detail":"riesig","sessions":[]}"#) else { Issue.record("not a sessions frame"); return }
         #expect(old.resumeLine && old.detail == .kurz)
+    }
+
+    // MARK: v13 — build in hello, newer builds in sessions
+
+    @Test func helloCarriesOwnBuild() throws {
+        #expect(AppBuild.build > 0 && !AppBuild.version.isEmpty)
+        let hello = try #require(JSONSerialization.jsonObject(with: Data(Outgoing.hello(device: "iPhone").utf8)) as? [String: Any])
+        #expect(hello["t"] as? String == "hello" && hello["device"] as? String == "iPhone")
+        #expect(hello["build"] as? Int == AppBuild.build)
+        #expect(hello["version"] as? String == AppBuild.version)
+    }
+
+    @Test func appUpdateRidesAlong() throws {
+        let json = #"{"t":"sessions","sessions":[],"app":{"latest":78,"news":[{"build":78,"text":"Parley liest vor, was neu ist."},{"build":77,"text":"Zweites"},{"text":"no build"},{"build":76,"text":"  "},5]}}"#
+        guard case .sessions(let snap)? = Frame.decode(json) else { Issue.record("not a sessions frame"); return }
+        #expect(snap.app == AppUpdate(latest: 78, news: [.init(build: 78, text: "Parley liest vor, was neu ist."), .init(build: 77, text: "Zweites")]))
+        guard case .sessions(let empty)? = Frame.decode(#"{"t":"sessions","sessions":[],"app":{"latest":79,"news":[]}}"#) else { Issue.record("not a sessions frame"); return }
+        #expect(empty.app == AppUpdate(latest: 79, news: []))
+        guard case .sessions(let noNews)? = Frame.decode(#"{"t":"sessions","sessions":[],"app":{"latest":79,"news":"x"}}"#) else { Issue.record("not a sessions frame"); return }
+        #expect(noNews.app == AppUpdate(latest: 79, news: []))
+    }
+
+    @Test(arguments: [#"{"t":"sessions","sessions":[{"id":"a"}]}"#,
+                      #"{"t":"sessions","sessions":[{"id":"a"}],"app":null}"#,
+                      #"{"t":"sessions","sessions":[{"id":"a"}],"app":"78"}"#,
+                      #"{"t":"sessions","sessions":[{"id":"a"}],"app":[1,2]}"#,
+                      #"{"t":"sessions","sessions":[{"id":"a"}],"app":{"news":[]}}"#,
+                      #"{"t":"sessions","sessions":[{"id":"a"}],"app":{"latest":"78"}}"#])
+    func appUpdateAbsentOrGarbage(_ json: String) throws {
+        guard case .sessions(let snap)? = Frame.decode(json) else { Issue.record("not a sessions frame"); return }
+        #expect(snap.app == nil)
+        #expect(snap.sessions.count == 1)   // the rest of the frame still reads
     }
 
     @Test func resumeLineAndDetailEncode() {

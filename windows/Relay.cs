@@ -202,7 +202,8 @@ public static class RelayFrame
                 case "hello":   // its name (for the setup's "Verbunden mit …"), at most 60 characters
                 {
                     var device = new System.Globalization.StringInfo(Str("device") ?? "");
-                    return new PhoneHello(device.LengthInTextElements > 60 ? device.SubstringByTextElements(0, 60) : device.String);
+                    int? build = root.TryGetProperty("build", out var hb) && hb.ValueKind == JsonValueKind.Number && hb.TryGetInt32(out var bn) && bn > 0 ? bn : null;
+                    return new PhoneHello(device.LengthInTextElements > 60 ? device.SubstringByTextElements(0, 60) : device.String, build);
                 }
                 case "barge":
                     return new PhoneBarge();
@@ -338,7 +339,7 @@ public sealed record PhoneHistory(string Id, string? Before) : PhoneMessage;   /
 public sealed record PhoneImage(string Id, string Key) : PhoneMessage;
 public sealed record PhoneSay(string Id, string Text) : PhoneMessage;
 // v4: the phone (re)connected (its name, for the setup); it saved and switched to a palette made by voice.
-public sealed record PhoneHello(string Device = "") : PhoneMessage;
+public sealed record PhoneHello(string Device = "", int? Build = null) : PhoneMessage;   // v13: its CFBundleVersion
 public sealed record PhoneBarge : PhoneMessage { }   // v4: Sir talks over Parley — stop the line, listen
 public sealed record PhonePaletteSaved(string Name) : PhoneMessage;
 // v4: the Live Activity's push-to-start token, and the running one's update token ("" = none).

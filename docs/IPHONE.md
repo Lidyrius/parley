@@ -622,3 +622,19 @@ Two settings, on the host and switchable from the phone (like `brief`).
   part; the close-up fades in once it rests. Subtitles, orb, mute and hang-up lie over it. Older
   phones ignore both fields and show the card as before.
 
+
+## Protocol v13 — Version der App, Neuigkeiten
+
+- **`hello`** carries the phone's own build: `{"t":"hello","device":"<name>","build":78,"version":"0.1.0"}`
+  (`build` = CFBundleVersion, `version` = CFBundleShortVersionString; older phones send neither).
+- The host reads the newest TestFlight build and what each build brought from
+  [`ios/whats-new.json`](../ios/whats-new.json) on `main` (`{"latest":78,"builds":[{"build":78,"text":"…"}]}`,
+  fetched at most every 6 h, on a `hello`). Add a line there with every TestFlight upload.
+- **`sessions`** gains a top-level `app: {"latest":78,"news":[{"build":78,"text":"…"}]}` — only while
+  the host knows the phone's build and a newer one is out; `news` = the builds newer than the phone's,
+  newest first, at most 5. The phone shows a card "Neue Version verfügbar" with "In TestFlight öffnen";
+  its × hides it until a still newer build appears.
+- **In a call** the host says once, before the first update: what the phone's new build brought
+  ("Kurz vorweg, Sir: Ihre App ist aktualisiert. Neu: …") — or, when the phone is behind, that a
+  newer version waits in TestFlight and what it brings. What was said is kept in `news.json` in the
+  app data (`told`, `offered`). Not in "Ohne Floskeln" (brief), German only for now.

@@ -578,6 +578,7 @@ internal sealed class TrayApp : ApplicationContext
                 break;
             case PhoneHello hello:
                 RelayHost.SayHello(hello.Device);   // the setup's pairing step waits for this
+                AppNews.OnHello(hello.Build);
                 if (_pendingPalette is { } pending) _ = PhoneCall.Reply(pending.Frame);
                 // Guests still waiting for Sir's yes: the ask again, in case the phone missed it.
                 foreach (var s in _shares.List().Where(s => s.State == "asking")) _ = PhoneCall.Reply(Shares.JoinFrame(s));

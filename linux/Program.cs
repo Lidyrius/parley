@@ -154,6 +154,14 @@ internal static class Program
         Check("detail: own kurz under a mittel default is noted", Detail.Note("s-own-kurz", new Config { Detail = "mittel" }).Contains("Detailgrad kurz"), true);
         Detail.SetOwn("s-own-kurz", "");
         Check("detail: unknown level is kurz", Detail.Valid("riesig"), "kurz");
+        var (nl, nb) = AppNews.Parse("{\"latest\":78,\"builds\":[{\"build\":77,\"text\":\"B\"},{\"build\":78,\"text\":\"A\"},{\"build\":1}]}");
+        Check("news: latest", nl, 78);
+        Check("news: newest first, broken rows skipped", string.Join(",", nb.Select(b => b.Number)), "78,77");
+        Check("news: first hello tells this build once", AppNews.Next(78, 78, nb, null, 0).Line?.Contains("Neu: A"), true);
+        Check("news: told build stays quiet", AppNews.Next(78, 78, nb, 78, 78).Line, null);
+        Check("news: behind → offered once", AppNews.Next(77, 78, nb, 77, 0).Line?.Contains("Neu darin: A"), true);
+        Check("news: offered build not again", AppNews.Next(77, 78, nb, 77, 78).Line, null);
+        Check("news: updated → what it brought", AppNews.Next(78, 78, nb, 76, 78).Line?.Contains("A B"), true);
         Check("vnc: channel ids", Desktops.ValidChannel("abcDEF12") && !Desktops.ValidChannel("short") && !Desktops.ValidChannel("bad-chars!x"), true);
         Check("path: a bare name lives under projectsDir", CwdPath.Resolve("shirts", "/srv/work/"), "/srv/work/shirts");
         Check("path: absolute as is", CwdPath.Resolve("/srv/else/x", "/srv/work"), "/srv/else/x");

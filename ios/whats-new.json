@@ -1,0 +1,11 @@
+{
+  "latest": 78,
+  "builds": [
+    { "build": 78, "text": "Die App meldet ihre Version. Ist eine neuere in TestFlight, zeigt die Übersicht sie an, und Parley sagt Ihnen im Anruf, was neu ist." },
+    { "build": 77, "text": "Beim Zoom auf ein Bild bleibt die Umgebung des markierten Teils sichtbar." },
+    { "build": 76, "text": "Bilder füllen den Bildschirm ohne hellen Rand, der Zoom bleibt in der Mitte." },
+    { "build": 75, "text": "Bilder im Vollbild, mit Zoom auf das, was sich geändert hat." },
+    { "build": 74, "text": "Fortsetzen ohne Rückmeldung piept und hört zu, statt still zu bleiben." },
+    { "build": 73, "text": "Detailgrad pro Session und die Rückmeldung beim Fortsetzen lassen sich einstellen." }
+  ]
+}

@@ -223,7 +223,8 @@ final class AppController: ObservableObject {
                 return
             }
             // A palette made by voice: again on every (re)connect until the phone confirms it.
-            if case .hello(let device) = event {
+            if case .hello(let device, let build) = event {
+                AppNews.shared.onHello(build: build)
                 Task { @MainActor in self?.phoneHello = (device.isEmpty ? "Ihrem Handy" : device, Date()) }
                 Task { @MainActor in if let p = self?.pendingPalette { phone.reply(p.frame) } }
                 // Guests still waiting for Sir's yes: the ask again, in case the phone missed it.
@@ -586,6 +587,7 @@ final class AppController: ObservableObject {
         if effectivelyMuted && !phone.callActive { prefetch?.cancel(); return mutedTurn() }
         if calledBack, !brief { await thankForCallingBack(config) }
         if ringing, phone.callActive, !brief { await announceRound(config) }
+        if phone.callActive, !brief, let news = AppNews.shared.takeLine(language: config.language) { await speakLine(news, config: config) }   // v13
 
         // Wait out the previous turn's background ack clip so this turn's audio never
         // overlaps it (only ever blocks if Claude replied faster than the ack played).
@@ -827,6 +829,7 @@ final class AppController: ObservableObject {
         ackTask = nil
         if calledBack, !brief { await thankForCallingBack(config) }
         _ = phone.switchTopic(to: ControlServer.sessionKey(turn))
+        if phone.callActive, !brief, let news = AppNews.shared.takeLine(language: config.language) { await speakLine(news, config: config) }   // v13
 
         await pauseMediaIfPlaying()
         if resumeLine {

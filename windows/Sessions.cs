@@ -757,7 +757,8 @@ public sealed class SessionRegistry
         [property: JsonPropertyName("alertsChecking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AlertsChecking,
         [property: JsonPropertyName("desktops"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<string>? Desktops,
         [property: JsonPropertyName("detail")] string Detail,   // v11: the default Detailgrad
-        [property: JsonPropertyName("resumeLine"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ResumeLine);   // only while off
+        [property: JsonPropertyName("resumeLine"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ResumeLine,   // only while off
+        [property: JsonPropertyName("app"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? App);   // v13: only while the phone is behind
 
     // GET /sessions — by status group (needs input, working, halted, stopped), newest change
     // first within a group, then label, then id. As macOS.
@@ -830,7 +831,7 @@ public sealed class SessionRegistry
                 _supervised ? true : (bool?)null,
                 _missed > 0 ? _missed : (int?)null,
                 alerts, checking, desktops,
-                settings.Detail, settings.ResumeLine ? null : false));
+                settings.Detail, settings.ResumeLine ? null : false, Parley.AppNews.Wire()));
         }
     }
 

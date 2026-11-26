@@ -149,7 +149,25 @@ struct Snapshot: Equatable, Sendable {
     var resumeLine = true
     /// v11: the host's default Detailgrad (a session may have its own).
     var detail: DetailLevel = .kurz
+    /// v13: a newer build of this app waits in TestFlight (only when the host knows this phone's build).
+    var app: AppUpdate?
     var at: Double?
+}
+
+/// v13: the newest build in TestFlight and the notes of the builds newer than this phone's, newest first.
+struct AppUpdate: Equatable, Sendable {
+    struct News: Equatable, Sendable {
+        var build: Int
+        var text: String
+    }
+    var latest: Int
+    var news: [News] = []
+}
+
+/// This app's own build (CFBundleVersion) and version (CFBundleShortVersionString).
+enum AppBuild {
+    static var build: Int { Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0 }
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
 }
 
 /// v10: one Hinweis of the host — `desktop` names the desktop to log in on, if any.
@@ -441,7 +459,10 @@ enum Frame: Equatable, Sendable {
 
 /// Phone → host messages (keys sorted, so the text is stable for tests and logs).
 enum Outgoing {
-    static func hello(device: String) -> String { encode(["t": .s("hello"), "device": .s(device)]) }
+    /// v13: also this app's `build` (CFBundleVersion) and `version` — the host tells of newer builds.
+    static func hello(device: String, build: Int = AppBuild.build, version: String = AppBuild.version) -> String {
+        encode(["t": .s("hello"), "device": .s(device), "build": .i(build), "version": .s(version)])
+    }
     static func resume(id: String) -> String { encode(["t": .s("resume"), "id": .s(id)]) }
     /// v2: the phone's CallKit call connected (`true`) or ended (`false`).
     /// v3: a start asks for Parley's voice at 24 kHz (`down`); the mic stays 16 kHz.
@@ -676,7 +697,7 @@ extension ReminderRow: Decodable {
 }
 
 extension Snapshot: Decodable {
-    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor, call, missed, alerts, alertsChecking, desktops, resumeLine, detail }
+    private enum K: String, CodingKey { case sessions, today, reminders, snapshots, at, supervisor, call, missed, alerts, alertsChecking, desktops, resumeLine, detail, app }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         supervisor = c.lenient(.supervisor) ?? false
@@ -691,7 +712,26 @@ extension Snapshot: Decodable {
         desktops = ((c.lenient(.desktops) as Lossy<String>?)?.items ?? []).filter { !$0.isEmpty }
         resumeLine = c.lenient(.resumeLine) ?? true
         detail = (c.lenient(.detail) as String?).flatMap(DetailLevel.init(rawValue:)) ?? .kurz
+        app = c.lenient(.app)
         at = c.lenient(.at)
+    }
+}
+
+extension AppUpdate: Decodable {
+    private enum K: String, CodingKey { case latest, news }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        latest = try c.decode(Int.self, forKey: .latest)
+        news = ((c.lenient(.news) as Lossy<News>?)?.items ?? []).filter { !$0.text.isEmpty }
+    }
+}
+
+extension AppUpdate.News: Decodable {
+    private enum K: String, CodingKey { case build, text }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        build = try c.decode(Int.self, forKey: .build)
+        text = (try c.decode(String.self, forKey: .text)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

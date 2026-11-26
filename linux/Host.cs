@@ -369,6 +369,7 @@ internal sealed class Host
             case PhoneBarge: PhoneCall.OnBarge(); break;
             case PhoneHello hello:
                 RelayHost.SayHello(hello.Device);
+                AppNews.OnHello(hello.Build);
                 Log.Write($"phone: hello from {(hello.Device.Length == 0 ? "a phone" : hello.Device)}");
                 if (_pendingPalette is { } pending) _ = PhoneCall.Reply(pending.Frame);
                 foreach (var s in _shares.List().Where(s => s.State == "asking")) _ = PhoneCall.Reply(Shares.JoinFrame(s));

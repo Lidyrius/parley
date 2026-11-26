@@ -13,6 +13,8 @@ struct OverviewView: View {
     @State private var detail: Session?
     /// Raster (default) or Liste, remembered.
     @AppStorage("sessionsAsList") private var asList = false
+    /// v13: the TestFlight build whose card Sir closed — a newer one shows it again.
+    @AppStorage("dismissedAppBuild") private var dismissedBuild = 0
     /// Überwachungsmodus: the other sessions, folded away below the Zentrale.
     @State private var showsOthers = ProcessInfo.processInfo.arguments.contains("-demoOthers")   // screenshots
     /// The switch was just thrown: the overview turns at once, the host's next `sessions` confirms it.
@@ -149,6 +151,9 @@ struct OverviewView: View {
                 if !snapshot.alerts.isEmpty {
                     AlertsCard(host: host, alerts: snapshot.alerts, checking: snapshot.alertsChecking, skew: relay.skew,
                                canSend: relay.canSend, desktops: snapshot.desktops, open: model.openDesktop, check: model.checkAlerts)
+                }
+                if let app = snapshot.app, app.latest > AppBuild.build, app.latest > dismissedBuild {
+                    UpdateCard(update: app) { dismissedBuild = app.latest }
                 }
                 if let today = snapshot.today { TodayCard(today: today) }
                 sessions(snapshot.sessions, skew: relay.skew, canSend: relay.canSend,
@@ -511,6 +516,63 @@ private struct AlertsCard: View {
         let date = Date(timeIntervalSince1970: (ms - skew) / 1000)
         if Calendar.current.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
         return date.formatted(.dateTime.weekday(.abbreviated).day().month(.twoDigits).hour().minute())
+    }
+}
+
+/// v13: a newer build waits in TestFlight — what's new in it, a way there, and an x that holds
+/// until a still newer build is out.
+private struct UpdateCard: View {
+    let update: AppUpdate
+    let dismiss: () -> Void
+    @Environment(\.openURL) private var openURL
+
+    static let testFlight = URL(string: "itms-beta://beta.itunes.apple.com/v1/app/6823921086")!
+    static let fallback = URL(string: "https://testflight.apple.com/")!
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Neue Version verfügbar", systemImage: "arrow.down.app.fill")
+                        .font(.headline)
+                        .foregroundStyle(Theme.claude)
+                    Text("Build \(update.latest) in TestFlight").font(.footnote).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button(action: dismiss) {
+                    Image(systemName: "xmark").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Ausblenden")
+            }
+            if !update.news.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(update.news.prefix(3).enumerated()), id: \.offset) { _, n in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("•").foregroundStyle(.secondary)
+                            Text(n.text).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    if update.news.count > 3 {
+                        Text("und mehr").foregroundStyle(.secondary).padding(.leading, 16)
+                    }
+                }
+                .font(.subheadline)
+            }
+            Button {
+                openURL(Self.testFlight) { accepted in if !accepted { openURL(Self.fallback) } }
+            } label: {
+                Label("In TestFlight öffnen", systemImage: "airplane").font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.claude)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.claude.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.claude.opacity(0.45)))
+        .accessibilityElement(children: .contain)
     }
 }
 

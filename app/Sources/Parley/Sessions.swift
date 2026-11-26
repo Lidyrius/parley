@@ -515,9 +515,9 @@ final class SessionRegistry {
             ? Wire(sessions: rows, today: today, reminders: reminders, snapshots: snapshots, supervisor: supervisor ? true : nil,
                    missed: missed > 0 ? missed : nil, alerts: alerts.isEmpty ? nil : alerts,
                    alertsChecking: alertsChecking ? true : nil, desktops: desktops.isEmpty ? nil : desktops,
-                   detail: detail, resumeLine: resumeLineOff ? false : nil)
+                   detail: detail, resumeLine: resumeLineOff ? false : nil, app: AppNews.shared.wire())
             : Wire(sessions: rows, today: Today(costUsd: 0, turns: 0, spokenSeconds: 0, rateLimits: []), reminders: [], snapshots: [], supervisor: nil, missed: nil,
-                   alerts: nil, alertsChecking: nil, desktops: nil, detail: nil, resumeLine: nil))
+                   alerts: nil, alertsChecking: nil, desktops: nil, detail: nil, resumeLine: nil, app: nil))
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? #"{"sessions":[]}"#
     }
 
@@ -528,6 +528,7 @@ final class SessionRegistry {
         let sessions: [Row]; let today: Today; let reminders: [Reminders.Row]; let snapshots: [Snapshots.Row]; let supervisor: Bool?; let missed: Int?
         let alerts: [Hints.Alert]?; let alertsChecking: Bool?; let desktops: [String]?
         let detail: String?; let resumeLine: Bool?   // v11: resumeLine only while off (false)
+        let app: AppNews.Wire?   // v13: only while the phone is behind
     }
     private struct Today: Encodable { let costUsd: Double; let turns: Int; let spokenSeconds: Int; let rateLimits: [RateLimit] }
 

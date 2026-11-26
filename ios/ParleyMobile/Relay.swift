@@ -114,6 +114,11 @@ final class Relay {
                                       since: now.ms - 600_000, desktop: "saf")]
                 s.desktops = ["dev", "saf"]
             }
+            if ProcessInfo.processInfo.arguments.contains("-demoUpdate") {   // v13: a newer build in TestFlight
+                let b = AppBuild.build
+                s.app = AppUpdate(latest: b + 2, news: [.init(build: b + 2, text: "Parley liest vor, was neu ist."),
+                                                         .init(build: b + 1, text: "Bilder füllen die Folie bis zum Rand.")])
+            }
             if let only { s = Snapshot(sessions: s.sessions.filter { $0.id == only }) } else { WidgetFeed.publish(s) }
             snapshot = s
         }
