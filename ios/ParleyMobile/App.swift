@@ -40,20 +40,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         AppModel.shared.alertToken = PushPayload.hex(deviceToken)
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                            willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+    // ponytail: completion-handler variants on purpose. The `nonisolated async` ones let iOS call
+    // the completion on a background thread; UIKit asserts main and aborted the app on a tap (build 80).
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        if let after = CallController.laterAfter(action: response.actionIdentifier) {
-            await AppModel.shared.deliverLater(after)
-            return
-        }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let after = CallController.laterAfter(action: response.actionIdentifier)
         let content = response.notification.request.content, title = content.title
-        guard let id = content.userInfo["session"] as? String else { return }
-        // "": a Hinweis (v10), a join ask, a reminder — the overview.
-        await MainActor.run { id.isEmpty ? AppModel.shared.showOverview(title: title) : AppModel.shared.open(session: id) }
+        let id = content.userInfo["session"] as? String
+        nonisolated(unsafe) let done = completionHandler
+        Task { @MainActor in
+            if let after {
+                await AppModel.shared.deliverLater(after)
+            } else if let id {
+                // "": a Hinweis (v10), a join ask, a reminder — the overview.
+                id.isEmpty ? AppModel.shared.showOverview(title: title) : AppModel.shared.open(session: id)
+            }
+            done()   // on main
+        }
     }
 }
 
