@@ -266,7 +266,7 @@ struct FrameTests {
         // the screen — even at the image's edge (the edge colour fills the rest).
         let f1 = try #require(FocusCamera.rect([0.5, 0, 0.5, 0.5]))
         let z = FocusCamera.frame(image: CGSize(width: 1600, height: 1000), view: view, focus: f1, top: 100, bottom: 200)
-        #expect(z.width > 400 * 1.5)
+        #expect(abs(z.width * 0.5 - 400 * FocusCamera.fill) < 0.001)   // the part: 70 % of the width
         #expect(abs((z.minX + 0.75 * z.width) - 200) < 0.001 && abs((z.minY + 0.25 * z.height) - 400) < 0.001)   // screen middle
         // The edge colour of a plain red image is red.
         let red = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 20)).image { c in

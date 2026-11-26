@@ -201,14 +201,17 @@ struct FocusStage: View {
 
 /// The camera's arithmetic, pure.
 enum FocusCamera {
+    /// How much of the free room the focused part fills.
+    static let fill: CGFloat = 0.7
+
     /// `[x, y, w, h]` → a rect, if it is one.
     static func rect(_ f: [Double]) -> CGRect? {
         f.count == 4 && f[2] > 0 && f[3] > 0 ? CGRect(x: f[0], y: f[1], width: f[2], height: f[3]) : nil
     }
 
     /// Where the image sits on screen (its frame in view coordinates). Without a focus it fits
-    /// whole between the bars (`top`, `bottom`). With one, that part fills the free room (a little
-    /// air around it), zoomed at most 5× past the fit, its centre always in the middle of the
+    /// whole between the bars (`top`, `bottom`). With one, that part fills about 70 % of the free room (the page
+    /// around it stays in view), zoomed at most 5× past the fit, its centre always in the middle of the
     /// screen — near an edge of the image, the edge colour fills the rest.
     static func frame(image: CGSize, view: CGSize, focus: CGRect?, top: CGFloat, bottom: CGFloat) -> CGRect {
         guard image.width > 0, image.height > 0, view.width > 0, view.height > 0 else { return .zero }
@@ -216,7 +219,8 @@ enum FocusCamera {
         let fit = min(free.width / image.width, free.height / image.height)
         var scale = fit
         if let f = focus {
-            scale = min(free.width * 0.88 / (f.width * image.width), free.height * 0.88 / (f.height * image.height))
+            // The part takes about 70 % of the room, so some of the page around it stays in view.
+            scale = min(free.width * fill / (f.width * image.width), free.height * fill / (f.height * image.height))
             scale = min(max(scale, fit), fit * 5)
         }
         let size = CGSize(width: image.width * scale, height: image.height * scale)
