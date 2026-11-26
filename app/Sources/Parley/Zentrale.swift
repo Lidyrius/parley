@@ -88,7 +88,16 @@ enum Zentrale {
 enum SessionStarter {
     static let firstPrompt = "/parley:voice"
 
-    static let quietHooks = "export GASTOWN_DISABLE_OFFER_ADD=1; "
+    /// A Claude Code session's own markers. Terminal.app hands its environment to every new tab —
+    /// started from inside a session (`open -a Terminal`, an osascript that had to launch it), it
+    /// carries these, and a `claude` started there believes it is a child: "Transcript saving is
+    /// off — inherited CLAUDE_CODE_CHILD_SESSION marker", no .jsonl, no resume later.
+    static let sessionMarkers = ["CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH",
+                                 "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                                 "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_CHILD_NOTES_DIR",
+                                 "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"]
+
+    static let quietHooks = "unset \(sessionMarkers.joined(separator: " ")); export GASTOWN_DISABLE_OFFER_ADD=1; "
 
     static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: #"'\''"#) + "'" }
 

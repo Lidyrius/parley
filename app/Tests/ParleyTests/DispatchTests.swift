@@ -393,17 +393,35 @@ final class DispatchTests: XCTestCase {
 final class SessionStarterTests: XCTestCase {
     func testCommandQuotesTheFolderAndCarriesOnlyTheFixedPrompt() {
         XCTAssertEqual(SessionStarter.command(folder: "/Users/x/it's here", remote: false),
-                       #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/Users/x/it'\''s here' && claude '/parley:voice'"#)
-        XCTAssertEqual(SessionStarter.command(folder: "/tmp/$(rm -rf ~)", remote: false), #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/tmp/$(rm -rf ~)' && claude '/parley:voice'"#)
-        XCTAssertEqual(SessionStarter.command(folder: "/p", resume: "abc-123", remote: false), #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/p' && claude --resume 'abc-123' '/parley:voice'"#)
+                       "unset \(SessionStarter.sessionMarkers.joined(separator: " ")); " + #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/Users/x/it'\''s here' && claude '/parley:voice'"#)
+        XCTAssertEqual(SessionStarter.command(folder: "/tmp/$(rm -rf ~)", remote: false), "unset \(SessionStarter.sessionMarkers.joined(separator: " ")); " + #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/tmp/$(rm -rf ~)' && claude '/parley:voice'"#)
+        XCTAssertEqual(SessionStarter.command(folder: "/p", resume: "abc-123", remote: false), "unset \(SessionStarter.sessionMarkers.joined(separator: " ")); " + #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/p' && claude --resume 'abc-123' '/parley:voice'"#)
+    }
+
+    // A Terminal started from inside a Claude session passes its markers to every tab: the start
+    // clears them, or the new session saves no transcript (it thinks it is a child).
+    func testStartClearsInheritedSessionMarkers() throws {
+        let cmd = SessionStarter.command(folder: "/p", remote: false)
+        XCTAssertTrue(cmd.hasPrefix("unset CLAUDECODE "))
+        for marker in ["CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SESSION_ID"] { XCTAssertTrue(cmd.contains(" \(marker)")) }
+        // Really clears them in a shell that has them.
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = ["-fc", "unset \(SessionStarter.sessionMarkers.joined(separator: " ")); env"]
+        p.environment = ["CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDECODE": "1", "CLAUDE_CODE_USE_BEDROCK": "1"]
+        let out = Pipe(); p.standardOutput = out
+        try p.run(); p.waitUntilExit()
+        let env = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        XCTAssertFalse(env.contains("CLAUDE_CODE_CHILD_SESSION") || env.contains("CLAUDECODE="))
+        XCTAssertTrue(env.contains("CLAUDE_CODE_USE_BEDROCK=1"))   // the user's own settings stay
     }
 
     // Remote Control last: `--remote-control [name]` would take the prompt after it as its name.
     func testRemoteControlFlagComesLast() {
         XCTAssertEqual(SessionStarter.command(folder: "/p", remote: true),
-                       #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/p' && claude '/parley:voice' --remote-control"#)
+                       "unset \(SessionStarter.sessionMarkers.joined(separator: " ")); " + #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/p' && claude '/parley:voice' --remote-control"#)
         XCTAssertEqual(SessionStarter.command(folder: "/p", resume: "abc-123", remote: true),
-                       #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/p' && claude --resume 'abc-123' '/parley:voice' --remote-control"#)
+                       "unset \(SessionStarter.sessionMarkers.joined(separator: " ")); " + #"export GASTOWN_DISABLE_OFFER_ADD=1; cd '/p' && claude --resume 'abc-123' '/parley:voice' --remote-control"#)
     }
 
     func testOsascriptGetsTheCommandAsArgvNotAsScript() {

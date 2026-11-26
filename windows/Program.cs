@@ -15,7 +15,8 @@ internal static class Program
         // Started from inside a Claude Code session, Parley would inherit its CLAUDE_CODE_*
         // variables and pass them on to every session it starts.
         foreach (var key in Environment.GetEnvironmentVariables().Keys.Cast<object>().Select(k => k.ToString() ?? ""))
-            if (key.StartsWith("CLAUDE_CODE_", StringComparison.OrdinalIgnoreCase)) Environment.SetEnvironmentVariable(key, null);
+            if (key.StartsWith("CLAUDE_CODE_", StringComparison.OrdinalIgnoreCase) || key is "CLAUDECODE" or "CLAUDE_PID" or "CLAUDE_EFFORT")
+                Environment.SetEnvironmentVariable(key, null);   // ponytail: a new Windows Terminal tab reloads the system env; per-start scrubbing if one turns up that doesn't
 
         ApplicationConfiguration.Initialize();
         Application.Run(new TrayApp());
