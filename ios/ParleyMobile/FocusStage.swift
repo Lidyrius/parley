@@ -38,9 +38,23 @@ struct FocusStage: View {
                 }
                 .ignoresSafeArea()
             }
+            // The dark gradients behind the bars, edge to edge (the free colour must not show
+            // under them — on a light page that was a bright line at the bottom).
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 190)
+                Spacer(minLength: 0)
+                LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black.opacity(0.55), location: 0.35),
+                                       .init(color: .black.opacity(0.9), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 340)
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
             bars
         }
         .environment(\.colorScheme, .dark)
+        .persistentSystemOverlays(.hidden)   // no home indicator line over the picture
         .task(id: slide.id) { await move() }
     }
 
@@ -49,16 +63,11 @@ struct FocusStage: View {
     @ViewBuilder
     private func picture(in size: CGSize, top: CGFloat, bottom: CGFloat) -> some View {
         ZStack {
-            Color.black
+            // What the screenshot leaves free takes the colour of its edges — the page seems to go on.
+            (image.map(EdgeColor.of) ?? .black)
+                .animation(.easeInOut(duration: 0.4), value: slide.imageKey)
+            Color.black.opacity(0.4 * spot)   // dimmed with the picture around the focus
             if let image {
-                // The same picture, blurred, fills what the screenshot leaves free.
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: size.width, height: size.height)
-                    .clipped()
-                    .blur(radius: 36)
-                    .opacity(0.4)
                 let frame = FocusCamera.frame(image: image.size, view: size, focus: camera, top: top, bottom: bottom)
                 ZStack(alignment: .topLeading) {
                     Image(uiImage: image).resizable()
@@ -74,8 +83,6 @@ struct FocusStage: View {
                         .allowsHitTesting(false)
                 }
                 .frame(width: frame.width, height: frame.height)
-                .clipShape(RoundedRectangle(cornerRadius: camera == nil ? 14 : 0, style: .continuous))
-                .shadow(color: .black.opacity(0.5), radius: 24, y: 10)
                 .position(x: frame.midX, y: frame.midY)
                 .id(slide.ref ?? slide.id)
                 .transition(.opacity)
@@ -148,12 +155,6 @@ struct FocusStage: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
-            .background(alignment: .top) {
-                LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 170)
-                    .ignoresSafeArea(edges: .top)
-                    .allowsHitTesting(false)
-            }
 
             Spacer(minLength: 0)
 
@@ -193,14 +194,6 @@ struct FocusStage: View {
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 12)
-            .background(alignment: .bottom) {
-                LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black.opacity(0.55), location: 0.35),
-                                       .init(color: .black.opacity(0.88), location: 1)],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: 300)
-                    .ignoresSafeArea(edges: .bottom)
-                    .allowsHitTesting(false)
-            }
         }
         .foregroundStyle(.white)
     }
@@ -215,8 +208,8 @@ enum FocusCamera {
 
     /// Where the image sits on screen (its frame in view coordinates). Without a focus it fits
     /// whole between the bars (`top`, `bottom`). With one, that part fills the free room (a little
-    /// air around it), zoomed at most 5× past the fit — and the image never leaves room empty
-    /// that it could cover, nor runs off a side it fits into.
+    /// air around it), zoomed at most 5× past the fit, its centre always in the middle of the
+    /// screen — near an edge of the image, the edge colour fills the rest.
     static func frame(image: CGSize, view: CGSize, focus: CGRect?, top: CGFloat, bottom: CGFloat) -> CGRect {
         guard image.width > 0, image.height > 0, view.width > 0, view.height > 0 else { return .zero }
         let free = CGRect(x: 0, y: top, width: view.width, height: max(1, view.height - top - bottom))
@@ -227,15 +220,12 @@ enum FocusCamera {
             scale = min(max(scale, fit), fit * 5)
         }
         let size = CGSize(width: image.width * scale, height: image.height * scale)
-        let center = focus.map { CGPoint(x: $0.midX, y: $0.midY) } ?? CGPoint(x: 0.5, y: 0.5)
-        let x = clamp(free.midX - center.x * size.width, length: size.width, in: view.width)
-        let y = focus == nil ? free.midY - size.height / 2 : clamp(free.midY - center.y * size.height, length: size.height, in: view.height)
-        return CGRect(x: x, y: y, width: size.width, height: size.height)
-    }
-
-    /// Larger than the view: it covers it; smaller: it stays whole on screen.
-    private static func clamp(_ origin: CGFloat, length: CGFloat, in view: CGFloat) -> CGFloat {
-        min(max(origin, min(0, view - length)), max(0, view - length))
+        guard let f = focus else {
+            return CGRect(x: free.midX - size.width / 2, y: free.midY - size.height / 2, width: size.width, height: size.height)
+        }
+        // The part sits in the middle of the screen (sized to fit between the bars).
+        return CGRect(x: view.width / 2 - f.midX * size.width, y: view.height / 2 - f.midY * size.height,
+                      width: size.width, height: size.height)
     }
 
     /// The host's close-up of a focus (Slides.closeUp on the Mac): the rect plus a margin.
@@ -281,3 +271,38 @@ private struct SpotShape: Shape {
         return p
     }
 }
+
+/// The colour of an image's border (average of its outermost pixels at 12×12), to fill the room
+/// around it. Opaque; black if it can't be read.
+enum EdgeColor {
+    @MainActor private static var cache: [ObjectIdentifier: Color] = [:]
+
+    @MainActor static func of(_ image: UIImage) -> Color {
+        if let c = cache[ObjectIdentifier(image)] { return c }
+        let c = rgb(image).map { Color(red: $0.r, green: $0.g, blue: $0.b) } ?? .black
+        cache[ObjectIdentifier(image)] = c
+        return c
+    }
+
+    static func rgb(_ image: UIImage) -> (r: Double, g: Double, b: Double)? {
+        guard let cg = image.cgImage else { return nil }
+        let n = 12
+        var px = [UInt8](repeating: 0, count: n * n * 4)
+        let ok = px.withUnsafeMutableBytes { buf -> Bool in
+            guard let ctx = CGContext(data: buf.baseAddress, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
+            ctx.interpolationQuality = .medium
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: n, height: n))
+            return true
+        }
+        guard ok else { return nil }
+        var sum = (0.0, 0.0, 0.0), count = 0.0
+        for y in 0..<n { for x in 0..<n where x == 0 || y == 0 || x == n - 1 || y == n - 1 {
+            let i = (y * n + x) * 4
+            sum.0 += Double(px[i]); sum.1 += Double(px[i + 1]); sum.2 += Double(px[i + 2]); count += 1
+        } }
+        return (sum.0 / count / 255, sum.1 / count / 255, sum.2 / count / 255)
+    }
+}
+

@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Testing
+import UIKit
 import UserNotifications
 @testable import ParleyMobile
 
@@ -261,12 +262,18 @@ struct FrameTests {
         // Whole: fits the width between the bars, centred in the free room.
         let whole = FocusCamera.frame(image: CGSize(width: 1600, height: 1000), view: view, focus: nil, top: 100, bottom: 200)
         #expect(whole.width == 400 && whole.height == 250 && whole.midY == 350)
-        // Focus on the top-right quarter: zoomed in, the quarter's centre in the free room's centre
-        // as far as the image allows; it never leaves the view's right edge empty.
+        // Focus on the top-right quarter: zoomed in, the quarter's centre always in the middle of
+        // the screen — even at the image's edge (the edge colour fills the rest).
         let f1 = try #require(FocusCamera.rect([0.5, 0, 0.5, 0.5]))
         let z = FocusCamera.frame(image: CGSize(width: 1600, height: 1000), view: view, focus: f1, top: 100, bottom: 200)
         #expect(z.width > 400 * 1.5)
-        #expect(abs(z.maxX - 400) < 0.001)                 // clamped: right edge on the view's edge
+        #expect(abs((z.minX + 0.75 * z.width) - 200) < 0.001 && abs((z.minY + 0.25 * z.height) - 400) < 0.001)   // screen middle
+        // The edge colour of a plain red image is red.
+        let red = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 20)).image { c in
+            UIColor.red.setFill(); c.fill(CGRect(x: 0, y: 0, width: 20, height: 20))
+        }
+        let e = try #require(EdgeColor.rgb(red))
+        #expect(e.r > 0.95 && e.g < 0.05 && e.b < 0.05)
         // At most 5× the fit.
         let tiny = try #require(FocusCamera.rect([0.5, 0.5, 0.01, 0.01]))
         #expect(FocusCamera.frame(image: CGSize(width: 1600, height: 1000), view: view, focus: tiny, top: 100, bottom: 200).width <= 2000.001)

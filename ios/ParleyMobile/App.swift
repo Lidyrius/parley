@@ -186,7 +186,13 @@ final class AppModel {
         relay.onEvent = { [weak self] in self?.handle($0) }
         if demo {
             relay.startDemo()
-            images["demo-5"] = Demo.screenshot()
+            // `-demoImage <path>`: that picture as the call's screenshot slide (zoom checks).
+            if let i = arguments.firstIndex(of: "-demoImage"), i + 1 < arguments.count,
+               let picked = UIImage(contentsOfFile: arguments[i + 1]) {
+                images["demo-5"] = picked
+            } else {
+                images["demo-5"] = Demo.screenshot()
+            }
             // `-demoCall speaking|listening|idle|incoming|connecting` opens the call screen.
             // `-demoJoin` (+ `-demoJoinOk`): a guest asks to join (the approval sheet, code typed in);
             // `-demoGuestCode`: this phone joined someone's share (the code to send back).
