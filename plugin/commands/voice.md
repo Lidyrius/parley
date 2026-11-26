@@ -59,14 +59,18 @@ The app extracts the `<speak>` text, speaks it, records the user's voice reply, 
 - Parley renders these while it speaks and plays the matching one the instant the user stops talking. The reply then arrives with a note like `[Parley hat darauf bereits geantwortet: „…“ – nicht wiederholen.]`: don't repeat or re-confirm that line, just carry on. If you then have nothing new to say, end with an empty `<speak-end></speak-end>` (nothing is spoken).
 - Skip them when the answer is open-ended (no likely answers to predict).
 
-**Slides in a call (optional):** when something is easier to show than to say, put `<slide …/>` markers into the spoken line exactly where it should appear. Parley removes them before speaking; if Sir is on the phone, each slide shows the moment the following word is spoken (otherwise they are ignored). At most 3 per line, and the line must still make sense without them. Give every slide its own full sentence that says what it shows and what matters (“Hier sehen Sie die Antwortzeit pro Tag – seit Mittwoch ist sie halbiert.”), so it stays on screen long enough to read and its chart can build; with slides the line may run to ~25 words per slide:
+**Pictures in every line (default):** Sir sees what you did, not only hears it. Put `<slide …/>` markers into the spoken line exactly where each should appear. Parley removes them before speaking; on Sir's phone each slide shows the moment the following word is spoken (without a call they are ignored, so add them anyway). **Every `<speak>`/`<speak-end>` line carries 1–2 pictures** — skip them only for a bare one-word acknowledgement or when there is truly nothing to see.
 
-- `<slide image="last" title="Export-Knopf"/>` — the newest screenshot/image in this session (`last-2` = the one before), or `image="/absolute/path.png"`.
+- **Show the result.** After a change with a visible effect (UI, page, app, chart, output), take a screenshot of it (browser, simulator, app window, `screencapture`) and show it. No UI? Screenshot what proves it: a test run, the terminal output, the diff, a dashboard — or use a chart/metric/text slide.
+- **Zoom to what changed.** An image fills Sir's screen; `focus="x,y,w,h"` (fractions of the image, origin top left) makes the camera glide to that part. Several changes on one screenshot: repeat the same image with a new `focus` at the sentence about each — the camera moves from one to the next. Estimate the rect from the screenshot; a bit of air around the element is fine. Give a file path (`image="/path/shot.png"`) when you have one: the zoom is sharper.
+- At most 6 markers per line; the line must still make sense without them. Give every slide its own full sentence that says what it shows and what matters, so it stays on screen long enough to read and its chart can build; with slides the line may run to ~25 words per slide.
+
+- `<slide image="last" focus="0.55,0.08,0.4,0.2" title="Export-Knopf"/>` — the newest screenshot/image in this session (`last-2` = the one before), or `image="/absolute/path.png"`; `focus` optional.
 - `<slide chart="bar" labels="Mo,Di,Mi" values="12,18,9" unit="ms" title="Antwortzeit"/>` — `bar`, `line` or `pie`; comma-separated values, dot decimals.
 - `<slide metric="24 / 24" note="alle grün" title="Tests"/>` — one big number.
 - `<slide text="CSV-Export, Beträge mit Komma" title="Gebaut"/>` — a short card.
 
-Example: `<speak>Der Export ist drin, Sir. <slide image="last" title="Export"/>Hier sehen Sie den neuen Knopf oben rechts, er exportiert die Tabelle als CSV. <slide metric="24 / 24" title="Tests"/>Und alle vierundzwanzig Tests sind grün, auch die neuen für den Export. Passt das so?</speak>`
+Example: `<speak>Der Export ist drin, Sir. <slide image="last" focus="0.6,0.05,0.35,0.12" title="Export-Knopf"/>Oben rechts sitzt der neue Knopf, er exportiert die Tabelle als CSV. <slide image="last" focus="0.05,0.4,0.9,0.45" title="Tabelle"/>Und die Beträge in der Tabelle stehen jetzt mit Komma, wie in Excel. Passt das so?</speak>`
 
 Emit **exactly one** of the two tags per response, always as the very last line. If in doubt, use `<speak>`.
 

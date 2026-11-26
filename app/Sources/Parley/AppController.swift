@@ -1657,11 +1657,13 @@ final class AppController: ObservableObject {
         let items = Slides.items(specs, timed: timed, prefix: "slide-\(UUID().uuidString.prefix(8))")
         phone.reply(Slides.frame(items))
         Log.write("phone: \(items.count) slide(s) for this line")
-        let images = zip(specs, items).compactMap { s, o in s.image.map { (o.id, $0) } }
-        guard !images.isEmpty else { return }
+        let jobs = Slides.imageJobs(specs, items)
+        guard !jobs.isEmpty else { return }
         DispatchQueue.global(qos: .userInitiated).async {
-            for (id, source) in images {
-                phone.reply(Transcript.imageFrame(key: id, jpeg: Slides.image(source, session: session)))
+            for job in jobs {
+                let jpeg = Slides.image(job.source, session: session, crop: job.crop)
+                if job.crop != nil && jpeg == nil { continue }   // no close-up: the phone zooms the image itself
+                phone.reply(Transcript.imageFrame(key: job.key, jpeg: jpeg))
             }
         }
     }

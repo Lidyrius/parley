@@ -54,6 +54,23 @@ Zeile einen `slides`-Frame, die Bilder danach als `image`-Frames (Schlüssel = F
 iPhone zeigt die fällige Folie an Stelle des großen Rings, über Wellenform und Untertiteln; sie
 bleibt stehen, bis die nächste Zeile beginnt.
 
+## v12: Bilder im Vollbild, Zoom auf die Änderung (gebaut)
+
+Standard ist jetzt: **jede Zeile bringt 1–2 Bilder mit** (plugin/commands/voice.md) — nach einer
+sichtbaren Änderung ein Screenshot des Ergebnisses, sonst Testlauf, Ausgabe oder ein Diagramm.
+
+- `focus="x,y,w,h"` am Bild (Anteile des Bildes, oben links = 0,0) markiert, was sich geändert hat.
+  Mehrere Änderungen auf einem Screenshot: dasselbe Bild mehrmals, jeweils mit eigenem `focus`, an
+  dem Satz, der davon handelt.
+- Am iPhone füllt ein Bild den ganzen Anrufbildschirm (dahinter dasselbe Bild unscharf). Erst das
+  ganze Bild, dann gleitet die Kamera (Ease-in-out, 1,2 s) auf den Bereich; der Rest wird leicht
+  abgedunkelt, ein Ring in Parley-Orange markiert ihn. Kommt die nächste Stelle desselben Bildes,
+  gleitet die Kamera weiter statt zu springen. Liegt sie still, blendet die scharfe Nahaufnahme vom
+  Mac/PC (`<id>.hd`) über.
+- Wie bei einem Videoplayer liegen oben Titel und „1 / 2“ plus Verkleinern, unten auf einem dunklen
+  Verlauf die Untertitel, der Orb mit Name und Status, Stumm und Auflegen. Antippen = Vollbild mit
+  Pinch-Zoom. Verkleinern gilt bis zur nächsten Zeile.
+
 ## Timing — dieselbe Technik wie die Live-Untertitel
 
 Die Untertitel kennen schon die Startzeit jedes Wortes (aus dem Audio, siehe

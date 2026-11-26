@@ -245,6 +245,13 @@ struct Slide: Identifiable, Equatable, Sendable, Decodable {
     var unit: String?
     var metric: String?
     var note: String?
+    /// v12, image slides: the part to zoom to, `[x, y, w, h]` as fractions of the image.
+    var focus: [Double]? = nil
+    /// v12: an earlier slide of the line with the same image — its pixels are keyed by that id.
+    var ref: String? = nil
+
+    /// The key of this slide's pixels in the image store.
+    var imageKey: String { ref ?? id }
 
     /// The slide due `t` seconds into the line: the last one whose time has come.
     static func current(_ slides: [Slide], at t: Double) -> Slide? {

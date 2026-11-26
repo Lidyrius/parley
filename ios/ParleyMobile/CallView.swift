@@ -54,6 +54,8 @@ struct CallView: View {
     @State private var picked: String?
     @State private var pickedAt = Date.distantPast
     @State private var drag: CGFloat = 0
+    /// The full-screen picture (FocusStage) put away for this line.
+    @State private var stageOff = false
     @Namespace private var controlSpace
     /// The subtitles swiped up: the voiced session's history (CallHistory.swift). Writing in its
     /// message box takes the whole screen — the call floats on top then, with its subtitles.
@@ -179,7 +181,30 @@ struct CallView: View {
             .animation(.snappy, value: typing)
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
+
+            // v12: an image slide takes the whole screen while Parley talks about it.
+            if !transcriptOpen, !stageOff {
+                TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                    let due = call.slide(at: context.date)
+                    ZStack {
+                        if let due, due.kind == "image" {
+                            let order = call.slides.filter { $0.kind == "image" }.sorted { $0.at < $1.at }
+                            FocusStage(call: call, slide: due, index: order.firstIndex { $0.id == due.id } ?? 0,
+                                       count: order.count, image: model.images[due.imageKey],
+                                       closeUp: model.images[due.id + ".hd"],
+                                       name: call.label ?? voiced?.name ?? "Parley", color: look.color,
+                                       status: AnyView(statusLine(call, look: look)),
+                                       onMinimize: { withAnimation(.easeInOut(duration: 0.4)) { stageOff = true } },
+                                       onZoom: { zoomed = ZoomedImage(id: due.id, image: $0) })
+                                .transition(.opacity)
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.45), value: due?.kind == "image")
+                }
+                .transition(.opacity)
+            }
         }
+        .onChange(of: call.slides.first?.id) { stageOff = false }   // a new line: full screen again
         .sensoryFeedback(.impact(weight: .light), trigger: call.muted)
         .sensoryFeedback(.impact(weight: .light), trigger: call.speaker)
         .sensoryFeedback(.success, trigger: call.wakeSent) { _, new in new }
@@ -324,7 +349,7 @@ struct CallView: View {
                 ForEach(Array(order.enumerated()), id: \.element.id) { k, s in
                     let d = CGFloat(k - current) + drag / page   // distance from the middle, in cards
                     if abs(d) < 1.5 {
-                        SlideCard(slide: s, image: model.images[s.id], index: k, count: order.count, active: k == current) {
+                        SlideCard(slide: s, image: model.images[s.imageKey], index: k, count: order.count, active: k == current) {
                             zoomed = ZoomedImage(id: s.id, image: $0)
                         }
                         .scaleEffect(1 - min(abs(d), 1) * 0.06)
@@ -607,7 +632,7 @@ final class LevelSmoother {
 /// Live captions: the whole line in a two-line window that scrolls up smoothly as the voice
 /// moves on — the current line on top, what comes next always visible below. Words light up as
 /// they are spoken, timed against the frames the phone actually played (CallController.captionTime).
-private struct LiveCaption: View {
+struct LiveCaption: View {
     let call: CallController
     let caption: Caption
     @State private var frames: [Int: CGRect] = [:]

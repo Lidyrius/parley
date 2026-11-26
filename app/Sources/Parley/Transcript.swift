@@ -211,7 +211,10 @@ enum Transcript {
     // MARK: - images
 
     /// The image `key` ("<uuid>#<n>", as in the items) as a JPEG that fits a relay frame.
-    static func image(in url: URL, key: String) -> Data? {
+    static func image(in url: URL, key: String) -> Data? { rawImage(in: url, key: key).flatMap { jpeg($0) } }
+
+    /// The image `key` as stored in the transcript (PNG/JPEG bytes).
+    static func rawImage(in url: URL, key: String) -> Data? {
         let parts = key.split(separator: "#")
         guard parts.count == 2, let n = Int(parts[1]),
               let all = try? Data(contentsOf: url, options: .mappedIfSafe),
@@ -224,7 +227,7 @@ enum Transcript {
               let e = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
               let b64 = images(in: e).dropFirst(entry.prefix(n).filter { $0.k == "image" }.count).first,
               let raw = Data(base64Encoded: b64) else { return nil }
-        return jpeg(raw)
+        return raw
     }
 
     /// The base64 payloads of an entry's images, in item order.
@@ -237,8 +240,11 @@ enum Transcript {
     }
 
     /// Downscaled JPEG (≤ 1280 px, smaller until it fits a frame as base64).
-    static func jpeg(_ raw: Data) -> Data? {
+    /// `crop`: only that part (fractions of the image, origin top left) — the sharp close-up of
+    /// a zoomed slide (v12).
+    static func jpeg(_ raw: Data, crop: CGRect? = nil) -> Data? {
         guard let src = CGImageSourceCreateWithData(raw as CFData, nil) else { return nil }
+        if let crop { return croppedJPEG(src, crop) }
         for (px, q) in [(1280, 0.7), (960, 0.6), (640, 0.5)] {
             let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
                                          kCGImageSourceThumbnailMaxPixelSize: px,
@@ -247,6 +253,23 @@ enum Transcript {
             let out = NSMutableData()
             guard let dst = CGImageDestinationCreateWithData(out, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
             CGImageDestinationAddImage(dst, img, [kCGImageDestinationLossyCompressionQuality: q] as CFDictionary)
+            guard CGImageDestinationFinalize(dst) else { return nil }
+            if out.length * 4 / 3 < maxFrame - 1024 { return out as Data }
+        }
+        return nil
+    }
+
+    private static func croppedJPEG(_ src: CGImageSource, _ crop: CGRect) -> Data? {
+        guard let full = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+        let w = CGFloat(full.width), h = CGFloat(full.height)
+        let r = CGRect(x: crop.minX * w, y: crop.minY * h, width: crop.width * w, height: crop.height * h).integral
+            .intersection(CGRect(x: 0, y: 0, width: w, height: h))
+        guard r.width >= 8, r.height >= 8, let part = full.cropping(to: r) else { return nil }
+        for (px, q) in [(1280, 0.75), (960, 0.6), (640, 0.5)] {
+            let out = NSMutableData()
+            guard let dst = CGImageDestinationCreateWithData(out, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+            CGImageDestinationAddImage(dst, part, [kCGImageDestinationLossyCompressionQuality: q,
+                                                   kCGImageDestinationImageMaxPixelSize: min(px, Int(max(r.width, r.height)))] as CFDictionary)   // never upscaled
             guard CGImageDestinationFinalize(dst) else { return nil }
             if out.length * 4 / 3 < maxFrame - 1024 { return out as Data }
         }

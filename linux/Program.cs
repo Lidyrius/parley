@@ -195,6 +195,12 @@ internal static class Program
             AudioOut.WaitForHiFiOutput().GetAwaiter().GetResult();
             Check("audio: the voice's speed (SoundTouch)", AudioOut.ApplyRate(AudioOut.Beep(880, 0.5), 1.25).Length is > 15000 and < 22000, true);
             Check("images: skipped", Transcript.Jpeg(new byte[] { 1, 2, 3 }), null);
+            Check("slides: focus in percent", string.Join(";", Slides.Focus("10,20,50,30")!.Select(d => d.ToString(CultureInfo.InvariantCulture))), "0.1;0.2;0.5;0.3");
+            Check("slides: focus too small", Slides.Focus("0,0,0.01,0.5"), null);
+            var slideSpecs = new[] { new SlideSpec { Image = "last", Focus = "0,0,0.5,0.5" }, new SlideSpec { Word = 2, Image = "last", Focus = "0.5,0.5,0.5,0.5" } };
+            var slideItems = Slides.Items(slideSpecs, null, "s");
+            Check("slides: same image → ref", slideItems[1].Ref, "s-0");
+            Check("slides: image frames", string.Join(" ", Slides.ImageJobs(slideSpecs, slideItems).Select(j => j.Key)), "s-0 s-0.hd s-1.hd");
         }
         catch (Exception e)
         {

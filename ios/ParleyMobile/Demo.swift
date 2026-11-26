@@ -97,7 +97,8 @@ extension Demo {
         Slide(id: "demo-2", at: 12.22, kind: "chart", title: "37 Commits heute", chart: "bar", labels: ["Feature", "Fix", "Build", "Doku"], values: [16.0, 11.0, 9.0, 1.0]),
         Slide(id: "demo-3", at: 16.38, kind: "chart", title: "Sprachrunden pro Stunde", chart: "line", labels: ["11 Uhr", "12 Uhr", "13 Uhr", "14 Uhr", "15 Uhr", "16 Uhr"], values: [9.0, 24.0, 21.0, 12.0, 12.0, 6.0]),
         Slide(id: "demo-4", at: 19.31, kind: "metric", title: "Tests Mac und iPhone", metric: "234", note: "Tests grün, keine Fehler"),
-        Slide(id: "demo-5", at: 21.3, kind: "image", title: "So sieht ein Anruf jetzt aus"),
+        Slide(id: "demo-5", at: 21.3, kind: "image", title: "So sieht ein Anruf jetzt aus", focus: [0.3, 0.08, 0.4, 0.42]),
+        Slide(id: "demo-6", at: 23.4, kind: "image", title: "Status unter dem Namen", focus: [0.2, 0.62, 0.6, 0.3], ref: "demo-5"),
     ]
 
     /// Stand-in for the session's last screenshot (the image slide) in the demo.
@@ -110,6 +111,8 @@ extension Demo {
         }
         .frame(width: 390, height: 300)
         .background(LinearGradient(colors: [Color(hex: 0x3A2A24), Color(hex: 0x1C1C1B)], startPoint: .top, endPoint: .bottom))
-        return ImageRenderer(content: view).uiImage
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 3   // sharp when the call screen zooms in (v12)
+        return renderer.uiImage
     }
 }

@@ -251,6 +251,29 @@ struct FrameTests {
         #expect(SlideCard.format(24) == "24")
     }
 
+    @Test func focusSlides() throws {
+        let f = Frame.decode(#"{"t":"slides","items":[{"id":"a","at":0,"kind":"image","focus":[0.1,0.2,0.5,0.3]},{"id":"b","at":2,"kind":"image","focus":[0.5,0.5,0.5,0.5],"ref":"a"}]}"#)
+        guard case .slides(let s) = f else { Issue.record("no slides"); return }
+        #expect(s[0].focus == [0.1, 0.2, 0.5, 0.3] && s[0].imageKey == "a")
+        #expect(s[1].imageKey == "a")
+        #expect(FocusCamera.rect([0, 0, 0, 1]) == nil)
+        let view = CGSize(width: 400, height: 800)
+        // Whole: fits the width between the bars, centred in the free room.
+        let whole = FocusCamera.frame(image: CGSize(width: 1600, height: 1000), view: view, focus: nil, top: 100, bottom: 200)
+        #expect(whole.width == 400 && whole.height == 250 && whole.midY == 350)
+        // Focus on the top-right quarter: zoomed in, the quarter's centre in the free room's centre
+        // as far as the image allows; it never leaves the view's right edge empty.
+        let f1 = try #require(FocusCamera.rect([0.5, 0, 0.5, 0.5]))
+        let z = FocusCamera.frame(image: CGSize(width: 1600, height: 1000), view: view, focus: f1, top: 100, bottom: 200)
+        #expect(z.width > 400 * 1.5)
+        #expect(abs(z.maxX - 400) < 0.001)                 // clamped: right edge on the view's edge
+        // At most 5× the fit.
+        let tiny = try #require(FocusCamera.rect([0.5, 0.5, 0.01, 0.01]))
+        #expect(FocusCamera.frame(image: CGSize(width: 1600, height: 1000), view: view, focus: tiny, top: 100, bottom: 200).width <= 2000.001)
+        let c = FocusCamera.closeUp(CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5))
+        #expect(abs(c.maxX - 1) < 1e-9 && abs(c.minX - 0.44) < 1e-9)   // as the Mac's Slides.closeUp
+    }
+
     @Test func notNowAndCallBack() throws {
         #expect(Outgoing.later(after: 60).contains(#""after":60"#) && Outgoing.later(after: 60).contains(#""t":"later""#))
         #expect(!Outgoing.later(after: nil).contains("after"))
@@ -348,7 +371,7 @@ struct FrameTests {
         #expect(CallView.shownSlide(s, due: s[1], picked: s[3].id, pickedAt: now.addingTimeInterval(-3), now: now) == s[3].id)
         #expect(CallView.shownSlide(s, due: s[1], picked: s[3].id, pickedAt: now.addingTimeInterval(-11), now: now) == s[1].id)
         #expect(CallView.shownSlide(s, due: s[1], picked: "gone", pickedAt: now, now: now) == s[1].id)
-        #expect(s.count == 6 && s.map(\.at) == s.map(\.at).sorted())
+        #expect(s.count == 7 && s.map(\.at) == s.map(\.at).sorted())
     }
 
     /// The host's `content-state` (app/Sources/Parley/LiveActivity.swift) decodes as the

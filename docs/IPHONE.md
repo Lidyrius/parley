@@ -234,7 +234,7 @@ the call with a notification; the session then waits for a typed reply.
 | `silent`  | phone → host   | `{"on":true|false}` **Stumm**. With `away` on, a turn sends a notification push instead of ringing and parks the session (listen turns) until a `say` arrives. |
 | `call`    | phone → host   | `{"state":"start","down":24000}` asks for Parley's voice at 24 kHz (the TTS's own rate): the host then sends 960-byte frames (20 ms) instead of 640-byte 16 kHz ones. Without `down`, 16 kHz as before; the phone plays either (by frame size). The mic stays 16 kHz. Host lead ~0.25 s, phone prebuffer 100 ms. |
 | `caption` | host → phone   | `{"words":[…],"at":[<s>…],"end":<s>}` live captions for the line whose audio follows: word start times read off the synthesized audio (pauses ≥ 120 ms matched to the punctuation, words between by length; speaking rate applied). Sent just before the line's first frame; the phone times the words against the frames it actually played. |
-| `slides`  | host → phone   | `{"items":[{"id","at","kind":"image|chart|metric|text","title","text","chart":"bar|line|pie","labels","values","unit","metric","note"}]}` the line's slides (docs/CALL-SLIDES.md), `at` on the caption clock; image pixels follow as `image` frames keyed by the slide id. |
+| `slides`  | host → phone   | `{"items":[{"id","at","kind":"image|chart|metric|text","title","text","chart":"bar|line|pie","labels","values","unit","metric","note","focus","ref"}]}` (`focus`, `ref`: v12) the line's slides (docs/CALL-SLIDES.md), `at` on the caption clock; image pixels follow as `image` frames keyed by the slide id. |
 | `push`    | phone → host   | `{"token","env","kind":"alert"}` the notification push token (topic `de.developaway.parley.mobile`); without `kind` it is the VoIP token as before. |
 
 Notification push payload: `{"aps":{"alert":{"title":"Parley · <label>","body":"<spoken line>"},"sound":"default","thread-id":"<session>"},"session":"<session>"}` — tapping it opens that session.
@@ -606,3 +606,19 @@ Two settings, on the host and switchable from the phone (like `brief`).
   non-`kurz` level is simply noted again).
 - The plugin (`/parley:voice`, `$parley-voice`) prints `PARLEY_DETAIL=<default level>` and tells
   Claude to follow the latest `[Parley · Detailgrad …]` note over the 40-word default.
+
+## Protocol v12 — Bilder im Vollbild, Zoom auf die Änderung
+
+- Image slides may carry `focus: [x, y, w, h]` — the part of the image the line talks about,
+  fractions of the image with the origin top left (from the marker's `focus="x,y,w,h"`; percent is
+  accepted, too small or malformed is dropped).
+- `ref: "<slide id>"`: this image slide shows the same image as an earlier slide of the line (same
+  `image` source); it gets no `image` frame of its own — the phone uses the pixels keyed by `ref`.
+- For every slide with a `focus` the host sends a sharp close-up as an extra `image` frame keyed
+  `<id>.hd`: the focus rect plus a margin of 12 % of its larger side (clipped to the image), from
+  the original pixels, never upscaled. No close-up (too small, unreadable) → no frame.
+- iPhone: an image slide takes the whole call screen — first the whole image, then the camera
+  glides to `focus` (and on to the next `focus` of the same image), dims the rest and rings the
+  part; the close-up fades in once it rests. Subtitles, orb, mute and hang-up lie over it. Older
+  phones ignore both fields and show the card as before.
+

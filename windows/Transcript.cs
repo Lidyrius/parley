@@ -262,7 +262,10 @@ public static class Transcript
     // ---- images ----------------------------------------------------------------------
 
     // The image `key` ("<uuid>#<n>", as in the items) as a JPEG that fits a relay frame.
-    public static byte[]? Image(string path, string key)
+    public static byte[]? Image(string path, string key) => RawImage(path, key) is { } raw ? Jpeg(raw) : null;
+
+    // The image `key` as stored in the transcript (PNG/JPEG bytes).
+    public static byte[]? RawImage(string path, string key)
     {
         var parts = key.Split('#');
         if (parts.Length != 2 || !int.TryParse(parts[1], out var n)) return null;
@@ -277,7 +280,7 @@ public static class Transcript
                 var index = entry.Take(n).Count(i => i.K == "image");
                 using var doc = JsonDocument.Parse(line);
                 var b64 = Images(doc.RootElement).Skip(index).FirstOrDefault();
-                return b64 is null ? null : Jpeg(Convert.FromBase64String(b64));
+                return b64 is null ? null : Convert.FromBase64String(b64);
             }
         }
         catch (Exception e) { Log.Write($"transcript: image {key} failed ({e.Message})"); }
@@ -299,7 +302,9 @@ public static class Transcript
     }
 
     // Downscaled JPEG (≤ 1280 px, smaller until it fits a frame as base64).
-    public static byte[]? Jpeg(byte[] raw)
+    // `crop`: only that part (fractions x, y, w, h of the image, origin top left) — the sharp
+    // close-up of a zoomed slide (v12); never upscaled.
+    public static byte[]? Jpeg(byte[] raw, double[]? crop = null)
     {
         // ponytail: System.Drawing is Windows-only — the Linux host (linux/) sends no images yet;
         // give it a managed JPEG encoder when it ships. (Asked by version, 6.1 = what GDI+ needs, so
@@ -307,16 +312,23 @@ public static class Transcript
         if (!OperatingSystem.IsWindowsVersionAtLeast(6, 1)) return null;
         using var input = new MemoryStream(raw);
         using var src = System.Drawing.Image.FromStream(input);
+        var part = new Rectangle(0, 0, src.Width, src.Height);
+        if (crop is { Length: 4 })
+        {
+            part = Rectangle.Intersect(part, new Rectangle((int)(crop[0] * src.Width), (int)(crop[1] * src.Height),
+                                                           (int)Math.Ceiling(crop[2] * src.Width), (int)Math.Ceiling(crop[3] * src.Height)));
+            if (part.Width < 8 || part.Height < 8) return null;
+        }
         var codec = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
         foreach (var (px, q) in new[] { (1280, 70L), (960, 60L), (640, 50L) })
         {
-            var scale = Math.Min(1.0, (double)px / Math.Max(src.Width, src.Height));
-            using var bmp = new Bitmap(Math.Max(1, (int)(src.Width * scale)), Math.Max(1, (int)(src.Height * scale)));
+            var scale = Math.Min(1.0, (double)px / Math.Max(part.Width, part.Height));
+            using var bmp = new Bitmap(Math.Max(1, (int)(part.Width * scale)), Math.Max(1, (int)(part.Height * scale)));
             using (var g = Graphics.FromImage(bmp))
             {
                 g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 g.Clear(Color.White);   // transparent PNG → white, not black
-                g.DrawImage(src, 0, 0, bmp.Width, bmp.Height);
+                g.DrawImage(src, new Rectangle(0, 0, bmp.Width, bmp.Height), part, GraphicsUnit.Pixel);
             }
             using var output = new MemoryStream();
             using var p = new EncoderParameters(1);
