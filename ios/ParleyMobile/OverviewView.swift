@@ -362,7 +362,7 @@ private struct SessionsHead: View {
             if supervised, let mode {
                 Toggle("Überwachungsmodus", isOn: mode)
                     .labelsHidden()
-                    .tint(Theme.claude)
+                    .tint(Theme.control)   // a near-white accent (Schwarzweiß dark) greys so the white knob shows
                     .accessibilityHint("Aus: alle Sessions sprechen wieder selbst mit dir")
             } else {
             Button(action: call) {
@@ -564,6 +564,7 @@ private struct UpdateCard: View {
                 openURL(Self.testFlight) { accepted in if !accepted { openURL(Self.fallback) } }
             } label: {
                 Label("In TestFlight öffnen", systemImage: "airplane").font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.onAccent)   // borderedProminent writes white — invisible on Schwarzweiß dark
             }
             .buttonStyle(.borderedProminent)
             .tint(Theme.claude)
