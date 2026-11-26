@@ -4,7 +4,8 @@ import SwiftUI
 /// A session's history (v3), laid out like the Claude app's chat: Claude's text full width,
 /// your messages in grey bubbles, tool steps folded into one line ("2 Befehle ausgeführt ›",
 /// with +/− for file edits), screenshots, copy / read-aloud under each answer, a jump to the
-/// newest, and the message box. Polls ~3 s while open; older pages load at the top.
+/// newest, and the message box. Opens on the background-synced cache (v14), at its end; polls
+/// ~3 s while open for what is newer (`after`); older pages load at the top.
 struct SessionView: View {
     let id: String
     @Environment(AppModel.self) private var model
@@ -94,6 +95,8 @@ struct SessionView: View {
                 }
             }
             .onChange(of: items == nil) {
+                // Nothing was cached: the first page lands at its end, without a visible scroll.
+                if items != nil { proxy.scrollTo("end", anchor: .bottom) }
                 Task {
                     try? await Task.sleep(for: .seconds(1))
                     canPage = true
@@ -101,10 +104,15 @@ struct SessionView: View {
             }
             .onChange(of: (items?.last?.id ?? "") + "\(pending.count)") {
                 // Follow new rows only when at the end (after layout, else it stops short).
+                // Scrolled up to read: stay there (the arrow leads down).
                 guard atBottom || pending.count > 0 else { return }
                 Task {
                     try? await Task.sleep(for: .milliseconds(80))
-                    withAnimation(.snappy) { proxy.scrollTo("end", anchor: .bottom) }
+                    if canPage {
+                        withAnimation(.snappy) { proxy.scrollTo("end", anchor: .bottom) }
+                    } else {
+                        proxy.scrollTo("end", anchor: .bottom)   // just opened: no visible scroll
+                    }
                 }
             }
         }
@@ -118,6 +126,11 @@ struct SessionView: View {
             model.compose = nil
             try? await Task.sleep(for: .milliseconds(400))
             typing = true
+        }
+        .task {
+            // Opened on a cached history: it settled at the bottom, paging may start.
+            try? await Task.sleep(for: .seconds(1))
+            if model.histories[id] != nil { canPage = true }
         }
         .task(id: id) {
             while !Task.isCancelled {
@@ -153,7 +166,7 @@ struct SessionView: View {
                 if let session, session.canResume {
                     Button { model.resume(id) } label: { Label("Fortsetzen", systemImage: "play.fill") }
                 }
-                Button { model.loadHistory(id) } label: { Label("Neu laden", systemImage: "arrow.clockwise") }
+                Button { model.loadHistory(id, fresh: true) } label: { Label("Neu laden", systemImage: "arrow.clockwise") }
                 // v11: its own Detailgrad — only on Sir's own host, not in someone else's share.
                 if let session, model.guestShare(of: id) == nil, let host = model.relay.snapshot {
                     detailMenu(session, default: host.detail)

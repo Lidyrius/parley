@@ -238,11 +238,16 @@ final class AppController: ObservableObject {
             }
             DispatchQueue.global(qos: .userInitiated).async {
                 switch event {
-                case .history(let id, let before):
-                    // ponytail: re-reads the 3 MB tail per poll (~3 s while the view is open); cache by mtime if it shows.
-                    let page: (items: [Transcript.Item], more: Bool) =
-                        Transcript.file(for: id).map { Transcript.page($0, before: before) } ?? (items: [], more: false)
-                    phone.reply(Transcript.historyFrame(session: id, items: page.items, before: before, more: page.more))
+                case .history(let id, let before, let after, let limit):
+                    // ponytail: re-reads the 3 MB tail per request; the phone only asks when `hist` changed (v14) or ~3 s while a view is open.
+                    guard let url = Transcript.file(for: id) else { phone.reply(Transcript.historyFrame(session: id, items: [], before: before)); break }
+                    if let before {
+                        let page = Transcript.page(url, before: before)
+                        phone.reply(Transcript.historyFrame(session: id, items: page.items, before: before, more: page.more))
+                    } else {
+                        let page = Transcript.newest(url, after: after, limit: limit)
+                        phone.reply(Transcript.historyFrame(session: id, items: page.items, more: page.more, after: page.after))
+                    }
                 case .image(let id, let key):
                     phone.reply(Transcript.imageFrame(key: key, jpeg: Transcript.file(for: id).flatMap { Transcript.image(in: $0, key: key) }))
                 case .say(let id, let text):

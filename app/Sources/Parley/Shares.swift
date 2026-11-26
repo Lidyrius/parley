@@ -418,7 +418,7 @@ final class ShareHub: @unchecked Sendable {
                 Log.write("share: \(asked.guest?.name ?? "") asks to join \(asked.label)")
                 self.toSir?(Shares.askFrame(asked))
                 self.notify?("Parley · \(asked.label)", "\(asked.guest?.name ?? "Jemand") möchte beitreten.")
-            case .history(let sid, let before) where s.state == "active" && sid == s.session:
+            case .history(let sid, let before, _, _) where s.state == "active" && sid == s.session:
                 let joined = (s.guest?.full ?? false) ? nil : s.guest?.joined.map { $0.timeIntervalSince1970 * 1000 }
                 DispatchQueue.global(qos: .userInitiated).async {
                     var page: (items: [Transcript.Item], more: Bool) =

@@ -594,8 +594,14 @@ internal sealed class TrayApp : ApplicationContext
             case PhoneHistory h:
                 _ = Task.Run(() =>
                 {
-                    var (items, more) = Transcript.File(h.Id) is { } path ? Transcript.Page(path, h.Before) : (new List<Transcript.Item>(), false);
-                    return PhoneCall.Reply(Transcript.HistoryFrame(h.Id, items, h.Before, more));
+                    if (Transcript.File(h.Id) is not { } path) return PhoneCall.Reply(Transcript.HistoryFrame(h.Id, new List<Transcript.Item>(), h.Before));
+                    if (h.Before is not null)
+                    {
+                        var (older, more) = Transcript.Page(path, h.Before);
+                        return PhoneCall.Reply(Transcript.HistoryFrame(h.Id, older, h.Before, more));
+                    }
+                    var (items, newestMore, after) = Transcript.Newest(path, h.After, h.Limit);   // v14
+                    return PhoneCall.Reply(Transcript.HistoryFrame(h.Id, items, more: newestMore, after: after));
                 });
                 break;
             case PhoneImage i:

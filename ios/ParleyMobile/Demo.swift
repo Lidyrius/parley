@@ -52,6 +52,8 @@ enum Demo {
             }
             sessions.insert(#"{"id":"zentrale","label":"Zentrale","project":"parley-zentrale","zentrale":true,"state":"speaking","since":\#(ago(7)),"until":null,"voice":true,"resumable":false,"tasks":[],"host":null,"stats":\#(stats(310, 27, 1.92, 31, 12, "Shirts ist fertig, Angebote fragt nach dem Rabatt für Bestandskunden."))}"#, at: 0)
         }
+        // v14: when each transcript last changed — the history sync fills the cache from it.
+        sessions = sessions.map { $0.replacingOccurrences(of: #""host":null"#, with: #""host":null,"hist":\#(ago(60))"#) }
         let today = #"{"costUsd":13.61,"turns":65,"spokenSeconds":754,"rateLimits":[{"kind":"five_hour","percentUsed":42,"resetsAt":null},{"kind":"seven_day","percentUsed":18,"resetsAt":null}]}"#
         let again = supervisor ? #",{"id":"r3","text":"Prüfe Mails, Teams und die Sessions.","to":"Zentrale","at":\#(t + 180_000),"every":5}"# : ""
         let reminders = #"[{"id":"r1","text":"Lass die Tests laufen und berichte, was rot ist.","to":"Shirts","at":\#(t + 14 * 3_600_000)},{"id":"r2","text":"Deploye auf Staging.","to":"Zentrale","after":"Shirts"}\#(again)]"#

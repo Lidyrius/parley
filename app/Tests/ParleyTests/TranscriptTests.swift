@@ -74,6 +74,19 @@ final class TranscriptTests: XCTestCase {
         XCTAssertEqual(frame["t"] as? String, "image")
         XCTAssertNotNil(Data(base64Encoded: frame["data"] as? String ?? ""))
 
+        // v14: only what came after an item; unknown item → newest page without `after`; limit
+        let ids = latest0(url)
+        let delta = Transcript.newest(url, after: ids[4], limit: nil)
+        XCTAssertEqual(delta.items.map(\.id), Array(ids[5...]))
+        XCTAssertEqual(delta.after, ids[4]); XCTAssertFalse(delta.more)
+        XCTAssertEqual(Transcript.newest(url, after: ids.last, limit: nil).items.count, 0)
+        let lost = Transcript.newest(url, after: "gone#0", limit: nil)
+        XCTAssertNil(lost.after); XCTAssertEqual(lost.items.count, 7)
+        let two = Transcript.newest(url, after: nil, limit: 2)
+        XCTAssertEqual(two.items.map(\.id), Array(ids.suffix(2))); XCTAssertTrue(two.more)
+        let echoed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Transcript.historyFrame(session: "s", items: [], after: "x#1").utf8)) as? [String: Any])
+        XCTAssertEqual(echoed["after"] as? String, "x#1")
+
         let latest = Transcript.page(url, before: nil)
         XCTAssertEqual(latest.items.count, 7)
         XCTAssertFalse(latest.more)
@@ -102,4 +115,6 @@ final class TranscriptTests: XCTestCase {
         }
         print("frame", Transcript.historyFrame(session: "x", items: items).utf8.count, "bytes")
     }
+
+    private func latest0(_ url: URL) -> [String] { Transcript.page(url, before: nil).items.map(\.id) }
 }

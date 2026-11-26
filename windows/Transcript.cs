@@ -73,18 +73,40 @@ public static class Transcript
     // before the item `before`. `More` = there is older history still.
     public static (List<Item> Items, bool More) Page(string path, string? before)
     {
-        if (before is null)
-        {
-            var size = new FileInfo(path).Length;
-            var tail = Parse(TailLines(path));
-            return (tail.Count > MaxItems ? tail.GetRange(tail.Count - MaxItems, MaxItems) : tail, tail.Count > MaxItems || size > TailBytes);
-        }
+        if (before is null) { var (items, more, _) = Newest(path, null, null); return (items, more); }
         // ponytail: an older page parses the whole file (~0.5 s for 30 MB); read it in windows if that shows.
         var all = Parse(TailLines(path, int.MaxValue));
         var i = all.FindIndex(x => x.Id == before);
         if (i < 0) return (new List<Item>(), false);
         var from = Math.Max(0, i - MaxItems);
         return (all.GetRange(from, i - from), from > 0);
+    }
+
+    // v14: only the items after `after` (echoed back), or — it can't be placed in the 3 MB tail,
+    // or more than a page came since — the newest page (at most `limit` items) without it.
+    public static (List<Item> Items, bool More, string? After) Newest(string path, string? after, int? limit)
+    {
+        var size = new FileInfo(path).Length;
+        var all = Parse(TailLines(path));
+        if (after is not null && all.FindLastIndex(x => x.Id == after) is var i and >= 0 && all.Count - i - 1 <= MaxItems)
+            return (all.GetRange(i + 1, all.Count - i - 1), false, after);
+        var n = Math.Min(MaxItems, Math.Max(1, limit ?? MaxItems));
+        return (all.Count > n ? all.GetRange(all.Count - n, n) : all, all.Count > n || size > TailBytes, null);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> Files = new();
+
+    // v14 `hist`: when the session's transcript last changed (ms), null without one. The file is
+    // looked up once (a directory scan) and then only stat-ed.
+    public static long? Modified(string session)
+    {
+        if (!Files.TryGetValue(session, out var path))
+        {
+            if (File(session) is not { } found) return null;
+            Files[session] = path = found;
+        }
+        try { return new DateTimeOffset(System.IO.File.GetLastWriteTimeUtc(path)).ToUnixTimeMilliseconds(); }
+        catch { return null; }
     }
 
     public static List<Item> Parse(IEnumerable<string> lines)
@@ -162,12 +184,12 @@ public static class Transcript
 
     // {"t":"history","id":…,"items":[…],"more":…} (+ `before` for an older page), oldest items
     // dropped until it fits a relay frame (then there is more).
-    public static string HistoryFrame(string session, List<Item> items, string? before = null, bool more = false)
+    public static string HistoryFrame(string session, List<Item> items, string? before = null, bool more = false, string? after = null)
     {
         var list = items.ToList();
         while (true)
         {
-            var json = JsonSerializer.Serialize(new { t = "history", id = session, before, more, items = list }, Json);
+            var json = JsonSerializer.Serialize(new { t = "history", id = session, before, after, more, items = list }, Json);
             if (Encoding.UTF8.GetByteCount(json) <= MaxFrame || list.Count == 0) return json;
             list.RemoveRange(0, Math.Max(1, list.Count / 4));
             more = true;

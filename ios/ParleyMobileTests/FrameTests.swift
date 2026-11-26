@@ -131,6 +131,10 @@ struct FrameTests {
         #expect(Outgoing.round(seconds: 120) == #"{"seconds":120,"t":"round"}"#)
         #expect(Outgoing.history(id: "s1") == #"{"id":"s1","t":"history"}"#)
         #expect(Outgoing.history(id: "s1", before: "a#0") == #"{"before":"a#0","id":"s1","t":"history"}"#)
+        // v14: only what is newer than an item; at most N newest (clamped to 1–60).
+        #expect(Outgoing.history(id: "s1", after: "a#3") == #"{"after":"a#3","id":"s1","t":"history"}"#)
+        #expect(Outgoing.history(id: "s1", limit: 30) == #"{"id":"s1","limit":30,"t":"history"}"#)
+        #expect(Outgoing.history(id: "s1", limit: 500) == #"{"id":"s1","limit":60,"t":"history"}"#)
         #expect(Outgoing.image(id: "s1", key: "u#0") == #"{"id":"s1","key":"u#0","t":"image"}"#)
         #expect(Outgoing.say(id: "s1", text: "Mach \"weiter\"") == #"{"id":"s1","t":"say","text":"Mach \"weiter\""}"#)
     }
@@ -215,6 +219,42 @@ struct FrameTests {
                       .numbered("1.", "erstens"), .quote("Zitat"), .code(lang: "bash", code: "ls -la"), .table("| a | b |\n|---|---|"), .rule])
         #expect(Markdown.blocks("```\nunclosed") == [.code(lang: "", code: "unclosed")])
         #expect(Markdown.plain("**Fett** und `code`") == "Fett und code")
+    }
+
+    @Test func historyAfterAndHist() throws {
+        // v14: the reply echoes `after`; a plain one has none.
+        #expect(Frame.decode(#"{"t":"history","id":"s1","after":"a#2","more":false,"items":[{"id":"a#3","k":"assistant","text":"Neu"}]}"#)
+                == .history(id: "s1", items: [ChatItem(id: "a#3", kind: .assistant, text: "Neu")], before: nil, more: false, after: "a#2"))
+        #expect(Frame.decode(#"{"t":"history","id":"s1","after":"a#2","items":[]}"#) == .history(id: "s1", items: [], before: nil, more: false, after: "a#2"))
+        guard case .sessions(let s)? = Frame.decode(#"{"t":"sessions","sessions":[{"id":"a","hist":1760000000123},{"id":"b"}]}"#) else {
+            Issue.record("no sessions"); return
+        }
+        #expect(s.sessions.map(\.hist) == [1_760_000_000_123, nil])
+    }
+
+    @Test func historyAfterMerge() {
+        func items(_ ids: String...) -> [ChatItem] { ids.map { ChatItem(id: $0) } }
+        let loaded = items("a", "b", "c")
+        #expect(AppModel.merge(loaded, page: items("d", "e"), before: nil, after: "c").map(\.id) == ["a", "b", "c", "d", "e"])   // appended
+        #expect(AppModel.merge(loaded, page: [], before: nil, after: "c").map(\.id) == ["a", "b", "c"])                        // nothing new
+        // Deduped by id: one already there is replaced in place, not doubled.
+        let changed = AppModel.merge(loaded, page: [ChatItem(id: "c", text: "neu"), ChatItem(id: "d")], before: nil, after: "b")
+        #expect(changed.map(\.id) == ["a", "b", "c", "d"] && changed[2].text == "neu")
+        #expect(AppModel.merge(loaded, page: items("x"), before: nil, after: "zz").map(\.id) == ["a", "b", "c"])              // stale: unchanged
+        // Without `after` (the host couldn't place it): the newest page replaces.
+        #expect(AppModel.merge(loaded, page: items("q", "r"), before: nil, after: nil).map(\.id) == ["q", "r"])
+    }
+
+    @Test func historySyncDecision() {
+        func row(_ id: String, _ hist: Int?) -> Session { var s = Session(id: id); s.hist = hist; return s }
+        let rows = [row("cached", 5), row("empty", 7), row("same", 3), row("none", nil), row("busy", 9)]
+        let asks = AppModel.historySync(rows, synced: ["cached": 4, "same": 3, "busy": 1], busy: ["busy"],
+                                        newest: ["cached": "c#9", "same": "s#1"])
+        #expect(asks == [AppModel.HistoryAsk(id: "cached", hist: 5, after: "c#9"),
+                         AppModel.HistoryAsk(id: "empty", hist: 7, limit: 30)])
+        // Once asked (hist remembered), the same frame asks for nothing more.
+        let synced = Dictionary(uniqueKeysWithValues: asks.map { ($0.id, $0.hist) }).merging(["same": 3, "busy": 1]) { a, _ in a }
+        #expect(AppModel.historySync(rows, synced: synced, busy: ["busy"], newest: [:]).isEmpty)
     }
 
     @Test func historyPagesMerge() {

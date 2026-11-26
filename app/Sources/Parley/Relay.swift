@@ -233,7 +233,8 @@ enum RelayFrame {
             return .round(seconds: s)
         case "history":
             guard let id = f["id"] as? String, !id.isEmpty else { return nil }
-            return .history(id: id, before: (f["before"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+            return .history(id: id, before: (f["before"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                            after: (f["after"] as? String).flatMap { $0.isEmpty ? nil : $0 }, limit: f["limit"] as? Int)
         case "image":
             guard let id = f["id"] as? String, let key = f["key"] as? String, !id.isEmpty, !key.isEmpty else { return nil }
             return .image(id: id, key: key)
@@ -305,7 +306,7 @@ enum PhoneEvent: Equatable, Sendable {
     case resumeLine(Bool)                     // v11: Rückmeldung beim Fortsetzen
     case detail(id: String?, level: String)   // v11: Detailgrad — the default (id nil) or one session's ("" = default)
     case alert(token: String, env: String)    // notification push token (hex)
-    case history(id: String, before: String?) // send that session's newest history, or the page before an item
+    case history(id: String, before: String?, after: String? = nil, limit: Int? = nil) // newest history, the page before an item, or (v14) what came after one
     case image(id: String, key: String)       // send one image of it
     case say(id: String, text: String)        // a typed message for that session
     case later(TimeInterval?)                 // can't talk now: ring again in n s, or nil = Sir calls back

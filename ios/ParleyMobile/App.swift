@@ -155,6 +155,10 @@ final class AppModel {
     /// v10: the desktop open right now (one at a time), on the active host.
     private(set) var desktop: DesktopChannel?
     @ObservationIgnored private var requestedImages: Set<String> = []
+    /// v14 history sync: each session's `hist` last asked for, and when its newest-side request
+    /// (`after` / newest page) went out — one at a time per session.
+    @ObservationIgnored private var histSynced: [String: Int] = [:]
+    @ObservationIgnored private var histAsked: [String: Date] = [:]
     @ObservationIgnored var alertToken: String? {
         didSet { if alertToken != oldValue { sendAlertToken() } }
     }
@@ -184,6 +188,7 @@ final class AppModel {
             Task { await self.activity.subtitle(line, from: self.call.label) }
         }
         relay.onEvent = { [weak self] in self?.handle($0) }
+        relay.onSnapshot = { [weak self] in self?.syncHistories($0) }
         if demo {
             relay.startDemo()
             // `-demoImage <path>`: that picture as the call's screenshot slide (zoom checks).
@@ -198,6 +203,14 @@ final class AppModel {
             // `-demoGuestCode`: this phone joined someone's share (the code to send back).
             // `-demoAway`: Unterwegs and Stumm on; `-demoPalette <id>`: a palette (contrast checks).
             if arguments.contains("-demoAway") { away = true; silent = true }
+            // `-demoOpen <id>`: that session's Verlauf opens a moment after launch (from the synced cache).
+            if let i = arguments.firstIndex(of: "-demoOpen"), i + 1 < arguments.count {
+                let id = arguments[i + 1]
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(1.5))
+                    self?.open(session: id)
+                }
+            }
             // `-demoPairing` (+ `-demoScanner [found|denied]`): the first-launch screens.
             welcoming = arguments.contains("-demoPairing")
             if let i = arguments.firstIndex(of: "-demoPalette"), i + 1 < arguments.count {
@@ -442,6 +455,8 @@ final class AppModel {
         pending = pending.filter { guest.contains($0.key) }
         hasOlder.formIntersection(guest)
         loadingOlder.formIntersection(guest)
+        histSynced = [:]
+        histAsked = [:]
         images = [:]   // kept by item, not by session: a guest's are asked for again
         requestedImages = []
         opened = [:]
@@ -498,9 +513,50 @@ final class AppModel {
 
     func open(session id: String) { path = [id] }
 
-    func loadHistory(_ id: String) {
+    /// The open view's poll (~3 s): only what is newer than the newest cached item (v14) — a host
+    /// that can't place it answers the newest page. `fresh` ("Neu laden"): the newest page.
+    func loadHistory(_ id: String, fresh: Bool = false) {
         if demo { histories[id] = Demo.history; return }
-        relay(for: id).send(Outgoing.history(id: id))
+        guard fresh || !asking(id) else { return }
+        histAsked[id] = .now
+        relay(for: id).send(Outgoing.history(id: id, after: fresh ? nil : histories[id]?.last?.id))
+    }
+
+    /// A newest-side request for the session is out (and not given up on yet).
+    private func asking(_ id: String) -> Bool {
+        histAsked[id].map { Date.now.timeIntervalSince($0) < 15 } ?? false
+    }
+
+    /// One newest-side history request the background sync sends.
+    struct HistoryAsk: Equatable, Sendable {
+        var id: String
+        var hist: Int
+        var after: String?
+        var limit: Int?
+    }
+
+    /// v14: the rows whose transcript changed since last asked (`hist`), not already asking —
+    /// with `after` the newest cached item, or the 30 newest when nothing is cached.
+    nonisolated static func historySync(_ rows: [Session], synced: [String: Int], busy: Set<String>,
+                                        newest: [String: String]) -> [HistoryAsk] {
+        rows.compactMap { r in
+            guard let h = r.hist, synced[r.id] != h, !busy.contains(r.id) else { return nil }
+            if let last = newest[r.id] { return HistoryAsk(id: r.id, hist: h, after: last) }
+            return HistoryAsk(id: r.id, hist: h, limit: 30)
+        }
+    }
+
+    /// Every `sessions` frame of the own host: keep each session's history in step in the
+    /// background, so its view opens on what is current (guest shares aren't synced).
+    private func syncHistories(_ s: Snapshot) {
+        let busy = Set(histAsked.keys.filter(asking))
+        let newest = histories.compactMapValues { $0.last?.id }
+        for ask in Self.historySync(s.sessions, synced: histSynced, busy: busy, newest: newest) {
+            histSynced[ask.id] = ask.hist
+            if demo { histories[ask.id] = Demo.history; continue }
+            histAsked[ask.id] = .now
+            relay.send(Outgoing.history(id: ask.id, after: ask.after, limit: ask.limit))
+        }
     }
 
     /// The page before the oldest loaded item (scrolled to the top).
@@ -513,7 +569,18 @@ final class AppModel {
     /// A received page merged into what is loaded: an older page goes in front; the newest page
     /// replaces the tail from its first item on (older pages stay) — or everything, when it no
     /// longer overlaps.
-    nonisolated static func merge(_ old: [ChatItem], page: [ChatItem], before: String?) -> [ChatItem] {
+    /// v14 `after`: the items newer than `after` go behind (an id already there is replaced in
+    /// place) — unless `after` isn't loaded any more (stale: unchanged).
+    nonisolated static func merge(_ old: [ChatItem], page: [ChatItem], before: String?, after: String? = nil) -> [ChatItem] {
+        if let after {
+            guard old.contains(where: { $0.id == after }) else { return old }
+            var out = old
+            var at = Dictionary(old.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+            for item in page {
+                if let i = at[item.id] { out[i] = item } else { at[item.id] = out.count; out.append(item) }
+            }
+            return out
+        }
         if let before {
             return old.first?.id == before ? page + old : old
         }
@@ -616,6 +683,9 @@ final class AppModel {
         switch event {
         case .opened:
             // Per-connection state: the host may have restarted or the socket been replaced.
+            // The history sync asks every session once more (replies are tiny with `after`).
+            histSynced = [:]
+            histAsked = [:]
             relay.send(Outgoing.away(away))
             relay.send(Outgoing.silent(silent))
             relay.send(Outgoing.round(seconds: roundSeconds))
@@ -629,6 +699,7 @@ final class AppModel {
             }
             call.relayChanged()
         case .closed:
+            histAsked = [:]   // what was asked on the old socket won't be answered
             desktop?.lost()
             call.relayChanged()
         case .audio(let frame):
@@ -637,10 +708,19 @@ final class AppModel {
             call.relayChanged()
         case .frame(.audio(let state, let label)):
             if call.line === relay { call.hostAudioChanged(state, label: label) }
-        case .frame(.history(let id, let items, let before, let more)):
+        case .frame(.history(let id, let items, let before, let more, let after)):
             let old = histories[id] ?? []
-            histories[id] = Self.merge(old, page: items, before: before)
-            if before != nil {
+            if before == nil { histAsked[id] = nil }
+            histories[id] = Self.merge(old, page: items, before: before, after: after)
+            if let after {
+                // Not loaded any more (replaced meanwhile): the next `sessions` frame asks again.
+                if !old.contains(where: { $0.id == after }) { histSynced[id] = nil }
+                // A session not on screen keeps its newest 300 (the rest pages in again).
+                if path.first != id, let h = histories[id], h.count > 300 {
+                    histories[id] = Array(h.suffix(300))
+                    hasOlder.insert(id)
+                }
+            } else if before != nil {
                 loadingOlder.remove(id)
                 if more { hasOlder.insert(id) } else { hasOlder.remove(id) }
             } else if (items.first.map { first in old.firstIndex { $0.id == first.id } ?? 0 } ?? 0) == 0 {

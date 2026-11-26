@@ -226,7 +226,10 @@ public static class RelayFrame
                 case "round":
                     return root.TryGetProperty("seconds", out var rs) && rs.TryGetInt32(out var secs) ? new PhoneRound(secs) : null;
                 case "history":
-                    return Str("id") is { Length: > 0 } hid ? new PhoneHistory(hid, Str("before") is { Length: > 0 } b ? b : null) : null;
+                    return Str("id") is { Length: > 0 } hid
+                        ? new PhoneHistory(hid, Str("before") is { Length: > 0 } b ? b : null, Str("after") is { Length: > 0 } a ? a : null,
+                            root.TryGetProperty("limit", out var hl) && hl.ValueKind == JsonValueKind.Number && hl.TryGetInt32(out var lim) ? lim : null)
+                        : null;
                 case "image":
                     return Str("id") is { Length: > 0 } iid && Str("key") is { Length: > 0 } key ? new PhoneImage(iid, key) : null;
                 case "say":
@@ -335,7 +338,7 @@ public sealed record PhoneBrief(bool On) : PhoneMessage;     // Ohne Floskeln (t
 public sealed record PhoneSupervisor(bool On) : PhoneMessage;   // the Überwachungsmodus, switched in the phone's app (Sir's own line only)
 public sealed record PhoneRound(int Seconds) : PhoneMessage;   // Fragerunde: how long an update waits (0 = never)
 public sealed record PhoneAlert(string Token, string Env) : PhoneMessage;
-public sealed record PhoneHistory(string Id, string? Before) : PhoneMessage;   // newest page, or the one before an item
+public sealed record PhoneHistory(string Id, string? Before, string? After = null, int? Limit = null) : PhoneMessage;   // newest page, the one before an item, or (v14) what came after one
 public sealed record PhoneImage(string Id, string Key) : PhoneMessage;
 public sealed record PhoneSay(string Id, string Text) : PhoneMessage;
 // v4: the phone (re)connected (its name, for the setup); it saved and switched to a palette made by voice.

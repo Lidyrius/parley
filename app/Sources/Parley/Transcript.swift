@@ -53,16 +53,36 @@ enum Transcript {
     /// One page of history: the newest (`before` nil, from the 3 MB tail) or the items right
     /// before the item `before`. `more` = there is older history still.
     static func page(_ url: URL, before: String?) -> (items: [Item], more: Bool) {
-        guard let before else {
-            let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int) ?? 0
-            let all = parse(tailLines(url))
-            return (Array(all.suffix(maxItems)), all.count > maxItems || size > tailBytes)
-        }
+        guard let before else { let p = newest(url, after: nil, limit: nil); return (p.items, p.more) }
         // ponytail: an older page parses the whole file (~0.5 s for 30 MB); read it in windows if that shows.
         let all = parse(tailLines(url, bytes: .max))
         guard let i = all.firstIndex(where: { $0.id == before }) else { return ([], false) }
         let from = max(0, i - maxItems)
         return (Array(all[from..<i]), from > 0)
+    }
+
+    /// v14: only the items after `after` (echoed back), or — it can't be placed in the 3 MB
+    /// tail, or more than a page came since — the newest page (at most `limit` items) without it.
+    static func newest(_ url: URL, after: String?, limit: Int?) -> (items: [Item], more: Bool, after: String?) {
+        let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int) ?? 0
+        let all = parse(tailLines(url))
+        if let after, let i = all.lastIndex(where: { $0.id == after }), all.count - i - 1 <= maxItems {
+            return (Array(all[(i + 1)...]), false, after)
+        }
+        let n = min(maxItems, max(1, limit ?? maxItems))
+        return (Array(all.suffix(n)), all.count > n || size > tailBytes, nil)
+    }
+
+    private static let filesLock = NSLock()
+    nonisolated(unsafe) private static var files: [String: URL] = [:]   // behind filesLock
+
+    /// v14 `hist`: when the session's transcript last changed, nil without one. The file is
+    /// looked up once (a directory scan) and then only stat-ed.
+    static func modified(for session: String) -> Date? {
+        let known = filesLock.withLock { files[session] }
+        guard let url = known ?? file(for: session) else { return nil }
+        if known == nil { filesLock.withLock { files[session] = url } }
+        return (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
     static func parse(_ lines: [Data]) -> [Item] {
@@ -123,11 +143,11 @@ enum Transcript {
 
     /// `{"t":"history","id":…,"items":[…],"more":…}` (+ `before` for an older page), oldest
     /// items dropped until it fits a relay frame (then there is more).
-    static func historyFrame(session: String, items: [Item], before: String? = nil, more: Bool = false) -> String {
-        struct Wire: Encodable { let t = "history"; let id: String; let before: String?; let more: Bool; let items: [Item] }
+    static func historyFrame(session: String, items: [Item], before: String? = nil, more: Bool = false, after: String? = nil) -> String {
+        struct Wire: Encodable { let t = "history"; let id: String; let before: String?; let after: String?; let more: Bool; let items: [Item] }
         var items = items, more = more
         while true {
-            let data = (try? JSONEncoder().encode(Wire(id: session, before: before, more: more, items: items))) ?? Data()
+            let data = (try? JSONEncoder().encode(Wire(id: session, before: before, after: after, more: more, items: items))) ?? Data()
             if data.count <= maxFrame || items.isEmpty { return String(decoding: data, as: UTF8.self) }
             items.removeFirst(max(1, items.count / 4))
             more = true

@@ -57,6 +57,7 @@ final class PhoneFrameTests: XCTestCase {
         XCTAssertEqual(RelayFrame.parse(#"{"t":"push","token":"AB","env":"production","kind":"alert"}"#), .alert(token: "ab", env: "production"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1"}"#), .history(id: "s1", before: nil))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1","before":"u#0"}"#), .history(id: "s1", before: "u#0"))
+        XCTAssertEqual(RelayFrame.parse(#"{"t":"history","id":"s1","after":"u#3","limit":30}"#), .history(id: "s1", before: nil, after: "u#3", limit: 30))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"image","id":"s1","key":"u#0"}"#), .image(id: "s1", key: "u#0"))
         XCTAssertEqual(RelayFrame.parse(#"{"t":"say","id":"s1","text":"  Mach weiter. "}"#), .say(id: "s1", text: "Mach weiter."))
         for junk in [#"{"t":"call","state":"ringing"}"#, #"{"t":"call"}"#, #"{"t":"push","token":"not hex!"}"#,

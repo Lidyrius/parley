@@ -162,6 +162,13 @@ internal static class Program
         Check("news: behind → offered once", AppNews.Next(77, 78, nb, 77, 0).Line?.Contains("Neu darin: A"), true);
         Check("news: offered build not again", AppNews.Next(77, 78, nb, 77, 78).Line, null);
         Check("news: updated → what it brought", AppNews.Next(78, 78, nb, 76, 78).Line?.Contains("A B"), true);
+        var hpath = Path.Combine(tmp, "hist.jsonl");
+        File.WriteAllLines(hpath, Enumerable.Range(1, 5).Select(n => $"{{\"type\":\"assistant\",\"uuid\":\"a{n}\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"Zeile {n}\"}}]}}}}"));
+        var hd = Transcript.Newest(hpath, "a3#0", null);
+        Check("history: only what came after", string.Join(",", hd.Items.Select(x => x.Id)) + "|" + hd.After, "a4#0,a5#0|a3#0");
+        Check("history: unknown item → newest page", Transcript.Newest(hpath, "x#0", null) is var hu ? $"{hu.Items.Count}|{hu.After}" : "", "5|");
+        Check("history: limit", Transcript.Newest(hpath, null, 2) is var hl ? $"{string.Join(",", hl.Items.Select(x => x.Id))}|{hl.More}" : "", "a4#0,a5#0|True");
+        Check("history: frame echoes after", Transcript.HistoryFrame("s", new List<Transcript.Item>(), after: "a5#0").Contains("\"after\":\"a5#0\""), true);
         Check("vnc: channel ids", Desktops.ValidChannel("abcDEF12") && !Desktops.ValidChannel("short") && !Desktops.ValidChannel("bad-chars!x"), true);
         Check("path: a bare name lives under projectsDir", CwdPath.Resolve("shirts", "/srv/work/"), "/srv/work/shirts");
         Check("path: absolute as is", CwdPath.Resolve("/srv/else/x", "/srv/work"), "/srv/else/x");

@@ -32,6 +32,8 @@ final class Relay {
     @ObservationIgnored private var lastHeard = Date.distantPast
     @ObservationIgnored private var bestSkew: Double?
     @ObservationIgnored var onEvent: (RelayEvent) -> Void = { _ in }
+    /// Every `sessions` frame (and the demo's): the history sync looks at its rows' `hist` (v14).
+    @ObservationIgnored var onSnapshot: (Snapshot) -> Void = { _ in }
     /// A call waits out a dead zone (v8): redial every few seconds, not up to every half minute.
     @ObservationIgnored var eager = false
     /// The mic thread's way to the open socket.
@@ -121,6 +123,7 @@ final class Relay {
             }
             if let only { s = Snapshot(sessions: s.sessions.filter { $0.id == only }) } else { WidgetFeed.publish(s) }
             snapshot = s
+            onSnapshot(s)
         }
     }
 
@@ -239,6 +242,7 @@ final class Relay {
             }
             snapshot = s
             WidgetFeed.publish(s)
+            onSnapshot(s)
             return
         case .peer(let host):
             hostOnline = host

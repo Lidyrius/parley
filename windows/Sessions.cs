@@ -742,7 +742,8 @@ public sealed class SessionRegistry
         [property: JsonPropertyName("asking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Asking,
         [property: JsonPropertyName("zentrale"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IsZentrale,   // the Zentrale's row (omitted otherwise)
         [property: JsonPropertyName("stats")] object Stats,
-        [property: JsonPropertyName("detail"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Detail);   // v11: its own level only
+        [property: JsonPropertyName("detail"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Detail,   // v11: its own level only
+        [property: JsonPropertyName("hist"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Hist);   // v14: the transcript's last change, Sir's view only
 
     // `supervisor`: only while the Überwachungsmodus is on (omitted otherwise).
     // `missed`: how many of the Zentrale's lines wait for Sir's call back (omitted when none).
@@ -803,7 +804,8 @@ public sealed class SessionRegistry
                         replies = e.Replies,
                         lastLine = e.LastLine,
                     },
-                    only is null ? Parley.Detail.OwnLevel(e.Id) : null))
+                    only is null ? Parley.Detail.OwnLevel(e.Id) : null,
+                    only is null ? Transcript.Modified(e.Id) : null))
                 .ToList();
             if (only is not null)
                 return JsonSerializer.Serialize(new

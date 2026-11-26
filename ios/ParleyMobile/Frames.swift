@@ -61,6 +61,7 @@ struct Session: Identifiable, Equatable, Sendable {
     var asking: String?             // v7: a question waits for this guest
     var zentrale = false            // the Zentrale's row (Überwachungsmodus: the one main card)
     var detail: DetailLevel?        // v11: its own Detailgrad; nil = the host's default
+    var hist: Int?                  // v14: when its transcript last changed (ms); nil = no transcript
 }
 
 /// v7: a question for this phone's owner as a guest (`ask` frame).
@@ -292,7 +293,8 @@ enum Frame: Equatable, Sendable {
     case ring(label: String?)
     /// v3: a page of a session's history, oldest first: the newest (`before` nil) or the one
     /// right before the item `before`. `more` = there is older history.
-    case history(id: String, items: [ChatItem], before: String?, more: Bool)
+    /// v14: `after` set = only the items newer than that one (the host could place it).
+    case history(id: String, items: [ChatItem], before: String?, more: Bool, after: String? = nil)
     /// v3: one image of a history (JPEG); nil = the host could not find it.
     case image(key: String, data: Data?)
     /// v3: live captions for the line about to play.
@@ -343,7 +345,7 @@ enum Frame: Equatable, Sendable {
         case "ring": return .ring(label: head.label.flatMap(Self.clean))
         case "history":
             guard let h = try? decoder.decode(HistoryWire.self, from: data) else { return .other(head.t) }
-            return .history(id: h.id, items: h.items.items, before: h.before, more: h.more ?? false)
+            return .history(id: h.id, items: h.items.items, before: h.before, more: h.more ?? false, after: h.after)
         case "slides":
             guard let w = try? decoder.decode(SlidesWire.self, from: data) else { return .other(head.t) }
             return .slides(w.items.items)
@@ -404,7 +406,7 @@ enum Frame: Equatable, Sendable {
         return s.isEmpty ? nil : s
     }
 
-    private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool? }
+    private struct HistoryWire: Decodable { let id: String; let items: Lossy<ChatItem>; let before: String?; let more: Bool?; let after: String? }
     private struct ImageWire: Decodable { let key: String; let data: String? }
     private struct ShareLinkWire: Decodable { let id: String; let session: String; let link: String }
     private struct NoticeWire: Decodable { let text: String }
@@ -512,9 +514,12 @@ enum Outgoing {
         encode(["t": .s("push"), "token": .s(token), "env": .s(env.rawValue), "kind": .s("alert")])
     }
     /// v3: a session's history, one of its images, a typed message for it.
-    static func history(id: String, before: String? = nil) -> String {
+    /// v14: `after` = only what is newer than that item; `limit` = at most that many newest (1–60).
+    static func history(id: String, before: String? = nil, after: String? = nil, limit: Int? = nil) -> String {
         var body: [String: Value] = ["t": .s("history"), "id": .s(id)]
         if let before { body["before"] = .s(before) }
+        if let after { body["after"] = .s(after) }
+        if let limit { body["limit"] = .i(min(60, max(1, limit))) }
         return encode(body)
     }
     static func image(id: String, key: String) -> String { encode(["t": .s("image"), "id": .s(id), "key": .s(key)]) }
@@ -625,7 +630,7 @@ extension Stats: Decodable {
 }
 
 extension Session: Decodable {
-    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared, asking, zentrale, detail }
+    private enum K: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, stats, shared, asking, zentrale, detail, hist }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id)  // the one field a tile cannot do without
@@ -644,6 +649,7 @@ extension Session: Decodable {
         asking = c.lenient(.asking)
         zentrale = c.lenient(.zentrale) ?? false
         detail = (c.lenient(.detail) as String?).flatMap(DetailLevel.init(rawValue:))
+        hist = (c.lenient(.hist) as Double?).map { Int($0) }
     }
 }
 

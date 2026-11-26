@@ -505,6 +505,7 @@ final class SessionRegistry {
                 resumable: only == nil && resumable(e), tasks: e.tasks, host: only == nil ? DesktopSessions.resolve(cli: e.id, reported: e.host) : nil,
                 shared: shared[e.id] ?? [], asking: asking[e.id], detail: only == nil ? detailOverrides[e.id] : nil,
                 zentrale: only == nil && Supervisor.isZentrale(label: e.label, cwd: e.cwd, zentrale: zentraleCwd),
+                hist: only == nil ? Transcript.modified(for: e.id).map(Self.ms) : nil,
                 stats: RowStats(startedAt: Self.ms(e.startedAt ?? e.firstSeen), contextPercent: e.contextPercent,
                                 costUsd: e.costUsd, turns: e.turns, replies: e.replies, lastLine: e.lastLine))
         }
@@ -544,8 +545,9 @@ final class SessionRegistry {
         let asking: String?
         let detail: String?            // v11: only when the session has its own Detailgrad
         let zentrale: Bool             // the Zentrale's row (omitted otherwise)
+        let hist: Int64?               // v14: the transcript's last change (ms), Sir's view only
         let stats: RowStats
-        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, asking, detail, zentrale, stats }
+        enum CodingKeys: String, CodingKey { case id, label, project, state, since, until, callback, voice, resumable, tasks, host, shared, asking, detail, zentrale, hist, stats }
         func encode(to encoder: Encoder) throws {   // explicit: `until` must be null, not omitted
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(label, forKey: .label)
@@ -558,6 +560,7 @@ final class SessionRegistry {
             try c.encodeIfPresent(asking, forKey: .asking)
             try c.encodeIfPresent(detail, forKey: .detail)
             if zentrale { try c.encode(true, forKey: .zentrale) }
+            try c.encodeIfPresent(hist, forKey: .hist)
             try c.encode(stats, forKey: .stats)
         }
     }

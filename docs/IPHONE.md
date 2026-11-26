@@ -638,3 +638,17 @@ Two settings, on the host and switchable from the phone (like `brief`).
   ("Kurz vorweg, Sir: Ihre App ist aktualisiert. Neu: …") — or, when the phone is behind, that a
   newer version waits in TestFlight and what it brings. What was said is kept in `news.json` in the
   app data (`told`, `offered`). Not in "Ohne Floskeln" (brief), German only for now.
+
+## Protocol v14 — Verlauf immer aktuell, kleine Pakete
+
+- **`history`** (phone → host) may carry `"after":"<item id>"`: the host answers only the items newer
+  than that one and echoes `"after"` (`items` may be empty, `more` false). If it can't place the item
+  in the transcript's last 3 MB, or more than 60 came since, it answers like a plain request — the
+  newest page, without `after` — and the phone replaces its newest part.
+- `"limit":N` (1–60): at most the N newest items (`more` true when older ones exist).
+- **`sessions`** rows carry `"hist": <ms>` — when the session's transcript last changed (Sir's view
+  only; omitted without a transcript). The phone keeps every session's history in memory; when a
+  row's `hist` differs from the last one it synced, it asks with `after` = its newest item, or with
+  `limit: 30` when it has nothing yet. So all histories stay current with replies of a few hundred
+  bytes, and a Verlauf opens from memory, already at the bottom. While a view is open the phone
+  still polls ~3 s, now with `after`.
