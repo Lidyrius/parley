@@ -577,8 +577,8 @@ Two settings, on the host and switchable from the phone (like `brief`).
 ### Rückmeldung beim Fortsetzen
 - Host config `resumeLine`: `"0"` = off, anything else / missing = on (default).
 - Off: a resume (`POST /resume`, the phone's Fortsetzen, a snapshot) speaks no "Ich habe die Arbeit
-  an X wieder aufgenommen…" line and doesn't listen — the session just runs again with the default
-  instruction (the path a muted/Unterwegs host already takes).
+  an X wieder aufgenommen…" line — only the beep, then it listens as usual (in a call on the
+  phone), so Sir can say what's next; silence hands the session the default instruction.
 - Phone → host `{"t":"resumeLine","on":false}`; the `sessions` frame carries `resumeLine: false`
   only while it is off.
 

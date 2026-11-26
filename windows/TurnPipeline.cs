@@ -92,11 +92,6 @@ public sealed class TurnPipeline
         var config = Config.Load();
         _resumeGen++;
         Log.Write($"resume dialog start project={turn.Project}");
-        if (!config.ResumeLine)   // v11: Rückmeldung beim Fortsetzen off — the session just runs again (no ring, no line)
-        {
-            Log.Write("resume line off → resuming without dialog");
-            return ("", false, 0, "");
-        }
         var (_, calledBack) = await ReachPhone(turn.SpokenLabel, Server.SessionKey(turn));
         if (PhoneCall.Away && !PhoneCall.Active)
         {
@@ -113,7 +108,9 @@ public sealed class TurnPipeline
         PhoneCall.Line.SwitchTopic(Server.SessionKey(turn));
 
         // Cached line, or synthesized live + cached; null → no TTS, just the beep.
-        var line = await Clips.ResumeClip(turn.SpokenLabel, config);
+        // v11: Rückmeldung beim Fortsetzen off → no line, but still the beep and the mic.
+        var line = config.ResumeLine ? await Clips.ResumeClip(turn.SpokenLabel, config) : null;
+        if (!config.ResumeLine) Log.Write("resume line off → beep only, then listening");
         await PauseMediaIfPlaying();
         var beeped = line is not null && await AudioOut.PlayPcm(AudioOut.ApplyRate(line, config.SpeakingRate), beep: true);
 

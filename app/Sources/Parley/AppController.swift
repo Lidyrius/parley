@@ -810,12 +810,6 @@ final class AppController: ObservableObject {
         let config = AppConfig.load()
         resumeGen += 1
         Log.write("resume dialog start project=\(turn.project)")
-        // Rückmeldung beim Fortsetzen off (v11): no line, no listening — the server hands the
-        // session the default instruction (with the Detailgrad note, if due).
-        if !resumeLine {
-            Log.write("Rückmeldung beim Fortsetzen aus → resuming without dialog")
-            return TurnReply(transcript: "", park: false)
-        }
         let ringing = shouldRing
         var calledBack = false
         if ringing, case .reached(let back) = await reachPhone(label: turn.spokenLabel, session: ControlServer.sessionKey(turn), key: nil) {
@@ -834,10 +828,17 @@ final class AppController: ObservableObject {
         if calledBack, !brief { await thankForCallingBack(config) }
         _ = phone.switchTopic(to: ControlServer.sessionKey(turn))
 
-        // Cached line (or synthesized live + cached); nil → speakAndBeep synthesizes the text.
-        let (clip, line) = await ProjectClips.shared.resumeClip(label: turn.spokenLabel, config: config)
         await pauseMediaIfPlaying()
-        await speakAndBeep(line, config: config, prefetched: clip, beep: true)
+        if resumeLine {
+            // Cached line (or synthesized live + cached); nil → speakAndBeep synthesizes the text.
+            let (clip, line) = await ProjectClips.shared.resumeClip(label: turn.spokenLabel, config: config)
+            await speakAndBeep(line, config: config, prefetched: clip, beep: true)
+        } else {
+            // Rückmeldung beim Fortsetzen off (v11): no line — but still the beep and the mic, so
+            // Sir (who tapped Fortsetzen / called back) can say what's next; silence → the default.
+            Log.write("Rückmeldung beim Fortsetzen aus → beep only, then listening")
+            await speakAndBeep("", config: config, prefetched: Data(), beep: true)
+        }
 
         LiveStatus.set(phase: "listening")
         let wav = await record()

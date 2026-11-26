@@ -246,7 +246,7 @@ struct MenuBarView: View {
                 Toggle("Unterbrechen (einfach reinreden)", isOn: $controller.bargeIn)
                 Toggle("Ohne Floskeln (keine Ansagen, keine Bestätigung)", isOn: $controller.brief)
                 Toggle("Rückmeldung beim Fortsetzen", isOn: $controller.resumeLine)
-                    .help("Aus: Fortsetzen spricht kein „Ich habe die Arbeit an … wieder aufgenommen“ und hört nicht zu — die Session läuft einfach weiter")
+                    .help("Aus: Fortsetzen spricht kein „Ich habe die Arbeit an … wieder aufgenommen“ — nur der Signalton, dann hört Parley zu")
                 Menu {
                     ForEach(DetailLevel.allCases, id: \.self) { level in
                         Button { controller.detail = level } label: {

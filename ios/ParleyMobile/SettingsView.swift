@@ -82,7 +82,7 @@ struct SettingsView: View {
                             Label("Rückmeldung beim Fortsetzen", systemImage: "play.circle")
                         }
                     } footer: {
-                        Text("Aus: Fortsetzen startet die Session still, ohne „Ich habe die Arbeit … wieder aufgenommen“.")
+                        Text("Aus: Fortsetzen ohne „Ich habe die Arbeit … wieder aufgenommen“ – nur der Signalton, dann hört Parley zu.")
                     }
                     .disabled(host == nil)
                     Section {

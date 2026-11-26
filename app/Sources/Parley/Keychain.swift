@@ -42,7 +42,7 @@ enum Keychain {
         case autoAwayOnLock // "1" = the Mac locked for a minute counts as Unterwegs (updates ring the phone)
         case bargeOff       // "1" = barge-in off (default on: talking over Parley stops it and it listens)
         case brief          // "1" = ohne Floskeln: no "N Updates", "Update zu X", thanks or ack line
-        case resumeLine     // "0" = Rückmeldung beim Fortsetzen off: a resume speaks no line, doesn't listen (v11)
+        case resumeLine     // "0" = Rückmeldung beim Fortsetzen off: a resume speaks no line, just beeps and listens (v11)
         case detail         // the default Detailgrad: kurz (default / empty) | mittel | lang (v11, Detail.swift)
         case plainCalls     // "1" = calls as before v8: streamed, no clips, no numbered mic ("Funkloch" off)
         case apnsKeyId      // APNs auth key id (from AuthKey_<KEYID>.p8)

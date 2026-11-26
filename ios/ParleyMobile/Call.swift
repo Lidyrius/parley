@@ -639,6 +639,7 @@ final class CallController {
                 try? await Task.sleep(for: .seconds(4))
                 guard !Task.isCancelled else { return }
                 self?.awaitingHost = false
+                self?.updateWake()
             }
             phase = .active(since: .now)
             if outgoing, let uuid { provider?.reportOutgoingCall(with: uuid, connectedAt: .now) }
@@ -763,7 +764,9 @@ final class CallController {
 
     private func updateWake() {
         guard phase.isActive, !muted, !isDemo else { stopListening(); return }
-        if hostAudio == .idle, wakeArmed {
+        // Not while the host's first state is still on its way: its line may already be playing,
+        // and the wake listener would hear Parley's own voice (a false "Hey Parley").
+        if hostAudio == .idle, wakeArmed, !awaitingHost {
             if listeningForBarge { stopListening() }
             wake.start()
         } else if hostAudio == .speaking, Self.bargeIn {
